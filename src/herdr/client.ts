@@ -84,6 +84,8 @@ export interface HerdrClient {
   /** The terminal's screen as text, with `lines` of history above it (`hc read --json --lines`). */
   read(terminal: string, lines?: number): Promise<string>;
   kill(terminal: string): Promise<void>;
+  /** Presses keys in the terminal (`hc keys <t> <keys...>`: enter, y, down …). */
+  keys(terminal: string, keys: string[]): Promise<void>;
 }
 
 export interface ClientOptions {
@@ -232,6 +234,11 @@ export function createHerdrClient(options: ClientOptions = {}): HerdrClient {
 
     async kill(terminal) {
       await call(["kill", terminalArg(terminal, "kill"), "--json"], `kill ${terminal}`);
+    },
+
+    async keys(terminal, keys) {
+      if (!keys.length || keys.some((key) => !/^[a-z0-9+-]{1,16}$/.test(key))) throw new HerdrError("keys: bad key name", `${command} keys`);
+      await call(["keys", terminalArg(terminal, "keys"), ...keys], `keys ${terminal}`);
     },
   };
 }

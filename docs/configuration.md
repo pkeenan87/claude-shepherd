@@ -59,14 +59,19 @@ Names are letters, digits, `-` and `_`, starting with a letter. Built in (from `
 | Agent | Default `run` | `modelFlag` |
 |---|---|---|
 | `claude` | `claude --permission-mode auto` | `--model` |
-| `codex` | `codex --no-daemon -s workspace-write -a on-request` | `-m` |
-| `cursor-agent` | `cursor-agent --auto-review` | `--model` |
-| `grok` | `grok --permission-mode acceptEdits` | `-m` |
-| `agy` | `agy --mode accept-edits` | `--model` |
+| `codex` | `codex --no-daemon --approve-for-me` | `-m` |
+| `cursor-agent` | `cursor-agent --auto-review --trust` | `--model` |
+| `grok` | `grok --permission-mode auto` | `-m` |
+| `agy` | `agy --mode auto` | `--model` |
 | `gemini` | `gemini --approval-mode auto_edit` | `-m` |
 | `opencode` | `opencode` | `--model` |
 
-Claude Code runs in auto mode: a classifier runs safe tool calls (the ticket's checks, tests, builds) and blocks risky ones, so a ticket does not stop at its first shell command. An account without auto mode sets `agents.claude.run: [claude, --permission-mode, acceptEdits]`. The others edit files but still ask for risky actions (a shell command can wait for you: the build prints which sub-agent is waiting). None uses a "skip all permissions" flag. opencode has no such mode and follows its own permission config.
+**Permissions.** Each agent starts in its auto mode: a classifier (or, for agy, a sandbox) runs safe tool calls such as the ticket's checks, tests and builds without asking, and stops risky ones. A ticket no longer waits at its first shell command, as it did in "accept edits" modes. Checked live on 2026-11-12 as herdr sub-agents for Claude Code, Grok and agy (a safe command ran unasked; `rm -rf .git` was stopped). Codex's `--approve-for-me` (approvals go to its automatic review, in the workspace-write sandbox) is not yet checked live. None uses a "skip all permissions" flag.
+
+- **gemini and opencode have no auto mode**, only approve-everything (`--approval-mode yolo`, `opencode --auto`). They keep their defaults, so they still ask before a shell command: the build prints which sub-agent is waiting. Set `agents.<name>.run` yourself if you want approve-everything.
+- **An account without Claude Code's auto mode** sets `agents.claude.run: [claude, --permission-mode, acceptEdits]`.
+
+**Folder trust.** An agent's first run in a folder may ask "trust this folder?". shepherd builds in the repo you run it from, so it trusts that folder for the agent: cursor-agent through `--trust`; agy and grok, which have no such flag, by answering their prompt (only when it shows with "yes" selected; the build prints a line when it does). Claude Code needs nothing: its sub-agents run in the repo your Claude Code session already trusts. Its prompt is never answered for you, since its default is "No, exit". Codex's prompt is not yet seen live; if one appears the build says the sub-agent is waiting.
 
 **Cursor.** `agent:cursor-agent/auto` uses Cursor's `auto` model. When `cursor-agent --list-models` lists `auto-smart`, it also takes `agent:cursor-agent/auto-smart[optimize_for=cost]`, `[optimize_for=balanced]` and `[optimize_for=intelligence]`; the herdr panel offers these. Cursor is **not metered**: its runs count $0 and show as "not metered". The `auto-smart` router needs a Teams or Enterprise plan.
 

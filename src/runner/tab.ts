@@ -11,12 +11,15 @@
  * finds the tab still working is followed by `hc wait`, up to the wall-clock limit. A blocked tab is waited for with one
  * progress line, the first time.
  */
+import type { TrustPrompt } from "../agents.js";
 import type { HerdrClient, WaitResult } from "../herdr/client.js";
 import { redact } from "../redact.js";
 
 export const READY_TIMEOUT_MS = 5 * 60_000;
 /** After this long with no ready report, tell the person the tab may need them. */
 export const READY_NUDGE_MS = 20_000;
+/** How long one look for a known trust prompt waits for a ready report first. */
+export const TRUST_LOOK_MS = 2000;
 /** The wall-clock limit of one turn: agents have no turn limit, so this is the backstop. */
 export const TURN_TIMEOUT_MS = 4 * 60 * 60_000;
 /** How much of the screen is kept as the "last text" of a turn. */
@@ -75,6 +78,8 @@ export interface OpenTabInput extends TabTimings {
   progress(text: string): void;
   /** What to say, once per wait, when the program is blocked in this tab. */
   blockedNotice: string;
+  /** The agent's own "trust this folder?" prompt (`TRUST_PROMPTS`): answered when it shows, before the ready wait. */
+  trust?: TrustPrompt;
   /** The PATH the program is started with. Default: shepherd's own `PATH`. */
   path?: string;
 }
@@ -138,7 +143,29 @@ export async function openTab(input: OpenTabInput): Promise<Tab> {
   // Verified live: an agent showing a first-run dialog (Claude Code's "trust this folder?") reports no status at all,
   // not `blocked`. So after a short look the person is told the tab needs them, and the wait stretches to a turn's length.
   // Nothing is ever typed before the program reports ready: a send into such a dialog would answer it.
-  let first = await client.waitIdle(address, { timeoutMs: Math.min(READY_NUDGE_MS, readyTimeoutMs) });
+  // An agent with a known trust prompt and no flag to skip it (agy, grok) gets it answered for this folder, the one being
+  // built: its screen is read every few seconds until it reports ready, the prompt (with its "yes" option selected) shows,
+  // or the nudge time passes. Nothing else is ever pressed.
+  if (input.trust) {
+    for (;;) {
+      const look = await client.waitIdle(address, { timeoutMs: TRUST_LOOK_MS });
+      // A trust prompt shows as no status yet (timed out) or as `blocked` (agy, live): look at the screen for either.
+      if (!look.timedOut && look.status !== "blocked") break;
+      let screen = "";
+      try {
+        screen = await client.read(address, 0);
+      } catch {
+        /* unreadable: keep waiting */
+      }
+      if (input.trust.screen.test(screen)) {
+        await client.keys(address, input.trust.keys);
+        input.progress(`${input.name}: answered its "trust this folder" prompt for ${input.cwd}`);
+        break;
+      }
+      if (now() - readyAt >= Math.min(READY_NUDGE_MS, readyTimeoutMs)) break;
+    }
+  }
+  let first = await client.waitIdle(address, { timeoutMs: Math.max(1000, Math.min(READY_NUDGE_MS, readyTimeoutMs) - (now() - readyAt)) });
   let readyLimit = readyTimeoutMs;
   if (first.timedOut && readyTimeoutMs > READY_NUDGE_MS) {
     input.progress(`${input.blockedNotice} (it has not reported ready; it may be showing a first-run prompt such as "trust this folder")`);

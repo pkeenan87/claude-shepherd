@@ -5,7 +5,7 @@ import { isSessionLog } from "./agent-sweep.js";
  * review (`ticket-review-tab.ts`); each says which job, tier and ticket the rows are ledgered under.
  */
 import { mkdirSync } from "node:fs";
-import { agentCommand, type TicketModel } from "../agents.js";
+import { agentCommand, TRUST_PROMPTS, type TicketModel, type TrustPrompt } from "../agents.js";
 import type { CostRecord, Phase } from "../domain.js";
 import { lastAssistantText, ledgerChildSession, readChildSession, type ChildSessionFile } from "../herdr/session-file.js";
 import { redact } from "../redact.js";
@@ -20,6 +20,8 @@ export const PI_READY_TIMEOUT_MS = 2 * 60_000;
 
 export interface Program {
   argv: string[];
+  /** The agent's trust prompt to answer, if it has one (`TRUST_PROMPTS`). */
+  trust?: TrustPrompt;
   readyTimeoutMs?: number;
   /** Ledgers whatever the program spent since the last look and returns the rows added. */
   collect(): CostRecord[];
@@ -67,6 +69,7 @@ export function agentProgram(ctx: WorkflowContext, model: Extract<TicketModel, {
   const meter = createAgentMeter(model.name, { cwd: ctx.git.repoRoot, home: input.home ?? ctx.agentLogHome, onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset, input.job).catch(() => undefined), exclude: (file) => isSessionLog(ctx, file) });
   return {
     argv: agentCommand(model, ctx.config),
+    ...(TRUST_PROMPTS[model.name] ? { trust: TRUST_PROMPTS[model.name] } : {}),
     collect: () => {
       const calls = meter?.collect() ?? [];
       const entries = calls.length > 0 ? meteredEntries(model.name, calls) : [notMeteredEntry(model.name)];

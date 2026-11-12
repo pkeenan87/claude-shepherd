@@ -7398,12 +7398,16 @@ var WorkflowError = class extends Error {
 };
 
 // src/agents.ts
+var TRUST_PROMPTS = {
+  agy: { screen: /Do you trust the contents of this project\?[\s\S]*> Yes, I trust this folder/, keys: ["enter"] },
+  grok: { screen: /Do you trust the contents of this directory\?[\s\S]*Yes, proceed\s+y\b/, keys: ["y"] }
+};
 var BUILTIN_AGENTS = {
   claude: { run: ["claude", "--permission-mode", "auto"], modelFlag: "--model" },
-  codex: { run: ["codex", "--no-daemon", "-s", "workspace-write", "-a", "on-request"], modelFlag: "-m" },
-  "cursor-agent": { run: ["cursor-agent", "--auto-review"], modelFlag: "--model" },
-  grok: { run: ["grok", "--permission-mode", "acceptEdits"], modelFlag: "-m" },
-  agy: { run: ["agy", "--mode", "accept-edits"], modelFlag: "--model" },
+  codex: { run: ["codex", "--no-daemon", "--approve-for-me"], modelFlag: "-m" },
+  "cursor-agent": { run: ["cursor-agent", "--auto-review", "--trust"], modelFlag: "--model" },
+  grok: { run: ["grok", "--permission-mode", "auto"], modelFlag: "-m" },
+  agy: { run: ["agy", "--mode", "auto"], modelFlag: "--model" },
   gemini: { run: ["gemini", "--approval-mode", "auto_edit"], modelFlag: "-m" },
   opencode: { run: ["opencode"], modelFlag: "--model" }
 };
@@ -10377,6 +10381,7 @@ import path10 from "node:path";
 // src/runner/tab.ts
 var READY_TIMEOUT_MS = 5 * 6e4;
 var READY_NUDGE_MS = 2e4;
+var TRUST_LOOK_MS = 2e3;
 var TURN_TIMEOUT_MS = 4 * 60 * 6e4;
 var SCREEN_TAIL_CHARS = 2e3;
 var SCREEN_HISTORY_LINES = 200;
@@ -10423,7 +10428,24 @@ async function openTab(input) {
   }
   const minutes = (ms) => Math.round(ms / 6e4);
   const readyAt = now();
-  let first = await client.waitIdle(address, { timeoutMs: Math.min(READY_NUDGE_MS, readyTimeoutMs) });
+  if (input.trust) {
+    for (; ; ) {
+      const look = await client.waitIdle(address, { timeoutMs: TRUST_LOOK_MS });
+      if (!look.timedOut && look.status !== "blocked") break;
+      let screen = "";
+      try {
+        screen = await client.read(address, 0);
+      } catch {
+      }
+      if (input.trust.screen.test(screen)) {
+        await client.keys(address, input.trust.keys);
+        input.progress(`${input.name}: answered its "trust this folder" prompt for ${input.cwd}`);
+        break;
+      }
+      if (now() - readyAt >= Math.min(READY_NUDGE_MS, readyTimeoutMs)) break;
+    }
+  }
+  let first = await client.waitIdle(address, { timeoutMs: Math.max(1e3, Math.min(READY_NUDGE_MS, readyTimeoutMs) - (now() - readyAt)) });
   let readyLimit = readyTimeoutMs;
   if (first.timedOut && readyTimeoutMs > READY_NUDGE_MS) {
     input.progress(`${input.blockedNotice} (it has not reported ready; it may be showing a first-run prompt such as "trust this folder")`);
@@ -10482,6 +10504,7 @@ async function runAgentTicket(input, run3) {
         ...input,
         name,
         labels: { "shepherd.ticket": ticketId },
+        ...TRUST_PROMPTS[input.agent.name] ? { trust: TRUST_PROMPTS[input.agent.name] } : {},
         progress: host.progress,
         blockedNotice: `Ticket ${ticketId} is waiting for you in herdr sub-agent ${name} (agents list)`
       });
@@ -10840,6 +10863,7 @@ function agentProgram(ctx, model, input) {
   const meter = createAgentMeter(model.name, { cwd: ctx.git.repoRoot, home: input.home ?? ctx.agentLogHome, onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset, input.job).catch(() => void 0), exclude: (file) => isSessionLog(ctx, file) });
   return {
     argv: agentCommand(model, ctx.config),
+    ...TRUST_PROMPTS[model.name] ? { trust: TRUST_PROMPTS[model.name] } : {},
     collect: () => {
       const calls = meter?.collect() ?? [];
       const entries = calls.length > 0 ? meteredEntries(model.name, calls) : [notMeteredEntry(model.name)];
@@ -10885,6 +10909,7 @@ async function askInTab(ctx, input) {
       ...where.space ? { space: where.space } : {},
       cwd: ctx.git.repoRoot,
       argv: program.argv,
+      ...program.trust ? { trust: program.trust } : {},
       name,
       labels: { "shepherd.ticket-review": ticket.id },
       progress,
@@ -12586,6 +12611,7 @@ async function runAgentReview(ctx, input, progress) {
       ...where.space ? { space: where.space } : {},
       cwd: ctx.git.repoRoot,
       argv: program.argv,
+      ...program.trust ? { trust: program.trust } : {},
       name,
       labels: { "shepherd.review": input.stamp },
       progress,
@@ -12815,6 +12841,7 @@ async function runFixInTab(ctx, input) {
       ...where.space ? { space: where.space } : {},
       cwd: ctx.git.repoRoot,
       argv: program.argv,
+      ...program.trust ? { trust: program.trust } : {},
       name,
       labels: { "shepherd.review-fix": name },
       progress,
@@ -13454,6 +13481,10 @@ function createHerdrClient(options = {}) {
     },
     async kill(terminal) {
       await call(["kill", terminalArg(terminal, "kill"), "--json"], `kill ${terminal}`);
+    },
+    async keys(terminal, keys) {
+      if (!keys.length || keys.some((key) => !/^[a-z0-9+-]{1,16}$/.test(key))) throw new HerdrError("keys: bad key name", `${command} keys`);
+      await call(["keys", terminalArg(terminal, "keys"), ...keys], `keys ${terminal}`);
     }
   };
 }
@@ -13752,6 +13783,7 @@ function tracked(inner) {
     send: (terminal, text, options) => inner.send(terminal, text, options),
     waitIdle: (terminal, options) => inner.waitIdle(terminal, options),
     read: (terminal, lines2) => inner.read(terminal, lines2),
+    keys: (terminal, keys) => inner.keys(terminal, keys),
     kill: async (terminal) => {
       await inner.kill(terminal);
       open2.delete(terminal);

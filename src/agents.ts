@@ -6,25 +6,42 @@ export interface AgentDef {
   modelFlag?: string;
 }
 
+/** A CLI's "trust this folder?" first-run prompt: shepherd presses `keys` when the screen matches `screen`. */
+export interface TrustPrompt {
+  screen: RegExp;
+  keys: string[];
+}
+
+/**
+ * The trust prompts shepherd answers for the folder it builds in, for agents with no flag to skip one. Each was seen live
+ * on 2026-11-12 in an untrusted folder; the match includes the selected "yes" option, so nothing is pressed on a prompt that
+ * changed shape. Claude Code is left out on purpose: its prompt's default is "No, exit", and its tickets run in the repo the
+ * main Claude Code session already trusts. cursor-agent takes `--trust`. Codex was not signed in, so its prompt is unseen.
+ */
+export const TRUST_PROMPTS: Readonly<Record<string, TrustPrompt>> = {
+  agy: { screen: /Do you trust the contents of this project\?[\s\S]*> Yes, I trust this folder/, keys: ["enter"] },
+  grok: { screen: /Do you trust the contents of this directory\?[\s\S]*Yes, proceed\s+y\b/, keys: ["y"] },
+};
+
 /**
  * The agents shepherd knows. `agents:` in the user config overrides an entry key by key, or adds one; an override's `run`
- * replaces the whole argv, flags below included. Each default lets the agent edit files unattended but still asks for risky
- * things: a classifier mode where the CLI has one, else its "accept edits" mode, never a "skip all permissions" flag.
- * Chosen from each CLI's `--help` on 2026-11-08 (docs/configuration.md lists the evidence):
- * - claude `--permission-mode auto` (a classifier runs safe tool calls, ticket checks included, and blocks the rest; plain
- *   `acceptEdits` stopped every ticket at its first shell command), live-checked 2026-11-12;
- * - grok `--permission-mode acceptEdits`, agy `--mode accept-edits`,
- *   gemini `--approval-mode auto_edit`;
- * - codex `-s workspace-write -a on-request` (its "Auto" preset: edits inside the workspace, asks to go outside it);
- * - cursor-agent `--auto-review` (a classifier auto-runs safe tool calls and prompts for the rest; `--force`/`--yolo` is not used);
- * - opencode has no such mode (`--auto` approves everything not denied), so it runs as it is and follows its own permission config.
+ * replaces the whole argv, flags below included. Each default runs safe tool calls (the ticket's checks, tests, builds)
+ * without asking and still stops risky ones: the CLI's auto (classifier) mode, never a "skip all permissions" flag. Plain
+ * "accept edits" modes stopped every ticket at its first shell command. From each CLI's `--help`; live-checked 2026-11-12
+ * as herdr sub-agents (a safe command ran unasked, `rm -rf .git` was stopped) unless marked:
+ * - claude `--permission-mode auto`; grok `--permission-mode auto` (auto-review); agy `--mode auto` (its sandbox);
+ * - cursor-agent `--auto-review --trust` (a server classifier; `--trust` skips the workspace prompt; `--force`/`--yolo` is not used);
+ * - codex `--approve-for-me` (approvals go to its automatic review, in the workspace-write sandbox): not live-checked,
+ *   codex was not signed in;
+ * - gemini `--approval-mode auto_edit` and opencode (no flag) have no classifier mode, only approve-everything
+ *   (`yolo`, `--auto`), so they still ask for shell commands.
  */
 export const BUILTIN_AGENTS: Readonly<Record<string, AgentDef>> = {
   claude: { run: ["claude", "--permission-mode", "auto"], modelFlag: "--model" },
-  codex: { run: ["codex", "--no-daemon", "-s", "workspace-write", "-a", "on-request"], modelFlag: "-m" },
-  "cursor-agent": { run: ["cursor-agent", "--auto-review"], modelFlag: "--model" },
-  grok: { run: ["grok", "--permission-mode", "acceptEdits"], modelFlag: "-m" },
-  agy: { run: ["agy", "--mode", "accept-edits"], modelFlag: "--model" },
+  codex: { run: ["codex", "--no-daemon", "--approve-for-me"], modelFlag: "-m" },
+  "cursor-agent": { run: ["cursor-agent", "--auto-review", "--trust"], modelFlag: "--model" },
+  grok: { run: ["grok", "--permission-mode", "auto"], modelFlag: "-m" },
+  agy: { run: ["agy", "--mode", "auto"], modelFlag: "--model" },
   gemini: { run: ["gemini", "--approval-mode", "auto_edit"], modelFlag: "-m" },
   opencode: { run: ["opencode"], modelFlag: "--model" },
 };

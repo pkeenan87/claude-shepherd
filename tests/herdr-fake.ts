@@ -37,6 +37,8 @@ export interface FakeTab {
   maxTurns?: string;
   model: string;
   sends: string[];
+  /** Keys pressed (`hc keys`), in order. */
+  keys: string[];
   killed: boolean;
   /** What herdr shows for the tab: `idle` when it is ready, `done` after a finished turn (nobody looked yet), `working`, `blocked`... */
   status: string;
@@ -99,6 +101,7 @@ export function fakeHerdrClient(options: FakeHerdrClientOptions = {}) {
         maxTurns: envOf(run.argv, "PI_CHEF_MAX_TURNS"),
         model: argAfter(run.argv, "--model"),
         sends: [],
+        keys: [],
         killed: false,
         status: "idle",
         turn: 0,
@@ -137,6 +140,11 @@ export function fakeHerdrClient(options: FakeHerdrClientOptions = {}) {
     },
     async kill(terminal) {
       find(terminal).killed = true;
+    },
+    async keys(terminal, keys) {
+      const tab = find(terminal);
+      tab.events.push("keys");
+      tab.keys.push(...keys);
     },
   };
   return { client, tabs };

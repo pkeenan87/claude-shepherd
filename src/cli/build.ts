@@ -41,6 +41,7 @@ export function tracked(inner: HerdrClient): { client: HerdrClient; open: Set<st
     send: (terminal, text, options) => inner.send(terminal, text, options),
     waitIdle: (terminal, options) => inner.waitIdle(terminal, options),
     read: (terminal, lines) => inner.read(terminal, lines),
+    keys: (terminal, keys) => inner.keys(terminal, keys),
     kill: async (terminal) => {
       await inner.kill(terminal);
       open.delete(terminal);

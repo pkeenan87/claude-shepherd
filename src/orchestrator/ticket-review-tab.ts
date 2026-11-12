@@ -84,6 +84,7 @@ export async function askInTab<T>(ctx: WorkflowContext, input: TabReviewInput<T>
       ...(where.space ? { space: where.space } : {}),
       cwd: ctx.git.repoRoot,
       argv: program.argv,
+      ...(program.trust ? { trust: program.trust } : {}),
       name,
       labels: { "shepherd.ticket-review": ticket.id },
       progress,
