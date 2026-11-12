@@ -1,3 +1,4 @@
+import { isSessionLog } from "./agent-sweep.js";
 /**
  * The /review model pass run by an external agent (`models.review: agent:<name>[/<model>]`, or `/review --with agent:...`).
  * The agent gets a herdr tab in the repo and a prompt with the plan, the base to diff against and the scoring rules; it
@@ -82,7 +83,7 @@ const fingerprint = (diff: string) => createHash("sha256").update(diff).digest("
 export async function runAgentReview(ctx: WorkflowContext, input: AgentPassInput, progress: (line: string) => void): Promise<ModelReview> {
   const { agent } = input;
   const text = label(agent);
-  const where = await herdrSpace(ctx.herdr);
+  const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
   if ("problem" in where) return unavailable(agent, `${text} reviews in a herdr tab; start Pi inside herdr (${where.problem}), or point models.review at a Pi model.`);
   let tab: Tab | undefined;
   try {
@@ -93,20 +94,20 @@ export async function runAgentReview(ctx: WorkflowContext, input: AgentPassInput
     if (existsSync(outFile)) unlinkSync(outFile);
     const started = ctx.now().getTime();
     const before = fingerprint(await ctx.git.workingDiff(input.base.ref, input.exclude));
-    const meter = createAgentMeter(agent.name, { cwd: ctx.git.repoRoot, home: input.home, onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset).catch(() => undefined) });
-    const name = `chef-review-${input.stamp.replace("-", "")}`;
+    const meter = createAgentMeter(agent.name, { cwd: ctx.git.repoRoot, home: input.home ?? ctx.agentLogHome, onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset).catch(() => undefined), exclude: (file) => isSessionLog(ctx, file) });
+    const name = `shep-review-${input.stamp.replace("-", "")}`;
     progress(`opening ${text} in a herdr tab`);
     tab = await openTab({
       ...ctx.herdrTimings,
       ...input,
       client: ctx.herdr!,
-      space: where.space,
+      ...(where.space ? { space: where.space } : {}),
       cwd: ctx.git.repoRoot,
       argv,
       name,
       labels: { "shepherd.review": input.stamp },
       progress,
-      blockedNotice: `The review agent is waiting for you in tab ${name}`,
+      blockedNotice: `The review agent is waiting for you in herdr sub-agent ${name} (agents list)`,
     });
     const opened = tab;
     let failure: string | undefined;

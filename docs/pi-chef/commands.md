@@ -37,7 +37,7 @@ One request is one task, named from the request (`retry-ingest-parser`). The act
 
 Runs the approved tickets in dependency order. It refuses an unapproved plan, a plan with no tickets, and a spent budget. Run it again to resume: done tickets are skipped.
 
-**Needs herdr.** Pi must run inside [herdr](https://herdr.dev) with `hc` on the `PATH`; otherwise `/build` stops before touching git. Every ticket runs in its own herdr tab beside your session.
+**Needs herdr.** Pi must run inside [herdr](https://herdr.dev) with `hc` on the `PATH`; otherwise `/build` stops before touching git. Every ticket runs in its own herdr tab beside your session (claude-shepherd: a paneless sub-agent of the Claude Code terminal, unless `build.visibleTabs` is set; the per-ticket review runs `models.review` in its own sub-agent too, and `shepherd build --once` builds one ticket, for the `/shepherd:build` skill).
 
 **Branch.** A fresh build creates `<branchPrefix>/<task name>` in the current checkout, from the default branch (`origin/HEAD`, else `main` or `master`). Uncommitted changes are offered a separate "Changes before /build" commit first; declining (or no UI) refuses with `DIRTY_TREE`. One Pi process builds a task at a time (`BUILD_RUNNING`).
 

@@ -9,8 +9,7 @@ import { ConfigFileError, configPaths, displayPath, loadConfig, priceFor, type W
 import { isDeniedCommand } from "./sandbox.js";
 import type { BuildDriver } from "./orchestrator/build.js";
 import { createHerdrClient, type HerdrClient } from "./herdr/client.js";
-import { ticketHost } from "./runner/host.js";
-import { herdrSpace, NEEDS_HERDR, runTicket } from "./runner/ticket.js";
+import { createBuildDriver } from "./cli/build-host.js";
 import { registerLocalProvider } from "./providers/runtime.js";
 import { createRegistryChat, type PiRegistryLike } from "./providers/pi-chat.js";
 import { registryProblem, type UsableRegistry } from "./providers/usable.js";
@@ -272,61 +271,38 @@ function restoreToolsBeforePlan(ctx: ExtensionContext): void {
 }
 
 /**
- * The driver for /build, the only code that opens ticket tabs. Every ticket attempt runs in its own herdr tab beside the
- * user's session, which is never replaced, so `ctx` stays valid for the whole build. A Pi model runs as `pi -ne -e
- * ticket-mode.ts` in the tab (`runner/pi-ticket.ts`), an `agent:<name>` as that coding agent (`runner/agent-ticket.ts`).
+ * The driver for /build in Pi: `createBuildDriver` (`cli/build-host.ts`, Pi-free) plus Pi's own model check, the registry,
+ * and the local-context warning. The user's session is never replaced, so `ctx` stays valid for the whole build.
  */
 function buildHost(ctx: CommandContext, client: HerdrClient = herdrClient()): { getWorkflow: () => Workflow; driver: BuildDriver } {
   const live: CommandContext = ctx;
   // Local models whose served context window was compared with its local.models entry in this build (once each).
   const contextChecked = new Set<string>();
   const getWorkflow = () => workflowFor(live.cwd, live);
-  const needsHerdr = (problem: string) => `${NEEDS_HERDR} (${redact(problem)})`;
-  const driver: BuildDriver = {
-    // Before the build touches git: /build outside herdr (or without `hc`) starts no ticket and makes no branch.
-    async preflight() {
-      const where = await herdrSpace(client);
-      return "problem" in where ? needsHerdr(where.problem) : undefined;
-    },
-    async fresh(model, run, ticketId, limits, attempt = 1) {
-      // Preflight: a Pi child on a model Pi does not know, or has no login for, cannot be undone cleanly. Routing applies the
-      // same test (registryProblem) to every candidate, so this only trips when Pi changed since. An agent is not a Pi model.
-      if (!model.agent) {
-        let preflight: string | undefined;
-        try {
-          preflight = live.modelRegistry ? registryProblem(live.modelRegistry as unknown as UsableRegistry, model.provider, model.id) : `model ${model.id} cannot be checked: this Pi session has no model registry`;
-          if (preflight) preflight = `${model.provider}/${model.id}: ${preflight}`;
-        } catch (error) {
-          preflight = `${model.provider}/${model.id} could not be checked: ${redact(error instanceof Error ? error.message : String(error))}`;
-        }
-        if (preflight) {
-          return { stopped: `Ticket ${ticketId} cannot start on ${preflight}. Fix the models config or sign in, then /build again.` };
-        }
-        if (model.provider === "local" && !contextChecked.has(model.id)) {
-          contextChecked.add(model.id);
-          await warnLocalContext(getWorkflow().config, model.id, live);
-        }
+  const driver = createBuildDriver({
+    getWorkflow,
+    client,
+    cwd: live.cwd,
+    ticketModePath: fileURLToPath(new URL("./ticket-mode.ts", import.meta.url)),
+    changed: () => refreshStatus(live),
+    // Preflight: a Pi child on a model Pi does not know, or has no login for, cannot be undone cleanly. Routing applies the
+    // same test (registryProblem) to every candidate, so this only trips when Pi changed since.
+    async modelPreflight(model) {
+      let preflight: string | undefined;
+      try {
+        preflight = live.modelRegistry ? registryProblem(live.modelRegistry as unknown as UsableRegistry, model.provider, model.id) : `model ${model.id} cannot be checked: this Pi session has no model registry`;
+        if (preflight) preflight = `${model.provider}/${model.id}: ${preflight}`;
+      } catch (error) {
+        preflight = `${model.provider}/${model.id} could not be checked: ${redact(error instanceof Error ? error.message : String(error))}`;
       }
-      const where = await herdrSpace(client);
-      if ("problem" in where) return { stopped: needsHerdr(where.problem) };
-      const workflow = getWorkflow();
-      return runTicket(
-        {
-          client,
-          space: where.space,
-          cwd: live.cwd,
-          ticketId,
-          attempt,
-          model,
-          limits,
-          config: workflow.config,
-          ticketModePath: fileURLToPath(new URL("./ticket-mode.ts", import.meta.url)),
-          host: ticketHost(getWorkflow, () => refreshStatus(live)),
-        },
-        run,
-      );
+      if (preflight) return preflight;
+      if (model.provider === "local" && !contextChecked.has(model.id)) {
+        contextChecked.add(model.id);
+        await warnLocalContext(getWorkflow().config, model.id, live);
+      }
+      return undefined;
     },
-  };
+  });
   return { getWorkflow, driver };
 }
 

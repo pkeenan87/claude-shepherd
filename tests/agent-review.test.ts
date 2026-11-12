@@ -67,6 +67,16 @@ describe("/review with an agent", () => {
     expect(t.reports.join("\n")).toContain("agent:gemini");
   });
 
+  it("opens the review as a paneless sub-agent (no herdr.space or herdr.tab label), and labelled with build.visibleTabs", async () => {
+    const t = await agentReview();
+    await t.run();
+    expect(t.fake.tabs[0]!.options.labels).toEqual({ "shepherd.review": expect.any(String) });
+    const visible = await agentReview({ fake: {} });
+    visible.app.reconfigure(tieredConfig("models: { review: 'agent:gemini' }\nbuild: { visibleTabs: true }\n"));
+    await visible.run();
+    expect(visible.fake.tabs[0]!.options.labels).toMatchObject({ "herdr.space": "sp1", "herdr.tab": visible.fake.tabs[0]!.options.name });
+  });
+
   it("keeps the findings file under the task's reports dir when a task is open", async () => {
     const t = await agentReview({ withTask: true });
     expect((await t.run()).ok).toBe(true);
@@ -151,7 +161,7 @@ describe("/review with an agent", () => {
   it("keeps waiting while the agent is blocked on the person, and says so", async () => {
     const t = await agentReview({ fake: { turn: () => ["blocked", "done"] } });
     expect((await t.run()).ok).toBe(true);
-    expect(t.progress.filter((line) => line.includes("waiting for you in tab"))).toHaveLength(1);
+    expect(t.progress.filter((line) => line.includes("waiting for you in herdr sub-agent"))).toHaveLength(1);
     expect(t.report().modelReview!.findings).toHaveLength(1);
   });
 

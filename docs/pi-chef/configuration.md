@@ -133,4 +133,5 @@ Two rows for the same provider, model and date are an error. Subscription logins
 | Key | Default | Meaning |
 |---|---|---|
 | `branchPrefix` | `chef` | `/build` names its branch `<branchPrefix>/<task name>` (`-2`, `-3` when taken). Letters, digits, `.`, `_`, `-`, `/`; no trailing `/`, no `..`. |
+| `build.visibleTabs` | `false` | `/build` (claude-shepherd: `shepherd build`) runs each ticket and review as a paneless herdr sub-agent of the terminal it was started from (it shows in herdr's agents list). `true` opens each in its own labelled tab (`herdr.space`, `herdr.tab`) beside that terminal; the terminal then needs a `herdr.space` label. |
 | `workspaceDir` | `.pi-workflows` | Where task state, the ledger and reports live in each project. User file only. |

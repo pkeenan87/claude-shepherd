@@ -1,6 +1,6 @@
 node_modules/
 .shepherd/
-build/
+/build/
 *.tsbuildinfo
 dist/*
 !dist/shepherd.mjs

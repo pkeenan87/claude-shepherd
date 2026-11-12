@@ -22,6 +22,7 @@ export function ticketHost(getWorkflow: () => Workflow, changed: () => void = ()
       changed();
     },
     agentLogRead: (file, offset) => getWorkflow().advanceAgentLog(file, offset),
+    agentLogExcluded: (file) => getWorkflow().isSessionLog(file),
     head: () => getWorkflow().git.head().catch(() => undefined),
     branch: () => getWorkflow().git.currentBranch().catch(() => undefined),
     buildBranch: () => getWorkflow().buildBranch(),

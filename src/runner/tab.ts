@@ -27,7 +27,7 @@ const SCREEN_HISTORY_LINES = 200;
  * `chef-<task name>-<ticket>-<n>-<time>`, at most 32 characters of a-z 0-9 - _ (hc's rule): the task name gives way when it
  * is long. The last part is the clock in seconds (base 36), so a tab left open by an earlier attempt never has the name.
  */
-export function tabName(task: string, ticketId: string, attempt: number, at = Date.now(), prefix = "chef"): string {
+export function tabName(task: string, ticketId: string, attempt: number, at = Date.now(), prefix = "shep"): string {
   const clean = (text: string) => text.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
   const tail = `-${clean(ticketId)}-${attempt}-${Math.floor(at / 1000).toString(36).slice(-4)}`;
   return `${prefix}-${clean(task || "task").slice(0, Math.max(1, 32 - prefix.length - 1 - tail.length))}${tail}`.slice(0, 32);
@@ -59,8 +59,12 @@ export function waitProblem(waited: WaitResult, tab: string, minutes: number): s
 
 export interface OpenTabInput extends TabTimings {
   client: HerdrClient;
-  /** The herdr space of shepherd's own terminal: the tab opens beside it. */
-  space: string;
+  /**
+   * The herdr space of shepherd's own terminal. Given, the tab opens as a visible tab beside it (`herdr.space` and `herdr.tab`
+   * labels). Absent (the default), no label is passed: `hc run` from inside a herdr terminal records that terminal as the
+   * child's `parent` and the child is a paneless sub-agent, which shows in herdr's agents list.
+   */
+  space?: string;
   cwd: string;
   /** The program's argv. */
   argv: string[];
@@ -108,7 +112,7 @@ export async function openTab(input: OpenTabInput): Promise<Tab> {
   const now = input.now ?? Date.now;
   const turnTimeoutMs = input.turnTimeoutMs ?? TURN_TIMEOUT_MS;
   const readyTimeoutMs = input.readyTimeoutMs ?? READY_TIMEOUT_MS;
-  const address = await client.run({ argv: withPath(input.argv, "path" in input ? input.path : process.env.PATH), cwd: input.cwd, name: input.name, labels: { "herdr.space": input.space, "herdr.tab": input.name, ...input.labels } });
+  const address = await client.run({ argv: withPath(input.argv, "path" in input ? input.path : process.env.PATH), cwd: input.cwd, name: input.name, labels: { ...(input.space ? { "herdr.space": input.space, "herdr.tab": input.name } : {}), ...input.labels } });
 
   /** Follows `current` until the tab is neither working nor blocked, or `limitMs` (counted from `started`) has passed. */
   async function settle(current: WaitResult, started: number, limitMs: number): Promise<WaitResult> {

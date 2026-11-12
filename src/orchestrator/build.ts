@@ -743,6 +743,26 @@ export interface BuildDriver {
   fresh(model: ModelRef, run: (session: ChunkSession) => Promise<void>, ticketId: string, limits?: ChunkLimits, attempt?: number): Promise<void | { stopped: string }>;
 }
 
+/** What `runBuild` reports in `data` when it ran with `once`. */
+export interface BuildOnceData {
+  /** The ticket this run worked on; absent when none was left or the build stopped before one was picked. */
+  ticket?: { id: string; title: string };
+  outcome: "committed" | "stopped" | "done";
+  /** Every ticket is built. */
+  done: boolean;
+  /** Why the build stopped (the code is the result's `code`). */
+  stopped?: string;
+  /** The ticket the next run will build. */
+  next?: { id: string; title: string; difficulty: string };
+  /** The /build table: set when the build is done or stopped. */
+  report?: string;
+}
+
+export interface BuildRunOptions {
+  /** Build exactly one ticket to its end (all its turns, checks, review, escalation rungs and commit), then return with `BuildOnceData` in `data`. */
+  once?: boolean;
+}
+
 /** The slice of Workflow the loop needs. It is re-resolved through `getWorkflow` because Pi may replace the Workflow with the session. */
 export interface BuildWorkflow {
   startBuild(): Promise<CommandResult>;
@@ -753,16 +773,18 @@ export interface BuildWorkflow {
   /** Rolls a ticket back to not started when its session never took a turn. */
   unstartChunk(ticketId: string, previous?: TicketRun): Promise<void>;
   buildReport(stopped?: string): string;
+  /** The first ticket not done, in build order (for `once`). */
+  peekTicket?(): { id: string; title: string; difficulty: string } | undefined;
   progress(text: string): void;
   report(markdown: string): void;
   now(): Date;
 }
 
 /** Runs the approved tickets one chunk at a time, each in a fresh session on its routed model. Pure over its two arguments. */
-export async function runBuild(getWorkflow: () => BuildWorkflow, driver: BuildDriver): Promise<CommandResult> {
+export async function runBuild(getWorkflow: () => BuildWorkflow, driver: BuildDriver, options: BuildRunOptions = {}): Promise<CommandResult> {
   // Taken by startBuild; released here however the build ends, from the workflow of the session the build ended in.
   try {
-    return await buildLoop(getWorkflow, driver);
+    return await buildLoop(getWorkflow, driver, options);
   } finally {
     try {
       getWorkflow().releaseBuild();
@@ -772,7 +794,7 @@ export async function runBuild(getWorkflow: () => BuildWorkflow, driver: BuildDr
   }
 }
 
-async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver): Promise<CommandResult> {
+async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver, options: BuildRunOptions): Promise<CommandResult> {
   const unfit = await Promise.resolve(driver.preflight?.()).catch((error: unknown) => redact((error as Error)?.message || "The ticket runner is not available."));
   if (unfit) return fail("NEEDS_HERDR", unfit);
   const started = await getWorkflow().startBuild();
@@ -781,6 +803,9 @@ async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver):
   let code = "BUILD_STOPPED";
   let built = 0;
   let running: string | undefined;
+  /** The ticket this run picked last (what `once` reports). */
+  let worked: Ticket | undefined;
+  let finishedOne = false;
   try {
     for (;;) {
       const chunk = await getWorkflow().nextChunk();
@@ -790,6 +815,7 @@ async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver):
         code = chunk.code;
         break;
       }
+      worked = chunk.ticket;
       const began = getWorkflow().now().getTime();
       let outcome: ChunkFinish | undefined;
       let sent = false;
@@ -843,6 +869,10 @@ async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver):
         const split = result.review ? ` (impl ${result.notMetered && !result.costSplit.implementer ? "not metered" : usdCell(result.costSplit.implementer)} · review ${usdCell(result.costSplit.review)})` : "";
         workflow.progress(`Ticket ${chunk.ticket.id} · ${ticketDifficulty(chunk.ticket)} · ${ranModelText(chunk.model.provider, chunk.model.id)} · ${formatDuration(workflow.now().getTime() - began)} · ${result.notMetered && !result.costUsd ? "not metered" : formatUsd(result.costUsd)}${split} · checks passed${result.review ? ` · review ${result.review}` : ""} · committed ${result.sha.slice(0, 7)}`);
         if (result.warning) workflow.progress(result.warning);
+        if (options.once) {
+          finishedOne = true;
+          break;
+        }
         continue;
       }
       stopped = result.kind === "stopped" ? result.reason : "The ticket needs another attempt.";
@@ -854,6 +884,7 @@ async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver):
     // The chunk's session failed (for example it could not be opened): release the ticket so branch rules stop applying.
     if (running) await getWorkflow().finishChunk(running, { lastText: "", aborted: true }).catch(() => undefined);
   }
+  if (options.once) return onceResult(getWorkflow, { worked, finishedOne, stopped, code });
   try {
     const workflow = getWorkflow();
     workflow.report(workflow.buildReport(stopped));
@@ -862,4 +893,40 @@ async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver):
   }
   if (stopped) return fail(code, stopped);
   return done(`Built ${built} ticket(s). Run /review to check the branch, then push and open the PR yourself (git push, then origin pr create or gh pr create).`);
+}
+
+/** The result of a `once` run: what happened to the ticket, what comes next, and the table when the build is over. */
+function onceResult(getWorkflow: () => BuildWorkflow, ran: { worked: Ticket | undefined; finishedOne: boolean; stopped: string | undefined; code: string }): CommandResult {
+  const { worked, finishedOne, stopped, code } = ran;
+  const workflow = getWorkflow();
+  const ticket = worked ? { id: worked.id, title: worked.title } : undefined;
+  let next: BuildOnceData["next"];
+  try {
+    next = workflow.peekTicket?.();
+  } catch {
+    /* no next ticket named */
+  }
+  const finished = finishedOne ? next === undefined : !stopped;
+  // The table is for the end of the build; between tickets the one-line results are enough.
+  let report: string | undefined;
+  if (stopped || finished) {
+    try {
+      report = workflow.buildReport(stopped);
+      workflow.report(report);
+    } catch {
+      /* the result still says how it ended */
+    }
+  }
+  const data = (outcome: BuildOnceData["outcome"]): BuildOnceData => ({ ...(ticket ? { ticket } : {}), outcome, done: finished, ...(stopped ? { stopped } : {}), ...(next ? { next } : {}), ...(report ? { report } : {}) });
+  if (stopped) return { ok: false, code, text: stopped, data: data("stopped") };
+  if (!finishedOne) return { ok: true, text: "All tickets are built. Run /review to check the branch, then push and open the PR yourself.", data: data("done") };
+  const text = next ? `Ticket ${worked!.id} is built. Next: ticket ${next.id} (${next.title}); run /build again.` : `Ticket ${worked!.id} is built, the last one. Run /review to check the branch, then push and open the PR yourself.`;
+  return { ok: true, text, data: data("committed") };
+}
+
+/** The first ticket whose run is not done, in build order, or undefined when every ticket is done. */
+export function peekNextTicket(ctx: WorkflowContext): { id: string; title: string; difficulty: string } | undefined {
+  const state = requireActive(ctx);
+  const ticket = orderedTickets(state.plan?.tickets ?? []).find((item) => state.ticketRuns?.[item.id]?.status !== "done");
+  return ticket ? { id: ticket.id, title: ticket.title, difficulty: ticketDifficulty(ticket) } : undefined;
 }

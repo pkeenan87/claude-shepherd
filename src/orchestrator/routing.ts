@@ -2,6 +2,7 @@ import { modelText, parseTicketModel, type TicketModel } from "../agents.js";
 import { DEFAULT_MODELS, type WorkflowConfig } from "../config.js";
 import type { Difficulty } from "../domain.js";
 import { registryProblem } from "../providers/usable.js";
+import { NO_PI } from "../runner/pi-path.js";
 import { iso, type WorkflowContext } from "./context.js";
 import type { LocalLimit } from "./prompts.js";
 
@@ -70,7 +71,8 @@ export interface Route {
  */
 export function routeFor(ctx: WorkflowContext, rung: Route["rung"], model: TicketModel): Route {
   const label = modelText(model);
-  const problem = model.kind === "pi" && ctx.registry ? registryProblem(ctx.registry, model.provider, model.id) : undefined;
+  // Without a Pi registry (outside Pi) a Pi model can only be checked for a `pi` to run it, when the host binds that check.
+  const problem = model.kind !== "pi" ? undefined : ctx.registry ? registryProblem(ctx.registry, model.provider, model.id) : ctx.piAvailable && !ctx.piAvailable() ? NO_PI : undefined;
   return { rung, model, label, ...(problem ? { blocked: `${label}: ${problem}` } : {}) };
 }
 

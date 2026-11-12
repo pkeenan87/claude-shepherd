@@ -45,6 +45,15 @@ describe("Claude Code meter", () => {
     expect(meter.collect()).toEqual([]);
   });
 
+  it("never reads an excluded file (the main session's own transcript grows while a tab runs)", () => {
+    const { home, project, file } = setup();
+    const chat = path.join(project, "main.jsonl");
+    const meter = createAgentMeter("claude", { cwd: repo, home, exclude: (name) => name === chat })!;
+    writeFileSync(chat, line("chat", use(500, 50)) + "\n");
+    writeFileSync(file, line("m1", use(10, 5)) + "\n");
+    expect(meter.collect()).toEqual([{ provider: "anthropic", model: "claude-sonnet-5-5", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, requests: 1 } }]);
+  });
+
   it("keeps the largest value per field when a streamed message is written more than once", () => {
     const { home, file } = setup();
     const meter = createAgentMeter("claude", { cwd: repo, home })!;

@@ -50,6 +50,8 @@ export interface AgentMeterOptions {
   home?: string;
   /** Called with a log file and the byte offset `collect()` has read it to (the repo's agent-log watermark follows it). */
   onConsumed?: (file: string, offset: number) => void;
+  /** Files never read: the main session's own transcripts, which grow while a tab runs. */
+  exclude?: (file: string) => boolean;
 }
 
 /** The agents that have a reader, with the provider their usage is priced under. */
@@ -271,6 +273,7 @@ export function createAgentMeter(agent: string, options: AgentMeterOptions): Age
       try {
         const current = new Map<string, Found>();
         for (const [file, size] of list()) {
+          if (options.exclude?.(file)) continue;
           const was = snapshot.get(file);
           // Only files that are new or have grown since the snapshot are read.
           if (was !== undefined && size <= was) continue;

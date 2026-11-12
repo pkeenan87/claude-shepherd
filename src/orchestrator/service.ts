@@ -3,12 +3,12 @@ import { fromMicroUsd, loadConfig, toMicroUsd, type WorkflowConfig } from "../co
 import { type CommandResult, type CostRecord, type TicketRun, type TokenUsage } from "../domain.js";
 import { GitWorkspace } from "../git/workspace.js";
 import { TaskStore } from "../storage/store.js";
-import { buildReport, finishChunk, nextChunk, startBuild, unstartChunk } from "./build.js";
+import { buildReport, finishChunk, nextChunk, peekNextTicket, startBuild, unstartChunk } from "./build.js";
 import { budgetState, checkBudget, observeUsage, recordAgentUsage, recordPiUsage, recordWebSearch } from "./budget.js";
 import { active, fail, type WorkflowContext } from "./context.js";
 import { ledgerChildSession, sweepTicketSessions } from "../herdr/session-file.js";
 import { activeTask, displayName, stateText } from "./tasks.js";
-import { sweepAgentLogs, type SweepOptions } from "./agent-sweep.js";
+import { isSessionLog, sweepAgentLogs, type SweepOptions } from "./agent-sweep.js";
 import { cachingRunner, defaultRunner } from "./exec.js";
 import { abandonRound, beginRound, requestPlanChanges, planningPrompt, planningStatusText, recordAnswers, savePlanSpec, startPlan, activePlanning, type InterviewAnswer, type InterviewQuestion } from "./interview.js";
 import { checkTickets, commitTickets, requireTicketStage } from "./ticket-plan.js";
@@ -54,8 +54,10 @@ export class Workflow {
       herdr: options.herdr,
       herdrTimings: options.herdrTimings,
       ticketModePath: options.ticketModePath,
+      piAvailable: options.piAvailable,
       agentLogHome: options.agentLogHome,
       dailyRecords: options.dailyRecords,
+      knownSessions: options.knownSessions,
       status: options.status,
       planStatus: options.planStatus,
       startTurn: options.startTurn,
@@ -139,6 +141,11 @@ export class Workflow {
     return activeTask(this.ctx);
   }
 
+  /** Whether an agent log file is a main session's own transcript (or its subagents'), which agent meters never count. */
+  isSessionLog(file: string): boolean {
+    return isSessionLog(this.ctx, file);
+  }
+
   /** The agent-log sweep (see `sweepAgentLogs`): ledgers use that shepherd did not start, and the main session's own turns. */
   sweepAgentLogs(options?: SweepOptions) {
     return sweepAgentLogs(this.ctx, options);
@@ -219,6 +226,11 @@ export class Workflow {
   /** `/build`: starts or resumes the build (branch, budget, approval). The session loop is in extension.ts. */
   startBuild(): Promise<CommandResult> {
     return startBuild(this.ctx);
+  }
+
+  /** The first ticket not done, in build order. */
+  peekTicket(): ReturnType<typeof peekNextTicket> {
+    return peekNextTicket(this.ctx);
   }
 
   releaseBuild(): void {

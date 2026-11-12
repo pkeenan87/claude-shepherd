@@ -28,6 +28,8 @@ export interface WorkflowContext {
   readonly warned: Set<string>;
   /** Replaces the home directory the agent logs are looked for under (tests, the CLI). */
   agentLogHome?: string;
+  /** Main Claude Code sessions the hooks have recorded: their logs are the session's own, never an agent tab's or outside chef. */
+  knownSessions?: () => { transcriptPath: string; sessionId: string }[];
   /** Today's budget counts these records (every registered repo's ledger) instead of this repo's own. Absent: the repo ledger. */
   dailyRecords?: () => CostRecord[];
   /** Ledger ids of Pi's own calls already recorded (`recordPiUsage`), loaded from the ledger on first use. */
@@ -47,6 +49,8 @@ export interface WorkflowContext {
   ticketModePath?: string;
   /** Pi's model registry for the live session. When bound, routing skips candidates it does not know or holds no credentials for. */
   registry?: UsableRegistry;
+  /** Outside Pi: whether a `pi` program can be started for a Pi model's ticket or review. Unset, no such check is made. */
+  piAvailable?: () => boolean;
   status?: (text: string | undefined) => void;
   /** Plan-interview progress line (separate from the routing status so a routed turn does not overwrite it). */
   planStatus?: (text: string | undefined) => void;

@@ -19,6 +19,11 @@ import { formatIdle, formatTokens } from "../orchestrator/format.js";
 import { Workflow } from "../orchestrator/service.js";
 import { dailyRecordsOf, readJson, registerRepo, registeredRepos, removeFile, sessionFile, shepherdHome, writeJson } from "../shepherd-home.js";
 import { guardHits, type GuardHit } from "./bash-guard.js";
+import type { HerdrClient } from "../herdr/client.js";
+import type { CheckRunner } from "../review/review.js";
+import type { TabTimings } from "../runner/tab.js";
+import type { WorkflowOptions } from "../orchestrator/types.js";
+import { buildCommand, BUILD_USAGE } from "./build.js";
 import { approvalReason, PLAN_USAGE, planCommand, plansCommand, taskCommand } from "./plan.js";
 
 const run = promisify(execFile);
@@ -28,6 +33,7 @@ const USAGE = `Usage:
   shepherd cost [--json]
   shepherd status
   shepherd hook <stop|prompt|pretool>   (reads the hook JSON on stdin)
+  shepherd build [--once] [--json]   (runs the approved plan's tickets as herdr sub-agents; --once builds one ticket)
   shepherd plan <start|spec|tickets|show|revise|approve> ...   (shepherd plan --help)
   shepherd plans [<name> | close <name> | --all]
   shepherd task <list|use <name>|close [<name>]>
@@ -47,6 +53,13 @@ export interface CliOptions {
   home?: string;
   /** Where the command runs (default: process.cwd(); a hook uses the cwd in its JSON). */
   cwd?: string;
+  /** Test seams for `build`: the herdr client (default: the real `hc`), the check runner, the tab timings, whether `pi` is installed, the ticket-mode path, and what a signal exits with. */
+  herdr?: HerdrClient;
+  runner?: CheckRunner;
+  herdrTimings?: TabTimings;
+  piAvailable?: () => boolean;
+  ticketModePath?: string;
+  exit?: (code: number) => void;
 }
 
 const defaultIo: CliIo = { out: (text) => process.stdout.write(text), err: (text) => process.stderr.write(text) };
@@ -75,7 +88,7 @@ interface Session {
 type Opened = { session: Session } | { problem: "no-repo" } | { problem: "config"; message: string };
 
 /** The repo around `cwd`, its config, and a Workflow whose daily budget spans every registered repo. No UI. */
-async function open(cwd: string, options: CliOptions, confirm?: () => Promise<boolean>): Promise<Opened> {
+async function open(cwd: string, options: CliOptions, confirm?: () => Promise<boolean>, extras: Partial<WorkflowOptions> = {}): Promise<Opened> {
   let root: string;
   try {
     root = (await run("git", ["rev-parse", "--show-toplevel"], { cwd })).stdout.trim();
@@ -96,7 +109,7 @@ async function open(cwd: string, options: CliOptions, confirm?: () => Promise<bo
   const workspace = path.join(root, config.workspaceDir);
   ignoreWorkspace(workspace);
   await registerRepo(shepherd, workspace);
-  const workflow = new Workflow({ cwd: root, config, now, ...(confirm ? { confirm } : {}), agentLogHome: home, dailyRecords: () => dailyRecordsOf([...registeredRepos(shepherd), workspace], now()) });
+  const workflow = new Workflow({ cwd: root, config, now, ...(confirm ? { confirm } : {}), agentLogHome: home, knownSessions: () => knownSessions(shepherd), dailyRecords: () => dailyRecordsOf([...registeredRepos(shepherd), workspace], now()), ...extras });
   return { session: { root, workflow, config, shepherd, now } };
 }
 
@@ -391,6 +404,19 @@ function ignoreWorkspace(workspace: string): void {
   writeFileSync(file, "*\n");
 }
 
+async function buildFamily(rest: string[], io: CliIo, options: CliOptions): Promise<number> {
+  if (rest.includes("--help") || rest.includes("-h")) {
+    io.out(`${BUILD_USAGE}\n`);
+    return 0;
+  }
+  const cwd = options.cwd ?? process.cwd();
+  return buildCommand(rest, io, options, async (extras) => {
+    const opened = await open(cwd, options, undefined, extras).catch((error: unknown) => ({ problem: "error" as const, message: redact((error instanceof Error ? error.message : String(error)).split("\n")[0]!) }));
+    if ("problem" in opened) return { problem: opened.problem === "no-repo" ? "shepherd: not inside a git repository." : opened.message };
+    return { workflow: opened.session.workflow, root: opened.session.root, config: opened.session.config };
+  });
+}
+
 export async function main(argv: string[], io: CliIo = defaultIo, options: CliOptions = {}): Promise<number> {
   const [command, ...rest] = argv;
   if (command === "version" && rest.length === 0) {
@@ -400,6 +426,7 @@ export async function main(argv: string[], io: CliIo = defaultIo, options: CliOp
   if (command === "cost") return costCommand(rest, io, options);
   if (command === "status") return statusCommand(io, options);
   if (command === "hook") return hookCommand(rest[0], io, options);
+  if (command === "build") return buildFamily(rest, io, options);
   if (command === "plan" || command === "plans" || command === "task") return planFamily(command, rest, io, options);
   io.err(USAGE);
   return 2;

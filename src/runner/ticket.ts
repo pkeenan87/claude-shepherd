@@ -13,12 +13,17 @@ import { runPiTicket, type HerdrTicketHost } from "./pi-ticket.js";
 /** The stop message when /build is not running inside herdr (or `hc` is missing). No ticket is started. */
 export const NEEDS_HERDR = "/build runs each ticket in a herdr tab; start Pi inside herdr and run /build again.";
 
-/** Why this process cannot open ticket tabs, or the space to open them in. Never throws. */
-export async function herdrSpace(client: HerdrClient | undefined): Promise<{ space: string } | { problem: string }> {
+/**
+ * Why this process cannot start sub-agents, or where to put them. Needs only HC_TERMINAL_ID and a working `hc`; a `space` comes
+ * back only with `visible` (`build.visibleTabs`), which then needs the terminal to have a `herdr.space` label. Never throws.
+ */
+export async function herdrSpace(client: HerdrClient | undefined, visible = false): Promise<{ space?: string } | { problem: string }> {
   if (!client) return { problem: "no herdr client" };
   try {
     const self = await client.self();
-    return "problem" in self ? { problem: self.problem } : { space: self.space };
+    if ("problem" in self) return { problem: self.problem };
+    if (!visible) return {};
+    return self.space ? { space: self.space } : { problem: `terminal ${self.terminal} has no herdr.space label, which build.visibleTabs needs` };
   } catch (error) {
     return { problem: messageOf(error) };
   }
@@ -27,8 +32,8 @@ export async function herdrSpace(client: HerdrClient | undefined): Promise<{ spa
 export interface TicketRunInput extends TabTimings {
   client: HerdrClient;
   host: HerdrTicketHost & AgentTicketHost;
-  /** The herdr space of shepherd's own terminal. */
-  space: string;
+  /** The herdr space of shepherd's own terminal, only with `build.visibleTabs`; absent, the ticket runs as a paneless sub-agent. */
+  space?: string;
   cwd: string;
   ticketId: string;
   /** The ticket's attempt number, for an agent tab's name. */

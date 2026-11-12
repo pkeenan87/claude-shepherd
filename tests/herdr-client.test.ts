@@ -137,8 +137,11 @@ describe("self", () => {
     expect(await createHerdrClient({ exec, env: { HC_TERMINAL_ID: "t4" } }).self()).toEqual({ terminal: "t4", space: "sp9" });
     expect(calls[0].args).toEqual(["get", "t4", "--json"]);
   });
-  it("no space label, hc failing", async () => {
-    expect(await createHerdrClient({ exec: fakeHerdr({ get: [ok({ address: "t4", labels: {} })] }).exec, env: { HC_TERMINAL_ID: "t4" } }).self()).toEqual({ problem: expect.stringMatching(/herdr\.space/) });
+  it("a terminal with no space label is fine: only visible tabs need one", async () => {
+    expect(await createHerdrClient({ exec: fakeHerdr({ get: [ok({ address: "t4", labels: {} })] }).exec, env: { HC_TERMINAL_ID: "t4" } }).self()).toEqual({ terminal: "t4" });
+  });
+
+  it("hc failing", async () => {
     expect(await createHerdrClient({ exec: fakeHerdr({ get: [fail("gone")] }).exec, env: { HC_TERMINAL_ID: "t4" } }).self()).toEqual({ problem: expect.stringMatching(/gone/) });
     const missing = createHerdrClient({ exec: async () => ({ stdout: "", stderr: "", code: null, spawnError: "ENOENT" }), env: { HC_TERMINAL_ID: "t4" } });
     expect(await missing.self()).toEqual({ problem: expect.stringMatching(/not installed/) });
