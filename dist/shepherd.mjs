@@ -1501,7 +1501,7 @@ var require_stringify = __commonJS({
         props.push(doc.directives.tagString(tag));
       return props.join(" ");
     }
-    function stringify(item, ctx, onComment, onChompKeep) {
+    function stringify2(item, ctx, onComment, onChompKeep) {
       if (identity.isPair(item))
         return item.toString(ctx, onComment, onChompKeep);
       if (identity.isAlias(item)) {
@@ -1530,7 +1530,7 @@ var require_stringify = __commonJS({
 ${ctx.indent}${str}`;
     }
     exports.createStringifyContext = createStringifyContext;
-    exports.stringify = stringify;
+    exports.stringify = stringify2;
   }
 });
 
@@ -1540,7 +1540,7 @@ var require_stringifyPair = __commonJS({
     "use strict";
     var identity = require_identity();
     var Scalar = require_Scalar();
-    var stringify = require_stringify();
+    var stringify2 = require_stringify();
     var stringifyComment = require_stringifyComment();
     function stringifyPair({ key, value }, ctx, onComment, onChompKeep) {
       const { allNullValues, doc, indent, indentStep, options: { commentString, indentSeq, simpleKeys } } = ctx;
@@ -1562,7 +1562,7 @@ var require_stringifyPair = __commonJS({
       });
       let keyCommentDone = false;
       let chompKeep = false;
-      let str = stringify.stringify(key, ctx, () => keyCommentDone = true, () => chompKeep = true);
+      let str = stringify2.stringify(key, ctx, () => keyCommentDone = true, () => chompKeep = true);
       if (!explicitKey && !ctx.inFlow && str.length > 1024) {
         if (simpleKeys)
           throw new Error("With simple keys, single line scalar must not span more than 1024 characters");
@@ -1614,7 +1614,7 @@ ${indent}:`;
         ctx.indent = ctx.indent.substring(2);
       }
       let valueCommentDone = false;
-      const valueStr = stringify.stringify(value, ctx, () => valueCommentDone = true, () => chompKeep = true);
+      const valueStr = stringify2.stringify(value, ctx, () => valueCommentDone = true, () => chompKeep = true);
       let ws = " ";
       if (keyComment || vsb || vcb) {
         ws = vsb ? "\n" : "";
@@ -1755,7 +1755,7 @@ var require_addPairToJSMap = __commonJS({
     "use strict";
     var log = require_log();
     var merge = require_merge();
-    var stringify = require_stringify();
+    var stringify2 = require_stringify();
     var identity = require_identity();
     var toJS = require_toJS();
     function addPairToJSMap(ctx, map, { key, value }) {
@@ -1791,7 +1791,7 @@ var require_addPairToJSMap = __commonJS({
       if (typeof jsKey !== "object")
         return String(jsKey);
       if (identity.isNode(key) && ctx?.doc) {
-        const strCtx = stringify.createStringifyContext(ctx.doc, {});
+        const strCtx = stringify2.createStringifyContext(ctx.doc, {});
         strCtx.anchors = /* @__PURE__ */ new Set();
         for (const node of ctx.anchors.keys())
           strCtx.anchors.add(node.anchor);
@@ -1858,12 +1858,12 @@ var require_stringifyCollection = __commonJS({
   "node_modules/yaml/dist/stringify/stringifyCollection.js"(exports) {
     "use strict";
     var identity = require_identity();
-    var stringify = require_stringify();
+    var stringify2 = require_stringify();
     var stringifyComment = require_stringifyComment();
     function stringifyCollection(collection, ctx, options) {
       const flow = ctx.inFlow ?? collection.flow;
-      const stringify2 = flow ? stringifyFlowCollection : stringifyBlockCollection;
-      return stringify2(collection, ctx, options);
+      const stringify3 = flow ? stringifyFlowCollection : stringifyBlockCollection;
+      return stringify3(collection, ctx, options);
     }
     function stringifyBlockCollection({ comment, items }, ctx, { blockItemPrefix, flowChars, itemIndent, onChompKeep, onComment }) {
       const { indent, options: { commentString } } = ctx;
@@ -1888,7 +1888,7 @@ var require_stringifyCollection = __commonJS({
           }
         }
         chompKeep = false;
-        let str2 = stringify.stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
+        let str2 = stringify2.stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
         if (comment2)
           str2 += stringifyComment.lineComment(str2, itemIndent, commentString(comment2));
         if (chompKeep && comment2)
@@ -1955,7 +1955,7 @@ ${indent}${line}` : "\n";
         }
         if (comment)
           reqNewline = true;
-        let str = stringify.stringify(item, itemCtx, () => comment = null);
+        let str = stringify2.stringify(item, itemCtx, () => comment = null);
         reqNewline || (reqNewline = lines2.length > linesAtValue || str.includes("\n"));
         if (i < items.length - 1) {
           str += ",";
@@ -3316,7 +3316,7 @@ var require_stringifyDocument = __commonJS({
   "node_modules/yaml/dist/stringify/stringifyDocument.js"(exports) {
     "use strict";
     var identity = require_identity();
-    var stringify = require_stringify();
+    var stringify2 = require_stringify();
     var stringifyComment = require_stringifyComment();
     function stringifyDocument(doc, options) {
       const lines2 = [];
@@ -3331,7 +3331,7 @@ var require_stringifyDocument = __commonJS({
       }
       if (hasDirectives)
         lines2.push("---");
-      const ctx = stringify.createStringifyContext(doc, options);
+      const ctx = stringify2.createStringifyContext(doc, options);
       const { commentString } = ctx.options;
       if (doc.commentBefore) {
         if (lines2.length !== 1)
@@ -3353,7 +3353,7 @@ var require_stringifyDocument = __commonJS({
           contentComment = doc.contents.comment;
         }
         const onChompKeep = contentComment ? void 0 : () => chompKeep = true;
-        let body = stringify.stringify(doc.contents, ctx, () => contentComment = null, onChompKeep);
+        let body = stringify2.stringify(doc.contents, ctx, () => contentComment = null, onChompKeep);
         if (contentComment)
           body += stringifyComment.lineComment(body, "", commentString(contentComment));
         if ((body[0] === "|" || body[0] === ">") && lines2[lines2.length - 1] === "---") {
@@ -3361,7 +3361,7 @@ var require_stringifyDocument = __commonJS({
         } else
           lines2.push(body);
       } else {
-        lines2.push(stringify.stringify(doc.contents, ctx));
+        lines2.push(stringify2.stringify(doc.contents, ctx));
       }
       if (doc.directives?.docEnd) {
         if (doc.comment) {
@@ -5497,7 +5497,7 @@ var require_cst_scalar = __commonJS({
 var require_cst_stringify = __commonJS({
   "node_modules/yaml/dist/parse/cst-stringify.js"(exports) {
     "use strict";
-    var stringify = (cst) => "type" in cst ? stringifyToken(cst) : stringifyItem(cst);
+    var stringify2 = (cst) => "type" in cst ? stringifyToken(cst) : stringifyItem(cst);
     function stringifyToken(token) {
       switch (token.type) {
         case "block-scalar": {
@@ -5550,7 +5550,7 @@ var require_cst_stringify = __commonJS({
         res += stringifyToken(value);
       return res;
     }
-    exports.stringify = stringify;
+    exports.stringify = stringify2;
   }
 });
 
@@ -7280,7 +7280,7 @@ var require_public_api = __commonJS({
       }
       return doc.toJS(Object.assign({ reviver: _reviver }, options));
     }
-    function stringify(value, replacer, options) {
+    function stringify2(value, replacer, options) {
       let _replacer = null;
       if (typeof replacer === "function" || Array.isArray(replacer)) {
         _replacer = replacer;
@@ -7305,7 +7305,7 @@ var require_public_api = __commonJS({
     exports.parse = parse2;
     exports.parseAllDocuments = parseAllDocuments;
     exports.parseDocument = parseDocument2;
-    exports.stringify = stringify;
+    exports.stringify = stringify2;
   }
 });
 
@@ -7367,7 +7367,7 @@ import { createHash as createHash3 } from "node:crypto";
 import { closeSync as closeSync2, existsSync as existsSync14, fstatSync, mkdirSync as mkdirSync9, openSync as openSync2, writeFileSync as writeFileSync4, readdirSync as readdirSync6, readFileSync as readFileSync15, readSync as readSync2, realpathSync as realpathSync2 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
 import path25 from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { promisify as promisify3 } from "node:util";
 
 // src/config.ts
@@ -14082,6 +14082,7 @@ var import_yaml2 = __toESM(require_dist(), 1);
 import { existsSync as existsSync13, readFileSync as readFileSync14 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
 import path24 from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 var MIGRATE_USAGE = "Usage: shepherd migrate-config [--force] [--json]   (copies ~/.pi/agent/chef.yaml to ~/.claude/shepherd.yaml)";
 function firstExisting(base2) {
   return [`${base2}.yaml`, `${base2}.yml`].find((file) => existsSync13(file));
@@ -14090,6 +14091,46 @@ function backupName(file) {
   let candidate = `${file}.bak`;
   for (let n = 2; existsSync13(candidate); n += 1) candidate = `${file}.bak.${n}`;
   return candidate;
+}
+var isRecord3 = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+var TIER_MODELS = [["ticketLow", "low"], ["ticketMedium", "medium"], ["ticketHigh", "high"], ["premium", "review"]];
+function fromTiers(raw) {
+  const tiers = isRecord3(raw.tiers) ? raw.tiers : {};
+  const current = isRecord3(raw.models) ? raw.models : {};
+  const models = {};
+  const notes = [];
+  for (const [tier, key] of TIER_MODELS) {
+    const first = Array.isArray(tiers[tier]) ? tiers[tier][0] : void 0;
+    if (!isRecord3(first) || typeof first.provider !== "string" || typeof first.model !== "string" || !first.provider || !first.model) continue;
+    if (typeof current[key] === "string") continue;
+    models[key] = `${first.provider}/${first.model}`;
+  }
+  let local;
+  const server = isRecord3(raw.providers) && isRecord3(raw.providers.local) ? raw.providers.local : void 0;
+  const candidates = (Array.isArray(tiers.local) ? tiers.local : []).filter((item) => isRecord3(item) && item.provider === "local" && typeof item.model === "string" && item.model !== "");
+  if (raw.local === void 0 && server && typeof server.baseUrl === "string" && candidates.length > 0) {
+    local = {
+      baseUrl: server.baseUrl,
+      ...typeof server.apiKeyEnv === "string" ? { apiKeyEnv: server.apiKeyEnv } : {},
+      // pi-chef told Pi 128000 when a tier entry set no window; shepherd needs it written down.
+      models: candidates.map((item) => ({ id: item.model, contextWindow: typeof item.contextWindow === "number" ? item.contextWindow : 128e3, ...typeof item.maxTokens === "number" ? { maxTokens: item.maxTokens } : {} }))
+    };
+  }
+  const difficulties = isRecord3(raw.localMode) && Array.isArray(raw.localMode.difficulties) ? raw.localMode.difficulties.filter((item) => typeof item === "string") : [];
+  if (difficulties.length > 0 && candidates.length > 0) {
+    const ref = `local/${candidates[0].model}`;
+    notes.push(`pi-chef's local mode sent ${difficulties.join(" and ")} tickets to ${ref} under /plan --local. shepherd has no local mode: to build them there always, set ${difficulties.map((item) => `models.${item}: ${ref}`).join(" and ")}.`);
+  }
+  return { models, ...local ? { local } : {}, notes };
+}
+function templateText() {
+  let dir = path24.dirname(fileURLToPath3(import.meta.url));
+  for (let depth = 0; depth < 4; depth += 1) {
+    const file = path24.join(dir, "templates", "shepherd.yaml");
+    if (existsSync13(file)) return readFileSync14(file, "utf8");
+    dir = path24.dirname(dir);
+  }
+  return void 0;
 }
 function migrateConfig(options = {}) {
   const home = options.home ?? homedir6();
@@ -14108,7 +14149,26 @@ function migrateConfig(options = {}) {
     const section2 = doc.get(key, true);
     if (section2 && Array.isArray(section2.items) && section2.items.length === 0) doc.delete(key);
   }
-  const text = doc.toString();
+  const kept = doc.toJS();
+  const legacy = raw && typeof raw === "object" && !Array.isArray(raw) ? fromTiers(raw) : { models: {}, notes: [] };
+  const carried = [];
+  for (const [key, ref] of Object.entries(legacy.models)) {
+    doc.setIn(["models", key], ref);
+    carried.push(`models.${key}: ${ref}`);
+  }
+  if (legacy.local) {
+    doc.set("local", doc.createNode(legacy.local));
+    carried.push("local (from providers.local and tiers.local)");
+  }
+  const template = !isRecord3(kept) || Object.keys(kept).length === 0 ? templateText() : void 0;
+  let text = doc.toString();
+  if (template !== void 0) {
+    const left = doc.toJS();
+    text = isRecord3(left) && Object.keys(left).length > 0 ? `${template.trimEnd()}
+
+## Carried over from ${shown(source)}
+${(0, import_yaml2.stringify)(left)}` : template;
+  }
   let warnings = [];
   try {
     warnings = parseConfig(text, shown(dest)).warnings ?? [];
@@ -14123,6 +14183,9 @@ function migrateConfig(options = {}) {
   }
   atomicWrite(dest, text);
   lines2.push(`Wrote ${shown(dest)} from ${shown(source)} (the pi-chef file is left where it is).`);
+  if (carried.length > 0) lines2.push(`Carried over from pi-chef's tiers: ${carried.join(", ")}.`);
+  if (template !== void 0) lines2.push(carried.length > 0 ? "Nothing else applied to shepherd, so the file is shepherd's commented template with those settings added at the end." : "Nothing in it applied to shepherd, so the file is shepherd's commented template: the built-in defaults apply.");
+  for (const note of legacy.notes) lines2.push(`Note: ${note}`);
   lines2.push(dropped.length > 0 ? `Dropped ${dropped.length} setting(s) shepherd does not read: ${dropped.join(", ")}.` : "Every setting is one shepherd reads; none were dropped.");
   const workspace = raw?.workspaceDir;
   if (typeof workspace === "string" && workspace !== ".shepherd") lines2.push(`workspaceDir is ${workspace}; shepherd's default is .shepherd. Existing pi-chef tasks there are not picked up by name; remove the line to start fresh in .shepherd.`);
@@ -14491,7 +14554,7 @@ function isEntry() {
   if (!invoked) return false;
   try {
     const real = realpathSync2(invoked);
-    return real === realpathSync2(fileURLToPath3(import.meta.url)) || path25.basename(real) === "shepherd";
+    return real === realpathSync2(fileURLToPath4(import.meta.url)) || path25.basename(real) === "shepherd";
   } catch {
     return false;
   }
