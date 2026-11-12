@@ -90,6 +90,21 @@ describe("outside-chef sweep, Claude Code", () => {
     expect(t.tokens()).toBe(8);
   });
 
+  it("sweeps what a metered tab wrote after its meter read the log under that tab's job, not as outside chef", async () => {
+    const t = await setup();
+    writeFileSync(t.file, claudeLine("old", use(1000, 1000), BEFORE));
+    await t.sweep();
+    const meter = createAgentMeter("claude", { cwd: t.ctx.git.repoRoot, home: t.home, onConsumed: (file, offset) => void t.ctx.store.advanceAgentLog(file, offset, "model review") })!;
+    appendFileSync(t.file, claudeLine("review", use(300, 30)));
+    expect(meter.collect()).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    appendFileSync(t.file, claudeLine("late", use(5, 5)));
+    await t.sweep();
+    expect(t.rows()).toHaveLength(0);
+    const late = t.ctx.store.readLedger().filter((entry) => entry.reason === "model review");
+    expect(late.reduce((sum, entry) => sum + (entry.inputTokens ?? 0) + (entry.outputTokens ?? 0), 0)).toBe(10);
+  });
+
   it("is skipped while a live build holds the task, and counts the rest afterwards", async () => {
     const t = await setup();
     await t.sweep();

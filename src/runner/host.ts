@@ -21,7 +21,7 @@ export function ticketHost(getWorkflow: () => Workflow, changed: () => void = ()
       getWorkflow().recordAgentUsage({ reason: `agent ${agent}`, entries, ticketId: id });
       changed();
     },
-    agentLogRead: (file, offset) => getWorkflow().advanceAgentLog(file, offset),
+    agentLogRead: (file, offset, owner) => getWorkflow().advanceAgentLog(file, offset, owner),
     agentLogExcluded: (file) => getWorkflow().isSessionLog(file),
     head: () => getWorkflow().git.head().catch(() => undefined),
     branch: () => getWorkflow().git.currentBranch().catch(() => undefined),

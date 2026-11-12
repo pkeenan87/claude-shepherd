@@ -23,7 +23,7 @@ export interface BuildHostOptions {
   client: HerdrClient;
   /** The checkout the build runs in. */
   cwd: string;
-  /** Absolute path of this install's `src/ticket-mode.ts` (`ticketModePath()`). */
+  /** Absolute path of this install's Pi worker extension (`ticketModePath()`). */
   ticketModePath: string;
   /** Replaces the home directory an agent's usage log is read under (tests, the CLI's `home`). */
   home?: string;
@@ -79,16 +79,16 @@ export function createBuildDriver(options: BuildHostOptions): BuildDriver {
 }
 
 /**
- * Absolute path of this install's `src/ticket-mode.ts`, found from the module's own location: `dist/shepherd.mjs` (the
- * bundle), `build/cli/build-host.js` and `src/cli/build-host.ts` all sit under the package root that holds `src/`. A Pi
- * ticket child loads it with `-e`, so the plugin must ship `src/`.
+ * Absolute path of the Pi ticket-worker extension of this install, found from the module's own location. A plugin install
+ * has no node_modules, so the bundle `<plugin>/dist/ticket-mode.mjs` (`npm run bundle`: src modules and `yaml` inlined, Pi's
+ * own packages left external) is preferred when it exists; a source checkout falls back to `src/ticket-mode.ts`. Both sit under the
+ * package root that `dist/shepherd.mjs`, `build/cli/build-host.js` and `src/cli/build-host.ts` are all one or two levels below.
  */
 export function ticketModePath(from: string | URL = import.meta.url): string {
   const start = path.dirname(typeof from === "string" && !from.startsWith("file:") ? from : fileURLToPath(from));
   let dir = start;
   for (let depth = 0; depth < 6; depth += 1) {
-    const candidate = path.join(dir, "src", "ticket-mode.ts");
-    if (existsSync(candidate)) return candidate;
+    for (const candidate of [path.join(dir, "dist", "ticket-mode.mjs"), path.join(dir, "src", "ticket-mode.ts")]) if (existsSync(candidate)) return candidate;
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;

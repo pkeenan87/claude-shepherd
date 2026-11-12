@@ -23,7 +23,8 @@ import type { HerdrClient } from "../herdr/client.js";
 import type { CheckRunner } from "../review/review.js";
 import type { TabTimings } from "../runner/tab.js";
 import type { WorkflowOptions } from "../orchestrator/types.js";
-import { buildCommand, BUILD_USAGE } from "./build.js";
+import { buildCommand, BUILD_USAGE, type OpenSession } from "./build.js";
+import { fixCommand, FIX_USAGE, reviewCommand, REVIEW_USAGE } from "./review.js";
 import { approvalReason, PLAN_USAGE, planCommand, plansCommand, taskCommand } from "./plan.js";
 
 const run = promisify(execFile);
@@ -34,6 +35,8 @@ const USAGE = `Usage:
   shepherd status
   shepherd hook <stop|prompt|pretool>   (reads the hook JSON on stdin)
   shepherd build [--once] [--json]   (runs the approved plan's tickets as herdr sub-agents; --once builds one ticket)
+  shepherd review [--with <model>] [--json]   (checks, static scan and the model pass in a herdr sub-agent; writes the numbered report)
+  shepherd fix <--tab|--list> [--json]   (fix the latest review's findings in a herdr sub-agent, or print them for this chat)
   shepherd plan <start|spec|tickets|show|revise|approve> ...   (shepherd plan --help)
   shepherd plans [<name> | close <name> | --all]
   shepherd task <list|use <name>|close [<name>]>
@@ -53,7 +56,7 @@ export interface CliOptions {
   home?: string;
   /** Where the command runs (default: process.cwd(); a hook uses the cwd in its JSON). */
   cwd?: string;
-  /** Test seams for `build`: the herdr client (default: the real `hc`), the check runner, the tab timings, whether `pi` is installed, the ticket-mode path, and what a signal exits with. */
+  /** Test seams for `build`, `review` and `fix`: the herdr client (default: the real `hc`), the check runner, the tab timings, whether `pi` is installed, the ticket-mode path, and what a signal exits with. */
   herdr?: HerdrClient;
   runner?: CheckRunner;
   herdrTimings?: TabTimings;
@@ -404,17 +407,22 @@ function ignoreWorkspace(workspace: string): void {
   writeFileSync(file, "*\n");
 }
 
-async function buildFamily(rest: string[], io: CliIo, options: CliOptions): Promise<number> {
-  if (rest.includes("--help") || rest.includes("-h")) {
-    io.out(`${BUILD_USAGE}\n`);
-    return 0;
-  }
-  const cwd = options.cwd ?? process.cwd();
-  return buildCommand(rest, io, options, async (extras) => {
+/** The session opener `build`, `review` and `fix` share: the Workflow gets the command's own progress, herdr client and seams. */
+function opener(cwd: string, options: CliOptions): OpenSession {
+  return async (extras) => {
     const opened = await open(cwd, options, undefined, extras).catch((error: unknown) => ({ problem: "error" as const, message: redact((error instanceof Error ? error.message : String(error)).split("\n")[0]!) }));
     if ("problem" in opened) return { problem: opened.problem === "no-repo" ? "shepherd: not inside a git repository." : opened.message };
     return { workflow: opened.session.workflow, root: opened.session.root, config: opened.session.config };
-  });
+  };
+}
+
+async function buildFamily(command: "build" | "review" | "fix", rest: string[], io: CliIo, options: CliOptions): Promise<number> {
+  if (rest.includes("--help") || rest.includes("-h")) {
+    io.out(`${command === "build" ? BUILD_USAGE : command === "review" ? REVIEW_USAGE : FIX_USAGE}\n`);
+    return 0;
+  }
+  const run = command === "build" ? buildCommand : command === "review" ? reviewCommand : fixCommand;
+  return run(rest, io, options, opener(options.cwd ?? process.cwd(), options));
 }
 
 export async function main(argv: string[], io: CliIo = defaultIo, options: CliOptions = {}): Promise<number> {
@@ -426,7 +434,7 @@ export async function main(argv: string[], io: CliIo = defaultIo, options: CliOp
   if (command === "cost") return costCommand(rest, io, options);
   if (command === "status") return statusCommand(io, options);
   if (command === "hook") return hookCommand(rest[0], io, options);
-  if (command === "build") return buildFamily(rest, io, options);
+  if (command === "build" || command === "review" || command === "fix") return buildFamily(command, rest, io, options);
   if (command === "plan" || command === "plans" || command === "task") return planFamily(command, rest, io, options);
   io.err(USAGE);
   return 2;

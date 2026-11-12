@@ -108,17 +108,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path22) {
-      const ctrl = callVisitor(key, node, visitor, path22);
+    function visit_(key, node, visitor, path23) {
+      const ctrl = callVisitor(key, node, visitor, path23);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path22, ctrl);
-        return visit_(key, ctrl, visitor, path22);
+        replaceNode(key, path23, ctrl);
+        return visit_(key, ctrl, visitor, path23);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path22 = Object.freeze(path22.concat(node));
+          path23 = Object.freeze(path23.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path22);
+            const ci = visit_(i, node.items[i], visitor, path23);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -129,13 +129,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path22 = Object.freeze(path22.concat(node));
-          const ck = visit_("key", node.key, visitor, path22);
+          path23 = Object.freeze(path23.concat(node));
+          const ck = visit_("key", node.key, visitor, path23);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path22);
+          const cv = visit_("value", node.value, visitor, path23);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -156,17 +156,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path22) {
-      const ctrl = await callVisitor(key, node, visitor, path22);
+    async function visitAsync_(key, node, visitor, path23) {
+      const ctrl = await callVisitor(key, node, visitor, path23);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path22, ctrl);
-        return visitAsync_(key, ctrl, visitor, path22);
+        replaceNode(key, path23, ctrl);
+        return visitAsync_(key, ctrl, visitor, path23);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path22 = Object.freeze(path22.concat(node));
+          path23 = Object.freeze(path23.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path22);
+            const ci = await visitAsync_(i, node.items[i], visitor, path23);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -177,13 +177,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path22 = Object.freeze(path22.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path22);
+          path23 = Object.freeze(path23.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path23);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path22);
+          const cv = await visitAsync_("value", node.value, visitor, path23);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -210,23 +210,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path22) {
+    function callVisitor(key, node, visitor, path23) {
       if (typeof visitor === "function")
-        return visitor(key, node, path22);
+        return visitor(key, node, path23);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path22);
+        return visitor.Map?.(key, node, path23);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path22);
+        return visitor.Seq?.(key, node, path23);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path22);
+        return visitor.Pair?.(key, node, path23);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path22);
+        return visitor.Scalar?.(key, node, path23);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path22);
+        return visitor.Alias?.(key, node, path23);
       return void 0;
     }
-    function replaceNode(key, path22, node) {
-      const parent = path22[path22.length - 1];
+    function replaceNode(key, path23, node) {
+      const parent = path23[path23.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -838,10 +838,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path22, value) {
+    function collectionFromPath(schema, path23, value) {
       let v = value;
-      for (let i = path22.length - 1; i >= 0; --i) {
-        const k = path22[i];
+      for (let i = path23.length - 1; i >= 0; --i) {
+        const k = path23[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -860,7 +860,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path22) => path22 == null || typeof path22 === "object" && !!path22[Symbol.iterator]().next().done;
+    var isEmptyPath = (path23) => path23 == null || typeof path23 === "object" && !!path23[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -890,11 +890,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path22, value) {
-        if (isEmptyPath(path22))
+      addIn(path23, value) {
+        if (isEmptyPath(path23))
           this.add(value);
         else {
-          const [key, ...rest] = path22;
+          const [key, ...rest] = path23;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -908,8 +908,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path22) {
-        const [key, ...rest] = path22;
+      deleteIn(path23) {
+        const [key, ...rest] = path23;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -923,8 +923,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path22, keepScalar) {
-        const [key, ...rest] = path22;
+      getIn(path23, keepScalar) {
+        const [key, ...rest] = path23;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -942,8 +942,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path22) {
-        const [key, ...rest] = path22;
+      hasIn(path23) {
+        const [key, ...rest] = path23;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -953,8 +953,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path22, value) {
-        const [key, ...rest] = path22;
+      setIn(path23, value) {
+        const [key, ...rest] = path23;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -3469,9 +3469,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path22, value) {
+      addIn(path23, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path22, value);
+          this.contents.addIn(path23, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -3546,14 +3546,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path22) {
-        if (Collection.isEmptyPath(path22)) {
+      deleteIn(path23) {
+        if (Collection.isEmptyPath(path23)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path22) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path23) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -3568,10 +3568,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path22, keepScalar) {
-        if (Collection.isEmptyPath(path22))
+      getIn(path23, keepScalar) {
+        if (Collection.isEmptyPath(path23))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path22, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path23, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -3582,10 +3582,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path22) {
-        if (Collection.isEmptyPath(path22))
+      hasIn(path23) {
+        if (Collection.isEmptyPath(path23))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path22) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path23) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -3602,13 +3602,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path22, value) {
-        if (Collection.isEmptyPath(path22)) {
+      setIn(path23, value) {
+        if (Collection.isEmptyPath(path23)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path22), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path23), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path22, value);
+          this.contents.setIn(path23, value);
         }
       }
       /**
@@ -5569,9 +5569,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path22) => {
+    visit.itemAtPath = (cst, path23) => {
       let item = cst;
-      for (const [field, index] of path22) {
+      for (const [field, index] of path23) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -5580,23 +5580,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path22) => {
-      const parent = visit.itemAtPath(cst, path22.slice(0, -1));
-      const field = path22[path22.length - 1][0];
+    visit.parentCollection = (cst, path23) => {
+      const parent = visit.itemAtPath(cst, path23.slice(0, -1));
+      const field = path23[path23.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path22, item, visitor) {
-      let ctrl = visitor(item, path22);
+    function _visit(path23, item, visitor) {
+      let ctrl = visitor(item, path23);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path22.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path23.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -5607,10 +5607,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path22);
+            ctrl = ctrl(item, path23);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path22) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path23) : ctrl;
     }
     exports.visit = visit;
   }
@@ -7364,9 +7364,9 @@ var require_dist = __commonJS({
 // src/cli/shepherd.ts
 import { execFile as execFile4 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
-import { closeSync as closeSync2, existsSync as existsSync10, fstatSync, mkdirSync as mkdirSync7, openSync as openSync2, writeFileSync as writeFileSync2, readdirSync as readdirSync5, readFileSync as readFileSync12, readSync as readSync2, realpathSync as realpathSync2 } from "node:fs";
+import { closeSync as closeSync2, existsSync as existsSync11, fstatSync, mkdirSync as mkdirSync7, openSync as openSync2, writeFileSync as writeFileSync2, readdirSync as readdirSync6, readFileSync as readFileSync13, readSync as readSync2, realpathSync as realpathSync2 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import path21 from "node:path";
+import path22 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { promisify as promisify3 } from "node:util";
 
@@ -7678,10 +7678,10 @@ function normalizeAgents(value, where) {
     if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) invalid(where, field, "is not a valid agent name (letters, digits, - and _)");
     if (!isRecord(def)) invalid(where, field, "must be a mapping with run (and optionally modelFlag)");
     for (const key of Object.keys(def)) if (key !== "run" && key !== "modelFlag") invalid(where, `${field}.${key}`, "is not a known key (run, modelFlag)");
-    const run2 = stringArray(def.run, `${field}.run`, where);
-    if (run2.length === 0) invalid(where, `${field}.run`, "must name the program to run");
+    const run3 = stringArray(def.run, `${field}.run`, where);
+    if (run3.length === 0) invalid(where, `${field}.run`, "must name the program to run");
     if (def.modelFlag !== void 0 && (typeof def.modelFlag !== "string" || !def.modelFlag.startsWith("-"))) invalid(where, `${field}.modelFlag`, "must be a flag such as --model");
-    out[name] = { run: run2, ...def.modelFlag !== void 0 ? { modelFlag: def.modelFlag } : {} };
+    out[name] = { run: run3, ...def.modelFlag !== void 0 ? { modelFlag: def.modelFlag } : {} };
   }
   return out;
 }
@@ -8259,7 +8259,7 @@ function formatIdle(ms) {
 }
 
 // src/orchestrator/service.ts
-import path17 from "node:path";
+import path18 from "node:path";
 
 // src/git/workspace.ts
 import { execFile } from "node:child_process";
@@ -8343,7 +8343,7 @@ var GitWorkspace = class {
     const add = await this.git([...safe, "add", "-A", "--", "."], cwd);
     if (add.code !== 0) throw new WorkflowError("GIT", add.stderr);
     if (skip.length > 0) {
-      const unstage = await this.git([...safe, "reset", "-q", "--", ...skip.map((path22) => `:(literal)${path22}`)], cwd);
+      const unstage = await this.git([...safe, "reset", "-q", "--", ...skip.map((path23) => `:(literal)${path23}`)], cwd);
       if (unstage.code !== 0) throw new WorkflowError("GIT", unstage.stderr);
     }
     const commit = await this.git([...safe, "commit", "--no-verify", "-m", message], cwd);
@@ -8777,7 +8777,7 @@ var TaskStore = class {
       const parsed = JSON.parse(readFileSync2(this.watermarkPath(), "utf8"));
       if (typeof parsed.since !== "string" || !parsed.files || typeof parsed.files !== "object") return void 0;
       const files = {};
-      for (const [file, entry] of Object.entries(parsed.files)) if (typeof entry?.offset === "number" && entry.offset >= 0) files[file] = { offset: entry.offset };
+      for (const [file, entry] of Object.entries(parsed.files)) if (typeof entry?.offset === "number" && entry.offset >= 0) files[file] = { offset: entry.offset, ...typeof entry.owner === "string" && entry.owner ? { owner: entry.owner } : {} };
       return { since: parsed.since, files };
     } catch {
       return void 0;
@@ -8788,11 +8788,11 @@ var TaskStore = class {
     atomicWrite(this.watermarkPath(), JSON.stringify(mark, null, 2));
   }
   /** Moves a file's offset forward (a ticket meter has consumed it), under the lock. Does nothing before the watermark exists. */
-  advanceAgentLog(file, offset) {
+  advanceAgentLog(file, offset, owner) {
     return this.withWatermarkLock(() => {
       const mark = this.readAgentWatermark();
       if (!mark || (mark.files[file]?.offset ?? -1) >= offset) return;
-      mark.files[file] = { offset };
+      mark.files[file] = { offset, ...owner ? { owner } : mark.files[file]?.owner ? { owner: mark.files[file].owner } : {} };
       this.writeAgentWatermark(mark);
     });
   }
@@ -9468,6 +9468,7 @@ function observeUsage(ctx, input, extra = {}) {
   const known = input.usage.input !== null && input.usage.output !== null;
   const base2 = extra.job ? known ? extra.job : `${extra.job} missing tokens` : known ? "observed assistant usage" : "observed assistant usage missing tokens";
   const tier = extra.tier ?? "interactive";
+  if (extra.taskId) return record(ctx, extra.taskId, extra.phase ?? state?.phase ?? "IDLE", tier, input.provider, input.model, input.usage, "unknown", 0, extra.ticketId ? `${base2} \xB7 ticket ${extra.ticketId}` : base2, when);
   if (!state) return record(ctx, SESSION_TASK_ID, "IDLE", tier, input.provider, input.model, input.usage, "unknown", 0, extra.ticketId ? `${base2} \xB7 ticket ${extra.ticketId}` : base2, when);
   return record(ctx, state.taskId, state.phase, tier, input.provider, input.model, input.usage, "unknown", 0, extra.ticketId ? `${base2} \xB7 ticket ${extra.ticketId}` : base2, when);
 }
@@ -9586,9 +9587,10 @@ async function sweepAgentLogs(ctx, options = {}) {
           if (known && size <= known.offset) continue;
           const read = readAgentLog(reader, file, { offset: known?.offset ?? 0, since: mark.since, repos });
           if (!read) continue;
-          const reason = reasonOf(file);
+          const labelled = reasonOf(file);
+          const reason = labelled === "outside chef" && known?.owner ? known.owner : labelled;
           byReason.set(reason, [...byReason.get(reason) ?? [], ...meteredEntries(reader, read.calls)]);
-          mark.files[file] = { offset: read.end };
+          mark.files[file] = { offset: read.end, ...known?.owner ? { owner: known.owner } : {} };
         }
         for (const [reason, entries] of byReason) {
           if (entries.length === 0) continue;
@@ -9735,8 +9737,8 @@ function stateText(state) {
   }
   const runs = state.ticketRuns ?? {};
   const total = state.plan?.tickets?.length || Object.keys(runs).length;
-  const finished = Object.values(runs).filter((run2) => run2.status === "done").length;
-  const failed = Object.values(runs).filter((run2) => run2.status === "failed").length;
+  const finished = Object.values(runs).filter((run3) => run3.status === "done").length;
+  const failed = Object.values(runs).filter((run3) => run3.status === "failed").length;
   if (state.review) return state.review.passed ? "reviewed, passed" : "reviewed, findings to fix";
   if (!state.build && Object.keys(runs).length === 0) return "plan approved, run /build";
   if (state.build?.currentTicket) return `building ticket ${state.build.currentTicket} of ${total}`;
@@ -9840,9 +9842,9 @@ function ticketReviewModel(config) {
   throw new Error("unreachable: the default review model is a Pi model");
 }
 function routeFor(ctx, rung, model) {
-  const label3 = modelText(model);
+  const label2 = modelText(model);
   const problem = model.kind !== "pi" ? void 0 : ctx.registry ? registryProblem(ctx.registry, model.provider, model.id) : ctx.piAvailable && !ctx.piAvailable() ? NO_PI : void 0;
-  return { rung, model, label: label3, ...problem ? { blocked: `${label3}: ${problem}` } : {} };
+  return { rung, model, label: label2, ...problem ? { blocked: `${label2}: ${problem}` } : {} };
 }
 async function announce(ctx, taskId, purpose, route) {
   ctx.status?.(`${route.rung} \u2192 ${route.blocked ? "blocked" : route.label}`);
@@ -10210,34 +10212,34 @@ function validateTickets(input, options) {
   for (const [index, raw] of input.entries()) {
     const item = raw && typeof raw === "object" ? raw : {};
     const id = typeof item.id === "string" ? item.id.trim() : "";
-    const label3 = id || `#${index + 1}`;
-    if (!ID.test(id)) errors.push(`Ticket ${label3}: id must be a 2 or 3 digit ordinal such as "01" (digits only, matching ^\\d{2,3}$).`);
+    const label2 = id || `#${index + 1}`;
+    if (!ID.test(id)) errors.push(`Ticket ${label2}: id must be a 2 or 3 digit ordinal such as "01" (digits only, matching ^\\d{2,3}$).`);
     else if (seen.has(id)) errors.push(`Ticket ${id}: duplicate id.`);
     seen.add(id);
     const slug = typeof item.slug === "string" ? item.slug.trim() : "";
-    if (!SLUG.test(slug) || /[\r\n]/.test(String(item.slug))) errors.push(`Ticket ${label3}: slug must be lowercase kebab-case on one line.`);
+    if (!SLUG.test(slug) || /[\r\n]/.test(String(item.slug))) errors.push(`Ticket ${label2}: slug must be lowercase kebab-case on one line.`);
     const title = typeof item.title === "string" ? item.title.trim() : "";
-    if (!title) errors.push(`Ticket ${label3}: title is required.`);
-    else if (/[\r\n]/.test(title)) errors.push(`Ticket ${label3}: title must be a single line (no newlines).`);
+    if (!title) errors.push(`Ticket ${label2}: title is required.`);
+    else if (/[\r\n]/.test(title)) errors.push(`Ticket ${label2}: title must be a single line (no newlines).`);
     const whatToBuild = typeof item.whatToBuild === "string" ? item.whatToBuild.trim() : "";
-    if (!whatToBuild) errors.push(`Ticket ${label3}: whatToBuild is required.`);
-    else if (STRUCTURAL_LINE.test(whatToBuild)) errors.push(`Ticket ${label3}: whatToBuild has a line starting with "# ", "## ", or "<!-- ticket", which would corrupt the ticket file. Reword it or use "###" headings.`);
+    if (!whatToBuild) errors.push(`Ticket ${label2}: whatToBuild is required.`);
+    else if (STRUCTURAL_LINE.test(whatToBuild)) errors.push(`Ticket ${label2}: whatToBuild has a line starting with "# ", "## ", or "<!-- ticket", which would corrupt the ticket file. Reword it or use "###" headings.`);
     const implementation = typeof item.implementation === "string" ? item.implementation.trim() : "";
-    if (implementation && STRUCTURAL_LINE.test(implementation)) errors.push(`Ticket ${label3}: implementation has a line starting with "# ", "## ", or "<!-- ticket", which would corrupt the ticket file. Use "###" headings or lists.`);
+    if (implementation && STRUCTURAL_LINE.test(implementation)) errors.push(`Ticket ${label2}: implementation has a line starting with "# ", "## ", or "<!-- ticket", which would corrupt the ticket file. Use "###" headings or lists.`);
     const acceptanceCriteria = strings(item.acceptanceCriteria);
     for (const criterion of acceptanceCriteria) {
-      if (/[\r\n]/.test(criterion)) errors.push(`Ticket ${label3}: each acceptance criterion must be a single line (no newlines).`);
-      else if (STRUCTURAL_LINE.test(criterion)) errors.push(`Ticket ${label3}: an acceptance criterion starts with "# ", "## ", or "<!-- ticket", which would corrupt the ticket file.`);
+      if (/[\r\n]/.test(criterion)) errors.push(`Ticket ${label2}: each acceptance criterion must be a single line (no newlines).`);
+      else if (STRUCTURAL_LINE.test(criterion)) errors.push(`Ticket ${label2}: an acceptance criterion starts with "# ", "## ", or "<!-- ticket", which would corrupt the ticket file.`);
     }
-    if (acceptanceCriteria.length === 0) errors.push(`Ticket ${label3}: at least one acceptance criterion is required.`);
+    if (acceptanceCriteria.length === 0) errors.push(`Ticket ${label2}: at least one acceptance criterion is required.`);
     const model = typeof item.estimatedContextTokens === "number" && Number.isFinite(item.estimatedContextTokens) && item.estimatedContextTokens > 0 ? item.estimatedContextTokens : void 0;
-    if (model === void 0) errors.push(`Ticket ${label3}: estimatedContextTokens must be a positive number.`);
+    if (model === void 0) errors.push(`Ticket ${label2}: estimatedContextTokens must be a positive number.`);
     const difficulty = typeof item.difficulty === "string" ? item.difficulty : void 0;
-    if (difficulty !== void 0 && !isDifficulty(difficulty)) errors.push(`Ticket ${label3}: difficulty "${difficulty}" must be one of ${DIFFICULTIES.join(", ")}.`);
+    if (difficulty !== void 0 && !isDifficulty(difficulty)) errors.push(`Ticket ${label2}: difficulty "${difficulty}" must be one of ${DIFFICULTIES.join(", ")}.`);
     const files = strings(item.files).map((file) => file.replace(/^\.\//, ""));
     for (const file of files) {
       if (path7.isAbsolute(file) || /^[A-Za-z]:|^~|\0/.test(file) || file.split(/[\\/]/).includes("..")) {
-        errors.push(`Ticket ${label3}: files must be relative paths inside the project (no absolute paths or ".."): ${file}`);
+        errors.push(`Ticket ${label2}: files must be relative paths inside the project (no absolute paths or ".."): ${file}`);
       }
     }
     const checks = strings(item.checks);
@@ -10245,7 +10247,7 @@ function validateTickets(input, options) {
       const problem = checkLineProblem(check, options.commandExists);
       if (problem === void 0) continue;
       errors.push(
-        `Ticket ${label3}: check "${check}" cannot run (${problem}). Checks are command lines /build runs after the ticket without a shell, one command with plain arguments per entry; destructive commands are refused. Put prose verification steps in implementation instead.`
+        `Ticket ${label2}: check "${check}" cannot run (${problem}). Checks are command lines /build runs after the ticket without a shell, one command with plain arguments per entry; destructive commands are refused. Put prose verification steps in implementation instead.`
       );
     }
     tickets.push({
@@ -11066,9 +11068,9 @@ function waitProblem(waited, tab, minutes) {
   if (waited.status === "error") return `the program in tab ${tab} reported an error; look at the tab`;
   return void 0;
 }
-function withPath(argv, path22) {
-  if (!path22 || path22.includes("\n")) return argv;
-  const assignment = `PATH=${path22}`;
+function withPath(argv, path23) {
+  if (!path23 || path23.includes("\n")) return argv;
+  const assignment = `PATH=${path23}`;
   return argv[0] === "env" ? ["env", assignment, ...argv.slice(1)] : ["env", assignment, ...argv];
 }
 async function openTab(input) {
@@ -11140,12 +11142,12 @@ import path8 from "node:path";
 var AGENT_TICKET_RULE = "Do not commit, push, or switch branches; shepherd commits when checks and review pass.";
 var summaryRule = (file) => `When you finish, write a short summary of what you did, then one line per acceptance criterion ("- [x] <criterion>" met, "- [ ] <criterion>" not met), to ${file} (that file, not only your reply), then stop.`;
 var SUMMARY_CHARS = 8e3;
-async function runAgentTicket(input, run2) {
+async function runAgentTicket(input, run3) {
   const { host, ticketId } = input;
-  const label3 = `agent:${input.agent.name}${input.agent.model ? `/${input.agent.model}` : ""}`;
+  const label2 = `agent:${input.agent.name}${input.agent.model ? `/${input.agent.model}` : ""}`;
   let tab;
   try {
-    const meter = createAgentMeter(input.agent.name, { cwd: input.cwd, home: input.home, onConsumed: host.agentLogRead, ...host.agentLogExcluded ? { exclude: (file) => host.agentLogExcluded(file) } : {} });
+    const meter = createAgentMeter(input.agent.name, { cwd: input.cwd, home: input.home, onConsumed: host.agentLogRead ? (file, offset) => host.agentLogRead(file, offset, `agent ${input.agent.name}`) : void 0, ...host.agentLogExcluded ? { exclude: (file) => host.agentLogExcluded(file) } : {} });
     const name = tabName(host.taskName(), ticketId, input.attempt, (input.now ?? Date.now)());
     const root = host.sessionsRoot();
     const summaryFile = root ? path8.resolve(root, `${ticketId}-${input.attempt}.summary.md`) : void 0;
@@ -11162,7 +11164,7 @@ async function runAgentTicket(input, run2) {
       return { stopped: `Ticket ${ticketId} cannot start: ${messageOf(error)}. /build again.` };
     }
     const opened = tab;
-    host.progress(`Ticket ${ticketId} \xB7 running in herdr tab ${opened.name} (${label3})`);
+    host.progress(`Ticket ${ticketId} \xB7 running in herdr tab ${opened.name} (${label2})`);
     let sends = 0;
     let metered = false;
     let unmeteredLogged = false;
@@ -11219,7 +11221,7 @@ ${summaryRule(summaryFile)}` : prompt);
         }
       }
     };
-    await run2(session);
+    await run3(session);
     return void 0;
   } catch (error) {
     return { stopped: `Ticket ${ticketId} stopped: ${messageOf(error)}${tab ? ` (herdr tab ${tab.name} is left open)` : ""}. /build resumes it.` };
@@ -11321,7 +11323,7 @@ function ledgerChildSession(ctx, files, options) {
       const call = usageOfMessage(message);
       if (!call) continue;
       seen.add(id);
-      const row = observeUsage(ctx, call, { id, at, ...options.ticketId ? { ticketId: options.ticketId } : {}, ...options.job ? { job: options.job } : {}, ...options.tier ? { tier: options.tier } : {} });
+      const row = observeUsage(ctx, call, { id, at, ...options.ticketId ? { ticketId: options.ticketId } : {}, ...options.job ? { job: options.job } : {}, ...options.tier ? { tier: options.tier } : {}, ...options.taskId ? { taskId: options.taskId } : {}, ...options.phase ? { phase: options.phase } : {} });
       if (row) out.push(row);
     }
     let preceding;
@@ -11391,7 +11393,7 @@ function nextAttempt(root, ticketId) {
   }
   return highest + 1;
 }
-async function runPiTicket(input, run2) {
+async function runPiTicket(input, run3) {
   const { host, ticketId } = input;
   const launched = { provider: input.model.provider, id: input.model.id };
   const modelLabel = `${launched.provider}/${launched.id}`;
@@ -11453,7 +11455,7 @@ async function runPiTicket(input, run2) {
         }
       }
     };
-    await run2(session);
+    await run3(session);
     return void 0;
   } catch (error) {
     return { stopped: `Ticket ${ticketId} stopped: ${messageOf(error)}${tab ? ` (herdr tab ${tab.name} is left open)` : ""}. /build resumes it.` };
@@ -11473,16 +11475,16 @@ async function herdrSpace(client, visible = false) {
     return { problem: messageOf(error) };
   }
 }
-async function runTicket(input, run2) {
+async function runTicket(input, run3) {
   const { model } = input;
-  if (!model.agent) return runPiTicket(input, run2);
+  if (!model.agent) return runPiTicket(input, run3);
   let argv;
   try {
     argv = agentCommand({ kind: "agent", ...model.agent }, input.config);
   } catch (error) {
     return { stopped: `Ticket ${input.ticketId} cannot start: ${messageOf(error)}` };
   }
-  return runAgentTicket({ ...input, agent: model.agent, argv }, run2);
+  return runAgentTicket({ ...input, agent: model.agent, argv }, run3);
 }
 
 // src/orchestrator/tab-program.ts
@@ -11500,7 +11502,7 @@ function piProgram(ctx, model, input) {
     readyTimeoutMs: ctx.herdrTimings?.readyTimeoutMs ?? PI_READY_TIMEOUT_MS,
     collect: () => {
       files = readChildSession(sessionDir);
-      return ledgerChildSession(ctx, files, { model: launched, job: input.job, tier: input.tier, ...input.ticketId ? { ticketId: input.ticketId } : {} });
+      return ledgerChildSession(ctx, files, { model: launched, job: input.job, tier: input.tier, ...input.ticketId ? { ticketId: input.ticketId } : {}, ...input.taskId ? { taskId: input.taskId } : {}, ...input.phase ? { phase: input.phase } : {} });
     },
     reply: async (tab) => lastAssistantText(files) ?? tab.lastText(),
     failed: () => {
@@ -11510,7 +11512,7 @@ function piProgram(ctx, model, input) {
   };
 }
 function agentProgram(ctx, model, input) {
-  const meter = createAgentMeter(model.name, { cwd: ctx.git.repoRoot, home: input.home ?? ctx.agentLogHome, onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset).catch(() => void 0), exclude: (file) => isSessionLog(ctx, file) });
+  const meter = createAgentMeter(model.name, { cwd: ctx.git.repoRoot, home: input.home ?? ctx.agentLogHome, onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset, input.job).catch(() => void 0), exclude: (file) => isSessionLog(ctx, file) });
   return {
     argv: agentCommand(model, ctx.config),
     collect: () => {
@@ -11527,15 +11529,15 @@ var MIN_REVIEW_MS = 15 * 6e4;
 var fingerprint = (diff) => createHash("sha256").update(diff).digest("hex");
 async function askInTab(ctx, input) {
   const { state, ticket, model, progress } = input;
-  const label3 = modelText(model);
+  const label2 = modelText(model);
   let cost2 = 0;
   let tab;
   const failed = (error) => ({ costUsd: cost2, error });
   try {
     if (budgetState(ctx, state.taskId).status === "hard") return failed("the task or daily budget is exhausted");
     const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
-    if ("problem" in where) return failed(`${label3} reviews in a herdr sub-agent; run from a terminal inside herdr (${where.problem})`);
-    if (model.kind === "pi" && !ctx.ticketModePath) return failed(`${label3} is a Pi model and this install does not know where the ticket-mode extension is`);
+    if ("problem" in where) return failed(`${label2} reviews in a herdr sub-agent; run from a terminal inside herdr (${where.problem})`);
+    if (model.kind === "pi" && !ctx.ticketModePath) return failed(`${label2} is a Pi model and this install does not know where the ticket-mode extension is`);
     const at = ctx.now().getTime();
     const taskDir = ctx.store.taskDir(state.taskId);
     const reports = path11.join(taskDir, "reports");
@@ -11549,7 +11551,7 @@ async function askInTab(ctx, input) {
     const branchBefore = await ctx.git.currentBranch().catch(() => void 0);
     const before = fingerprint(await ctx.git.workingDiff("HEAD", exclude));
     const name = tabName(displayName(state), `r${ticket.id}`, input.round, at);
-    progress(`opening ${label3} in a herdr sub-agent`);
+    progress(`opening ${label2} in a herdr sub-agent`);
     tab = await openTab({
       ...ctx.herdrTimings,
       ...program.readyTimeoutMs ? { readyTimeoutMs: program.readyTimeoutMs } : {},
@@ -11561,7 +11563,7 @@ async function askInTab(ctx, input) {
       name,
       labels: { "shepherd.ticket-review": ticket.id },
       progress,
-      blockedNotice: `The review of ticket ${ticket.id} (${label3}) is waiting for you in herdr sub-agent ${name} (agents list)`
+      blockedNotice: `The review of ticket ${ticket.id} (${label2}) is waiting for you in herdr sub-agent ${name} (agents list)`
     });
     const opened = tab;
     let failure;
@@ -11581,25 +11583,25 @@ async function askInTab(ctx, input) {
     const left = (why) => `${why} (the herdr tab ${opened.name} is left open to read)`;
     const branchAfter = await ctx.git.currentBranch().catch(() => void 0);
     const headAfter = await ctx.git.head().catch(() => void 0);
-    if (branchBefore && branchAfter && branchAfter !== branchBefore) return failed(left(`${label3} left ${branchBefore} and is on ${branchAfter}; shepherd left HEAD alone`));
+    if (branchBefore && branchAfter && branchAfter !== branchBefore) return failed(left(`${label2} left ${branchBefore} and is on ${branchAfter}; shepherd left HEAD alone`));
     let note = "";
     if (headBefore && headAfter && headAfter !== headBefore) {
       await ctx.git.resetSoft(headBefore);
       note = ` (it committed anyway; shepherd moved HEAD back to ${headBefore.slice(0, 7)})`;
     }
     const reason = failure ?? program.failed?.();
-    if (reason) return failed(left(`${label3} did not finish: ${reason}${note}`));
-    if (!existsSync4(outFile)) return failed(left(`${label3} did not write the findings file ${outFile}${note}`));
+    if (reason) return failed(left(`${label2} did not finish: ${reason}${note}`));
+    if (!existsSync4(outFile)) return failed(left(`${label2} did not write the findings file ${outFile}${note}`));
     const parsed = input.parse(readFileSync7(outFile, "utf8"));
-    if (parsed === void 0) return failed(left(`the findings file ${outFile} from ${label3} is not the JSON asked for${note}`));
+    if (parsed === void 0) return failed(left(`the findings file ${outFile} from ${label2} is not the JSON asked for${note}`));
     if (fingerprint(await ctx.git.workingDiff("HEAD", exclude)) !== before) {
-      return failed(left(`${label3} changed the working tree during the review (it was told not to edit files), so the diff it judged is not the one that would be committed${note}`));
+      return failed(left(`${label2} changed the working tree during the review (it was told not to edit files), so the diff it judged is not the one that would be committed${note}`));
     }
     await opened.close();
     tab = void 0;
-    return { parsed, costUsd: cost2, by: label3 };
+    return { parsed, costUsd: cost2, by: label2 };
   } catch (error) {
-    return failed(`${label3} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr tab ${tab.name} is left open)` : ""}`);
+    return failed(`${label2} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr tab ${tab.name} is left open)` : ""}`);
   }
 }
 
@@ -11713,7 +11715,7 @@ async function ask(ctx, state, candidate, reason, system, user) {
     }
     const timeout = AbortSignal.timeout(ctx.config.review.timeoutMs);
     const signal = AbortSignal.any([ctx.shutdown.signal, timeout]);
-    const label3 = `${candidate.provider}/${candidate.model}`;
+    const label2 = `${candidate.provider}/${candidate.model}`;
     const ledger = (usage, outcome) => {
       const entry = record(ctx, state.taskId, state.phase, "review", candidate.provider, candidate.model, usage, outcome, retry, reason);
       micro = micro === null || entry.actualUsd === null ? null : micro + toMicroUsd(entry.actualUsd);
@@ -11727,13 +11729,13 @@ async function ask(ctx, state, candidate, reason, system, user) {
         errors.push("the session is ending");
         break;
       }
-      errors.push(`${label3}: ${timeout.aborted ? `timed out after ${(ctx.config.review.timeoutMs / 1e3).toFixed(1)}s` : redact(error.message || "unknown error")}`.slice(0, 300));
+      errors.push(`${label2}: ${timeout.aborted ? `timed out after ${(ctx.config.review.timeoutMs / 1e3).toFixed(1)}s` : redact(error.message || "unknown error")}`.slice(0, 300));
       continue;
     }
     const parsed = parseTicketReview(response.text);
     ledger(response.usage, parsed ? "success" : "failure");
-    if (parsed) return { parsed, costUsd: micro === null ? null : fromMicroUsd(micro), by: label3 };
-    errors.push(`${label3}: the answer was not the JSON asked for: ${redact(response.text).trim().slice(0, 160)}`);
+    if (parsed) return { parsed, costUsd: micro === null ? null : fromMicroUsd(micro), by: label2 };
+    errors.push(`${label2}: the answer was not the JSON asked for: ${redact(response.text).trim().slice(0, 160)}`);
   }
   return { costUsd: micro === null ? null : fromMicroUsd(micro), error: errors.join("; ") };
 }
@@ -11761,9 +11763,9 @@ function carriedFindings(state, reported = []) {
   const since = state?.review?.at;
   const out = [];
   for (const ticket of state?.plan?.tickets ?? []) {
-    const run2 = state?.ticketRuns?.[ticket.id];
-    const last = run2?.reviews?.at(-1);
-    if (run2?.status !== "done" || last?.verdict !== "pass") continue;
+    const run3 = state?.ticketRuns?.[ticket.id];
+    const last = run3?.reviews?.at(-1);
+    if (run3?.status !== "done" || last?.verdict !== "pass") continue;
     if (since && !(last.at && last.at > since)) continue;
     for (const item of last.findings) {
       const key = findingKey(item.file, item.issue);
@@ -11774,21 +11776,21 @@ function carriedFindings(state, reported = []) {
   }
   return out.sort(compareRisk);
 }
-async function reviewTicket(ctx, state, ticket, run2) {
+async function reviewTicket(ctx, state, ticket, run3) {
   if (!ctx.config.review.tickets || !ctx.chat && !ctx.herdr) return void 0;
   try {
-    return await reviewTicketUnsafe(ctx, state, ticket, run2);
+    return await reviewTicketUnsafe(ctx, state, ticket, run3);
   } catch (error) {
     const why = redact(error.message || "unknown error").slice(0, 300);
-    const attempt2 = run2.attempts;
-    const rung = rungOf(run2.tier, ticketDifficulty(ticket));
+    const attempt2 = run3.attempts;
+    const rung = rungOf(run3.tier, ticketDifficulty(ticket));
     return {
       kind: "unavailable",
       record: {
         attempt: attempt2,
-        round: (run2.reviews ?? []).filter((item) => item.tier === rung).length + 1,
+        round: (run3.reviews ?? []).filter((item) => item.tier === rung).length + 1,
         tier: rung,
-        implementer: run2.provider && run2.model ? ranModelText(run2.provider, run2.model) : "unknown",
+        implementer: run3.provider && run3.model ? ranModelText(run3.provider, run3.model) : "unknown",
         verdict: "unavailable",
         findings: [],
         rationale: `Review unavailable: ${why}`,
@@ -11799,12 +11801,12 @@ async function reviewTicket(ctx, state, ticket, run2) {
     };
   }
 }
-async function reviewTicketUnsafe(ctx, state, ticket, run2) {
+async function reviewTicketUnsafe(ctx, state, ticket, run3) {
   const progress = (line) => ctx.progress?.(`Ticket ${ticket.id} review: ${line}`);
-  const attempt2 = run2.attempts;
-  const rung = rungOf(run2.tier, ticketDifficulty(ticket));
-  const round = (run2.reviews ?? []).filter((item) => item.tier === rung).length + 1;
-  const implementer = run2.provider && run2.model ? ranModelText(run2.provider, run2.model) : "unknown";
+  const attempt2 = run3.attempts;
+  const rung = rungOf(run3.tier, ticketDifficulty(ticket));
+  const round = (run3.reviews ?? []).filter((item) => item.tier === rung).length + 1;
+  const implementer = run3.provider && run3.model ? ranModelText(run3.provider, run3.model) : "unknown";
   const base2 = { attempt: attempt2, round, tier: rung, implementer, findings: [], costUsd: { review: 0 }, at: iso(ctx) };
   const unavailable2 = (why, costUsd = base2.costUsd) => ({
     kind: "unavailable",
@@ -11865,10 +11867,10 @@ var BLANK = { status: "in-progress", attempts: 0, turns: 0, tokens: 0, costUsd: 
 function ticketPath(ticket) {
   return `tickets/${ticketFileName(ticket)}`;
 }
-function patch(ctx, taskId, ticket, run2, build2) {
+function patch(ctx, taskId, ticket, run3, build2) {
   return ctx.store.update(taskId, `ticket ${ticket.id}`, (task) => ({
     ...task,
-    ticketRuns: { ...task.ticketRuns, [ticket.id]: run2(task.ticketRuns?.[ticket.id] ?? BLANK) },
+    ticketRuns: { ...task.ticketRuns, [ticket.id]: run3(task.ticketRuns?.[ticket.id] ?? BLANK) },
     ...build2 && task.build ? { build: build2(task.build) } : {},
     updatedAt: iso(ctx)
   }));
@@ -12049,8 +12051,8 @@ async function settle(ctx, state, ticket, lastText, review2) {
   if (reviewed) {
     await patch(ctx, state.taskId, ticket, (previous) => ({ ...previous, reviews: [...previous.reviews ?? [], reviewed.record] }));
     if (reviewed.kind === "fail") {
-      const run2 = state.ticketRuns?.[ticket.id];
-      const fails = (run2?.reviews ?? []).filter((item) => item.tier === reviewed.record.tier && item.verdict === "fail").length;
+      const run3 = state.ticketRuns?.[ticket.id];
+      const fails = (run3?.reviews ?? []).filter((item) => item.tier === reviewed.record.tier && item.verdict === "fail").length;
       return { kind: "review-failed", record: reviewed.record, text: reviewed.text, final: fails >= 1 };
     }
     if (reviewed.kind === "unavailable") {
@@ -12069,9 +12071,9 @@ async function settle(ctx, state, ticket, lastText, review2) {
 function commitSubject(ticket) {
   return `${ticket.id}: ${ticket.title}`.replace(/\s+/g, " ").trim();
 }
-function attempt(run2, startedAt, elapsedMs, split, outcome, failedBy, error) {
+function attempt(run3, startedAt, elapsedMs, split, outcome, failedBy, error) {
   const { total, notMetered: _notMetered, ...costSplit } = split;
-  return { attempt: run2.attempts, tier: rungOf(run2.tier, "medium"), provider: run2.provider ?? "", model: run2.model ?? "", startedAt, elapsedMs, turns: 0, costUsd: total, costSplit, outcome, ...failedBy ? { failedBy } : {}, ...error ? { error: error.slice(0, 500) } : {} };
+  return { attempt: run3.attempts, tier: rungOf(run3.tier, "medium"), provider: run3.provider ?? "", model: run3.model ?? "", startedAt, elapsedMs, turns: 0, costUsd: total, costSplit, outcome, ...failedBy ? { failedBy } : {}, ...error ? { error: error.slice(0, 500) } : {} };
 }
 var clip2 = (text) => text.slice(0, MAX_SUMMARY_CHARS);
 async function nextChunk(ctx) {
@@ -12085,10 +12087,10 @@ async function nextChunk(ctx) {
       if (on !== state.build.branch) {
         return { kind: "stopped", code: "WRONG_BRANCH", reason: `${ctx.git.repoRoot} is on ${on}, not this build's branch ${state.build.branch}, so ticket ${ticket.id} was not started. Switch back, then /build again.` };
       }
-      const run2 = state.ticketRuns?.[ticket.id];
-      const committed = run2?.status === "in-progress" && run2.attemptStart ? await ctx.git.commitWithSubject(run2.attemptStart.head, commitSubject(ticket)) : void 0;
+      const run3 = state.ticketRuns?.[ticket.id];
+      const committed = run3?.status === "in-progress" && run3.attemptStart ? await ctx.git.commitWithSubject(run3.attemptStart.head, commitSubject(ticket)) : void 0;
       if (committed) {
-        const spent = ticketSpend(ctx, state.taskId, ticket.id, run2.attemptStart.at);
+        const spent = ticketSpend(ctx, state.taskId, ticket.id, run3.attemptStart.at);
         const { total, notMetered, ...split } = spent;
         await patch(
           ctx,
@@ -12102,11 +12104,11 @@ async function nextChunk(ctx) {
         ctx.progress?.(`Ticket ${ticket.id} was committed (${committed.slice(0, 7)}) before /build stopped; marked done`);
         continue;
       }
-      if (run2 && run2.attempts > 0 && run2.status === "failed" && run2.failedBy !== "review" && (await dirtyPaths(ctx)).length > 0) {
+      if (run3 && run3.attempts > 0 && run3.status === "failed" && run3.failedBy !== "review" && (await dirtyPaths(ctx)).length > 0) {
         ctx.progress?.(`Ticket ${ticket.id}: re-running checks on the changes in the tree`);
         const began = iso(ctx);
-        const handFixed = { ...run2, provider: void 0, model: void 0 };
-        const settled = await settle(ctx, state, ticket, run2.summary ?? "", () => reviewTicket(ctx, state, ticket, handFixed));
+        const handFixed = { ...run3, provider: void 0, model: void 0 };
+        const settled = await settle(ctx, state, ticket, run3.summary ?? "", () => reviewTicket(ctx, state, ticket, handFixed));
         if (settled.kind === "committed" || settled.kind === "review-failed") {
           const spent = ticketSpend(ctx, state.taskId, ticket.id, began);
           const elapsed = Math.max(0, ctx.now().getTime() - new Date(began).getTime());
@@ -12144,15 +12146,15 @@ async function nextChunk(ctx) {
 async function prepare(ctx, state, ticket) {
   const stored = state.ticketRuns?.[ticket.id];
   const unstarted = stored !== void 0 && neverStarted(stored);
-  const run2 = unstarted ? void 0 : stored;
+  const run3 = unstarted ? void 0 : stored;
   const budget = budgetState(ctx, state.taskId);
   if (budget.status === "hard") return { kind: "stopped", code: "BUDGET", reason: "Task or daily budget is exhausted; no further ticket was started. /build resumes after the budget is raised." };
   if (budget.status === "soft") warnSoft(ctx, state.taskId);
   const start = ticketDifficulty(ticket);
-  const attempted = run2 && run2.attempts > 0 ? rungOf(run2.tier ?? run2.attemptLog?.at(-1)?.tier, start) : void 0;
-  const modelFailed = run2?.status === "failed" && (run2.failedBy === void 0 || run2.failedBy === "checks" || run2.failedBy === "review" || run2.failedBy === "turns");
+  const attempted = run3 && run3.attempts > 0 ? rungOf(run3.tier ?? run3.attemptLog?.at(-1)?.tier, start) : void 0;
+  const modelFailed = run3?.status === "failed" && (run3.failedBy === void 0 || run3.failedBy === "checks" || run3.failedBy === "review" || run3.failedBy === "turns");
   const failed = modelFailed ? attempted : void 0;
-  const way = run2?.failedBy === "review" ? "Edit the ticket or the plan (/plan), or raise routing.maxEscalations." : "Fix it in the chat and run /build (it re-runs the checks on your changes), or raise routing.maxEscalations.";
+  const way = run3?.failedBy === "review" ? "Edit the ticket or the plan (/plan), or raise routing.maxEscalations." : "Fix it in the chat and run /build (it re-runs the checks on your changes), or raise routing.maxEscalations.";
   let rung = start;
   if (failed) {
     const next = nextRung(ctx.config, failed);
@@ -12177,15 +12179,15 @@ async function prepare(ctx, state, ticket) {
     const blocker = state.plan?.tickets?.find((item) => item.id === id);
     return { id, title: blocker?.title ?? id, summary: state.ticketRuns?.[id]?.summary ?? "" };
   });
-  const previousFailure = run2?.status === "failed" ? run2.error : void 0;
-  const priorWork = !previousFailure && run2 && run2.attempts > 0 ? "Uncommitted changes from an interrupted attempt are in the working tree (see `git status`); build on what fits the ticket as written above, and change or remove what does not." : void 0;
+  const previousFailure = run3?.status === "failed" ? run3.error : void 0;
+  const priorWork = !previousFailure && run3 && run3.attempts > 0 ? "Uncommitted changes from an interrupted attempt are in the working tree (see `git status`); build on what fits the ticket as written above, and change or remove what does not." : void 0;
   const prompt = `${BUILD_CHUNK_RULES}
 
 ${ticketPrompt({ ticket, spec: ctx.store.readText(state.taskId, SPEC_FILE), blockers, repoRules: repoRules(ctx), previousFailure, priorWork })}`;
   const now = iso(ctx);
   const head = await ctx.git.head().catch(() => void 0);
   const [provider, modelId] = model.kind === "pi" ? [model.provider, model.id] : [AGENT_PROVIDER, modelText(model).slice("agent:".length)];
-  const attemptNo = (unstarted ? 0 : run2?.attempts ?? 0) + 1;
+  const attemptNo = (unstarted ? 0 : run3?.attempts ?? 0) + 1;
   await patch(
     ctx,
     state.taskId,
@@ -12200,13 +12202,13 @@ ${ticketPrompt({ ticket, spec: ctx.store.readText(state.taskId, SPEC_FILE), bloc
     prompt,
     model: model.kind === "pi" ? { provider: model.provider, id: model.id, ...model.thinking ? { thinking: model.thinking } : {} } : { provider, id: modelId, agent: { name: model.name, ...model.model ? { model: model.model } : {} } },
     tier: rung,
-    previous: run2,
+    previous: run3,
     limits: { maxTurns: ctx.config.routing.maxTicketTurns },
     attempt: attemptNo
   };
 }
-function neverStarted(run2) {
-  return run2.status === "in-progress" && run2.attempts > 0 && run2.turns === 0 && run2.tokens === 0 && run2.costUsd === 0 && run2.elapsedMs === void 0 && !run2.summary && (run2.attemptLog ?? []).length === 0 && !run2.commit;
+function neverStarted(run3) {
+  return run3.status === "in-progress" && run3.attempts > 0 && run3.turns === 0 && run3.tokens === 0 && run3.costUsd === 0 && run3.elapsedMs === void 0 && !run3.summary && (run3.attemptLog ?? []).length === 0 && !run3.commit;
 }
 async function unstartChunk(ctx, ticketId, previous) {
   try {
@@ -12228,7 +12230,7 @@ async function finishChunk(ctx, ticketId, result, options = {}) {
     const state = requireActive(ctx);
     const ticket = state.plan?.tickets?.find((item) => item.id === ticketId);
     if (!ticket || !state.build) return { kind: "stopped", code: "NOT_STARTED", reason: `Ticket ${ticketId} is not part of a running build.` };
-    const run2 = state.ticketRuns?.[ticketId] ?? BLANK;
+    const run3 = state.ticketRuns?.[ticketId] ?? BLANK;
     const startedAt = state.build.chunkStartedAt ?? iso(ctx);
     const measure = () => ({ elapsed: Math.max(0, ctx.now().getTime() - new Date(startedAt).getTime()), spent: ticketSpend(ctx, state.taskId, ticketId, startedAt) });
     const accrue = (previous, m2) => {
@@ -12253,7 +12255,7 @@ async function finishChunk(ctx, ticketId, result, options = {}) {
       await patch(ctx, state.taskId, ticket, (previous) => ({ ...accrue(previous, m2), status: "in-progress" }), release);
       return { kind: "stopped", code: "ABORTED", reason: `Stopped while ticket ${ticketId} was running. It stays in progress; /build resumes it.` };
     }
-    const settled = await settle(ctx, state, ticket, result.lastText, () => reviewTicket(ctx, state, ticket, run2));
+    const settled = await settle(ctx, state, ticket, result.lastText, () => reviewTicket(ctx, state, ticket, run3));
     if (settled.kind === "committed") {
       const m2 = measure();
       await patch(ctx, state.taskId, ticket, (previous) => {
@@ -12287,50 +12289,50 @@ ${settled.detail}`;
     }, release);
     editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(markdown, "failed"));
     logTicket(ctx, state.taskId, ticketId);
-    const stop = failedBy === "review" ? { code: "REVIEW_FAILED", head: `Ticket ${ticketId} failed its review at ${run2.tier ?? "this rung"} after a retry.` } : { code: failedBy === "checks" ? "CHECKS_FAILED" : "CHECKS_UNRUNNABLE", head: `Ticket ${ticketId} failed. ${reason.split("\n")[0]}` };
-    const next = failedBy === "review" ? "Run /build to retry on a stronger model (a hand fix does not settle a failed review)." : failedBy === "checks" ? "Fix it in the chat and run /build again, or just run /build to retry on a stronger model." : `Fix the plan's ${failedBy === "setup" ? "setup" : "checks"} and run /build again; the ticket stays on ${run2.tier ?? "its rung"}.`;
+    const stop = failedBy === "review" ? { code: "REVIEW_FAILED", head: `Ticket ${ticketId} failed its review at ${run3.tier ?? "this rung"} after a retry.` } : { code: failedBy === "checks" ? "CHECKS_FAILED" : "CHECKS_UNRUNNABLE", head: `Ticket ${ticketId} failed. ${reason.split("\n")[0]}` };
+    const next = failedBy === "review" ? "Run /build to retry on a stronger model (a hand fix does not settle a failed review)." : failedBy === "checks" ? "Fix it in the chat and run /build again, or just run /build to retry on a stronger model." : `Fix the plan's ${failedBy === "setup" ? "setup" : "checks"} and run /build again; the ticket stays on ${run3.tier ?? "its rung"}.`;
     return { kind: "stopped", code: stop.code, reason: `${stop.head} ${next}` };
   } catch (error) {
     return { kind: "stopped", code: error.code ?? "ERROR", reason: redact(error.message || "Could not finish the ticket.") };
   }
 }
 var ordinal = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`;
-function resultLabel(run2, withError = false) {
-  if (run2?.status === "done") {
-    const sha = run2.commit ? ` ${run2.commit.slice(0, 7)}` : "";
-    return run2.unverified ? `unverified${sha} (${run2.unverified})` : `done${sha}`;
+function resultLabel(run3, withError = false) {
+  if (run3?.status === "done") {
+    const sha = run3.commit ? ` ${run3.commit.slice(0, 7)}` : "";
+    return run3.unverified ? `unverified${sha} (${run3.unverified})` : `done${sha}`;
   }
-  if (run2?.status === "failed") return `failed${withError && run2.error ? `: ${run2.error}` : ""}`;
-  return run2 && run2.attempts > 0 ? "in progress" : "pending";
+  if (run3?.status === "failed") return `failed${withError && run3.error ? `: ${run3.error}` : ""}`;
+  return run3 && run3.attempts > 0 ? "in progress" : "pending";
 }
-function reviewLabel(run2) {
-  const last = run2?.reviews?.[run2.reviews.length - 1];
+function reviewLabel(run3) {
+  const last = run3?.reviews?.[run3.reviews.length - 1];
   if (!last) return "-";
   return last.verdict === "unavailable" ? "unavailable" : last.round > 1 ? `${last.verdict} (${ordinal(last.round)})` : last.verdict;
 }
 var usdCell = (value) => value === void 0 ? "-" : formatUsd(value);
-function costLabel(run2) {
-  if (!run2) return "-";
-  const total = run2.notMetered && !run2.costUsd ? "not metered" : run2.notMetered ? `${formatUsd(run2.costUsd)} + not metered` : formatUsd(run2.costUsd);
-  if (!run2.reviews?.length || !run2.costSplit) return total;
-  return `${total} (impl ${run2.notMetered && !run2.costSplit.implementer ? "not metered" : usdCell(run2.costSplit.implementer)} \xB7 review ${usdCell(run2.costSplit.review)})`;
+function costLabel(run3) {
+  if (!run3) return "-";
+  const total = run3.notMetered && !run3.costUsd ? "not metered" : run3.notMetered ? `${formatUsd(run3.costUsd)} + not metered` : formatUsd(run3.costUsd);
+  if (!run3.reviews?.length || !run3.costSplit) return total;
+  return `${total} (impl ${run3.notMetered && !run3.costSplit.implementer ? "not metered" : usdCell(run3.costSplit.implementer)} \xB7 review ${usdCell(run3.costSplit.review)})`;
 }
 function logTicket(ctx, taskId, ticketId) {
   try {
     const state = ctx.store.load(taskId);
-    const run2 = state?.ticketRuns?.[ticketId];
+    const run3 = state?.ticketRuns?.[ticketId];
     const ticket = state?.plan?.tickets?.find((item) => item.id === ticketId);
-    if (!state || !run2 || !ticket) return;
-    const reviews = run2.reviews ?? [];
+    if (!state || !run3 || !ticket) return;
+    const reviews = run3.reviews ?? [];
     const last = reviews[reviews.length - 1];
-    const split = run2.costSplit ?? { implementer: run2.costUsd, review: 0 };
+    const split = run3.costSplit ?? { implementer: run3.costUsd, review: 0 };
     ctx.store.appendTicketLog({
       at: iso(ctx),
       taskId,
       ticket: ticketId,
       title: ticket.title,
       difficulty: ticketDifficulty(ticket),
-      implementers: (run2.attemptLog ?? []).map((item) => ({ tier: item.tier, provider: item.provider, model: item.model, outcome: item.outcome, ...item.failedBy ? { failedBy: item.failedBy } : {} })),
+      implementers: (run3.attemptLog ?? []).map((item) => ({ tier: item.tier, provider: item.provider, model: item.model, outcome: item.outcome, ...item.failedBy ? { failedBy: item.failedBy } : {} })),
       review: {
         passes: reviews.filter((item) => item.verdict === "pass").length,
         fails: reviews.filter((item) => item.verdict === "fail").length,
@@ -12338,8 +12340,8 @@ function logTicket(ctx, taskId, ticketId) {
         finalVerdict: last?.verdict ?? "none",
         rationale: (last?.rationale ?? "").slice(0, 500)
       },
-      costUsd: { implementer: split.implementer, review: split.review, total: run2.costUsd },
-      elapsedMs: run2.elapsedMs ?? 0
+      costUsd: { implementer: split.implementer, review: split.review, total: run3.costUsd },
+      elapsedMs: run3.elapsedMs ?? 0
     });
   } catch {
   }
@@ -12348,10 +12350,10 @@ function buildReport(ctx, stopped) {
   const state = requireActive(ctx);
   const tickets = state.plan?.tickets ?? [];
   const rows = tickets.map((ticket) => {
-    const run2 = state.ticketRuns?.[ticket.id];
-    const model = run2?.provider && run2.model ? ranModelText(run2.provider, run2.model) : "-";
-    const result = resultLabel(run2);
-    return `| ${ticket.id} | ${ticket.title.replace(/\|/g, "/")} | ${ticketDifficulty(ticket)} | ${model} | ${reviewLabel(run2)} | ${run2?.elapsedMs !== void 0 ? formatDuration(run2.elapsedMs) : "-"} | ${costLabel(run2)} | ${result} |`;
+    const run3 = state.ticketRuns?.[ticket.id];
+    const model = run3?.provider && run3.model ? ranModelText(run3.provider, run3.model) : "-";
+    const result = resultLabel(run3);
+    return `| ${ticket.id} | ${ticket.title.replace(/\|/g, "/")} | ${ticketDifficulty(ticket)} | ${model} | ${reviewLabel(run3)} | ${run3?.elapsedMs !== void 0 ? formatDuration(run3.elapsedMs) : "-"} | ${costLabel(run3)} | ${result} |`;
   });
   const unreviewed = tickets.flatMap((ticket) => {
     const last = state.ticketRuns?.[ticket.id]?.reviews?.at(-1);
@@ -12674,11 +12676,11 @@ function updated(ctx, iso2) {
 function ticketCount(task) {
   const tickets = task.plan?.tickets ?? [];
   const runs = task.ticketRuns ?? {};
-  const finished = Object.values(runs).filter((run2) => run2.status === "done").length;
+  const finished = Object.values(runs).filter((run3) => run3.status === "done").length;
   return `${finished}/${tickets.length || Object.keys(runs).length}`;
 }
 function activeSummary(ctx, task) {
-  const failed = Object.values(task.ticketRuns ?? {}).filter((run2) => run2.status === "failed").length;
+  const failed = Object.values(task.ticketRuns ?? {}).filter((run3) => run3.status === "failed").length;
   const { task: spend2 } = budgetState(ctx, task.taskId);
   return `${displayName(task)} \xB7 ${stateText(task)} \xB7 tickets ${ticketCount(task)} done${failed > 0 ? `, ${failed} failed` : ""} \xB7 ${formatUsdShort(spend2.knownUsd)}${spend2.unknownRecords > 0 ? "+?" : ""} of $${ctx.config.budgets.taskUsd}`;
 }
@@ -12948,30 +12950,30 @@ ${result.stderr || result.stdout}`).slice(0, 2e3)
 import path13 from "node:path";
 var FIX_REASON = "review fix";
 var REPLY_CHARS = 1500;
-function fixPiProgram(ctx, model, at) {
-  const problem = ctx.registry ? registryProblem(ctx.registry, model.provider, model.id) : `model ${model.id} cannot be checked: this Pi session has no model registry`;
+function fixPiProgram(ctx, model, input, at) {
+  const problem = ctx.registry ? registryProblem(ctx.registry, model.provider, model.id) : ctx.piAvailable && !ctx.piAvailable() ? NO_PI : void 0;
   if (problem) return { refused: `${model.provider}/${model.id}: ${problem}. Change models.medium or sign in` };
-  return piProgram(ctx, model, { sessionDir: path13.join(ctx.store.root, "sessions", `review-fix-${at}`), label: "review-fix", job: FIX_REASON, tier: "medium" });
+  return piProgram(ctx, model, { sessionDir: path13.join(ctx.store.root, "sessions", `review-fix-${at}`), label: "review-fix", job: FIX_REASON, tier: "medium", phase: "REVIEWING", taskId: input.taskId });
 }
 function fixAgentProgram(ctx, model, input) {
   return agentProgram(ctx, model, { ...input.home ? { home: input.home } : {}, job: FIX_REASON, tier: "medium", phase: "REVIEWING", taskId: input.taskId });
 }
 async function runFixInTab(ctx, input) {
   const { model } = input;
-  const label3 = modelText(model);
+  const label2 = modelText(model);
   const progress = (line) => ctx.progress?.(`Review: ${line}`);
   let tab;
   try {
     const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
-    if ("problem" in where) return { ok: false, text: `Fixing in a tab needs herdr: start Pi inside herdr (${where.problem}).` };
-    if (model.kind === "pi" && !ctx.ticketModePath) return { ok: false, text: `Cannot fix on ${label3}: this Pi session does not know where the ticket-mode extension is.` };
+    if ("problem" in where) return { ok: false, text: `Fixing in a tab needs herdr: run from a terminal inside herdr (${where.problem}).` };
+    if (model.kind === "pi" && !ctx.ticketModePath) return { ok: false, text: `Cannot fix on ${label2}: this install does not know where the ticket-mode extension is.` };
     const at = ctx.now().getTime();
-    const program = model.kind === "agent" ? fixAgentProgram(ctx, model, input) : fixPiProgram(ctx, model, at);
+    const program = model.kind === "agent" ? fixAgentProgram(ctx, model, input) : fixPiProgram(ctx, model, input, at);
     if ("refused" in program) return { ok: false, text: `Cannot fix on ${program.refused}.` };
     const name = tabName(input.taskName, "fix", 1, at);
     const headBefore = await ctx.git.head().catch(() => void 0);
     const branchBefore = await ctx.git.currentBranch().catch(() => void 0);
-    progress(`opening ${label3} in a herdr tab to fix the findings`);
+    progress(`opening ${label2} in a herdr tab to fix the findings`);
     tab = await openTab({
       ...ctx.herdrTimings,
       ...program.readyTimeoutMs ? { readyTimeoutMs: program.readyTimeoutMs } : {},
@@ -12982,10 +12984,10 @@ async function runFixInTab(ctx, input) {
       name,
       labels: { "shepherd.review-fix": name },
       progress,
-      blockedNotice: `The fix (${label3}) is waiting for you in herdr sub-agent ${name} (agents list)`
+      blockedNotice: `The fix (${label2}) is waiting for you in herdr sub-agent ${name} (agents list)`
     });
     const opened = tab;
-    progress(`fixing in herdr tab ${opened.name} (${label3})`);
+    progress(`fixing in herdr tab ${opened.name} (${label2})`);
     let failure;
     try {
       await opened.prompt(input.prompt);
@@ -13007,13 +13009,13 @@ async function runFixInTab(ctx, input) {
       notes.push(`The fix committed anyway; shepherd moved HEAD back to ${headBefore.slice(0, 7)} (git reset --soft), so its changes are staged, not committed.`);
     }
     const reason = failure ?? program.failed?.();
-    if (reason) return { ok: false, text: [`The fix on ${label3} did not finish: ${reason} (the herdr tab ${opened.name} is left open to read).`, ...notes].join("\n") };
+    if (reason) return { ok: false, text: [`The fix on ${label2} did not finish: ${reason} (the herdr tab ${opened.name} is left open to read).`, ...notes].join("\n") };
     const said = redact((await program.reply(opened)).trim()).slice(-REPLY_CHARS);
     await opened.close();
     tab = void 0;
-    return { ok: true, text: [`Fixed in tab ${opened.name} (${label3}), nothing committed.`, ...said ? ["", said, ""] : [], ...notes, "Run /review to check."].join("\n") };
+    return { ok: true, text: [`Fixed in tab ${opened.name} (${label2}), nothing committed.`, ...said ? ["", said, ""] : [], ...notes, "Run /review to check."].join("\n") };
   } catch (error) {
-    return { ok: false, text: `The fix on ${label3} stopped: ${messageOf(error)}${tab ? ` (herdr tab ${tab.name} is left open)` : ""}.` };
+    return { ok: false, text: `The fix on ${label2} stopped: ${messageOf(error)}${tab ? ` (herdr tab ${tab.name} is left open)` : ""}.` };
   }
 }
 
@@ -13068,6 +13070,7 @@ function reviewRows(report) {
       item: { kind: "model", text: `${scoreLabel(finding)} ${finding.file ? `${finding.file}: ` : ""}${finding.message}${evidence}` },
       risk: riskLabel(finding),
       where: finding.file ?? NONE,
+      ...finding.file ? { file: finding.file } : {},
       finding: finding.message
     });
   }
@@ -13077,6 +13080,7 @@ function reviewRows(report) {
       item: { kind: "carried", text: `${scoreLabel(finding)} ${finding.file ? `${finding.file}: ` : ""}${finding.issue} (carried from build, ticket ${finding.ticket})` },
       risk: riskLabel(finding),
       where: finding.file ?? NONE,
+      ...finding.file ? { file: finding.file } : {},
       finding: `${finding.issue} (carried from build, ticket ${finding.ticket})`
     });
   }
@@ -13192,35 +13196,37 @@ function agentReviewPrompt(plan, base2, outFile) {
     `At most ${MAX_FINDINGS} findings, ordered by likelihood \xD7 severity, highest first. An empty array [] means you found nothing worth a person's time. Do not modify any other file.`
   ].join("\n");
 }
-var label2 = (agent) => `${AGENT_PREFIX}${agent.name}${agent.model ? `/${agent.model}` : ""}`;
-function unavailable(agent, error) {
-  return { provider: "agent", model: label2(agent).slice(AGENT_PREFIX.length), findings: [], truncated: false, error };
+function unavailable(model, error) {
+  return model.kind === "agent" ? { provider: "agent", model: modelText(model).slice(AGENT_PREFIX.length), findings: [], truncated: false, error } : { provider: model.provider, model: model.id, findings: [], truncated: false, error };
 }
 var fingerprint2 = (diff) => createHash2("sha256").update(diff).digest("hex");
 async function runAgentReview(ctx, input, progress) {
-  const { agent } = input;
-  const text = label2(agent);
+  const { model } = input;
+  const text = modelText(model);
   const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
-  if ("problem" in where) return unavailable(agent, `${text} reviews in a herdr tab; start Pi inside herdr (${where.problem}), or point models.review at a Pi model.`);
+  if ("problem" in where) return unavailable(model, `the model pass needs herdr: ${text} reviews in a herdr sub-agent; run from a terminal inside herdr (${where.problem}).`);
+  if (model.kind === "pi" && !ctx.ticketModePath) return unavailable(model, `${text} is a Pi model and this install does not know where the ticket-mode extension is.`);
+  if (model.kind === "pi" && ctx.piAvailable && !ctx.piAvailable()) return unavailable(model, `${text} cannot run: ${NO_PI}.`);
   let tab;
   try {
-    const argv = agentCommand({ kind: "agent", ...agent }, ctx.config);
     const dir = input.hasTask ? path14.join(ctx.store.taskDir(input.taskId), "reports") : path14.join(ctx.store.root, "reports");
     mkdirSync6(dir, { recursive: true });
     const outFile = path14.resolve(dir, `agent-review-${input.stamp}.json`);
     if (existsSync6(outFile)) unlinkSync3(outFile);
     const started = ctx.now().getTime();
     const before = fingerprint2(await ctx.git.workingDiff(input.base.ref, input.exclude));
-    const meter = createAgentMeter(agent.name, { cwd: ctx.git.repoRoot, home: input.home ?? ctx.agentLogHome, onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset).catch(() => void 0), exclude: (file) => isSessionLog(ctx, file) });
+    const ledger = { job: "model review", tier: "review", phase: "REVIEWING", taskId: input.taskId, ...input.home ? { home: input.home } : {} };
+    const program = model.kind === "agent" ? agentProgram(ctx, model, ledger) : piProgram(ctx, model, { ...ledger, sessionDir: path14.join(ctx.store.root, "sessions", `model-review-${input.stamp}`), label: "model-review" });
     const name = `shep-review-${input.stamp.replace("-", "")}`;
-    progress(`opening ${text} in a herdr tab`);
+    progress(`opening ${text} in a herdr sub-agent`);
     tab = await openTab({
       ...ctx.herdrTimings,
+      ...program.readyTimeoutMs ? { readyTimeoutMs: program.readyTimeoutMs } : {},
       ...input,
       client: ctx.herdr,
       ...where.space ? { space: where.space } : {},
       cwd: ctx.git.repoRoot,
-      argv,
+      argv: program.argv,
       name,
       labels: { "shepherd.review": input.stamp },
       progress,
@@ -13233,15 +13239,19 @@ async function runAgentReview(ctx, input, progress) {
     } catch (error) {
       failure = messageOf(error);
     }
-    const calls = meter?.collect() ?? [];
-    const entries = calls.length > 0 ? meteredEntries(agent.name, calls) : [notMeteredEntry(agent.name)];
-    recordAgentUsage(ctx, { reason: "model review", entries, taskId: input.taskId, phase: "REVIEWING", tier: "review" });
-    const notMetered = entries.every((entry) => entry.meter === "not-metered");
+    let rows = [];
+    try {
+      rows = program.collect();
+    } catch (error) {
+      progress(`could not ledger the review's usage: ${messageOf(error)}`);
+    }
+    const notMetered = rows.length > 0 && rows.every((entry) => entry.meter === "not-metered");
     const left = (why) => `${why} (the herdr tab ${opened.name} is left open to read)`;
-    if (failure) return { ...unavailable(agent, left(`${text} did not finish: ${failure}`)), notMetered };
-    if (!existsSync6(outFile)) return { ...unavailable(agent, left(`${text} did not write the findings file ${outFile}`)), notMetered };
+    failure ??= program.failed?.();
+    if (failure) return { ...unavailable(model, left(`${text} did not finish: ${failure}`)), ...notMetered ? { notMetered } : {} };
+    if (!existsSync6(outFile)) return { ...unavailable(model, left(`${text} did not write the findings file ${outFile}`)), ...notMetered ? { notMetered } : {} };
     const parsed = parseModelFindings(readFileSync9(outFile, "utf8"));
-    if (parsed === void 0) return { ...unavailable(agent, left(`the findings file ${outFile} from ${text} is not a JSON list of findings`)), notMetered };
+    if (parsed === void 0) return { ...unavailable(model, left(`the findings file ${outFile} from ${text} is not a JSON list of findings`)), ...notMetered ? { notMetered } : {} };
     const { findings: findings2, dropped } = keepBest(parsed, MAX_FINDINGS);
     const after = fingerprint2(await ctx.git.workingDiff(input.base.ref, input.exclude));
     const changed = after !== before;
@@ -13249,19 +13259,17 @@ async function runAgentReview(ctx, input, progress) {
     await opened.close();
     tab = void 0;
     return {
-      provider: "agent",
-      model: text.slice(AGENT_PREFIX.length),
+      ...unavailable(model, ""),
       findings: findings2,
       ...dropped > 0 ? { dropped } : {},
-      truncated: false,
       chunks: 1,
       parts: [{ index: 1, reviewedBy: text, findings: findings2.length, failures: [] }],
       elapsedMs: ctx.now().getTime() - started,
       ...notMetered ? { notMetered: true } : {},
-      ...changed ? { error: `the working tree changed while ${text} reviewed it (it was told not to edit files); the findings may not match the diff above` } : {}
+      ...changed ? { error: `the working tree changed while ${text} reviewed it (it was told not to edit files); the findings may not match the diff above` } : { error: void 0 }
     };
   } catch (error) {
-    return unavailable(agent, `${text} could not review: ${messageOf(error)}${tab ? ` (the herdr tab ${tab.name} is left open)` : ""}`);
+    return unavailable(model, `${text} could not review: ${messageOf(error)}${tab ? ` (the herdr tab ${tab.name} is left open)` : ""}`);
   }
 }
 
@@ -13274,9 +13282,10 @@ function reviewChecks(ctx, plan) {
 function passModel(ctx, override) {
   const model = override ?? reviewModel(ctx.config);
   const route = routeFor(ctx, "review", model);
-  if (model.kind === "agent") return { route, agent: { name: model.name, ...model.model ? { model: model.model } : {} } };
-  if (route.blocked) return { route, problem: route.blocked };
-  return { route, candidate: { provider: model.provider, model: model.id } };
+  if (model.kind === "agent") return { route, model, tab: true };
+  if (route.blocked) return { route, model, problem: route.blocked };
+  if (!ctx.chat) return { route, model, tab: true };
+  return { route, model, candidate: { provider: model.provider, model: model.id } };
 }
 function parseReviewArgs(ctx, args) {
   const words2 = args.trim().split(/\s+/).filter(Boolean);
@@ -13287,14 +13296,14 @@ function parseReviewArgs(ctx, args) {
 async function modelPass(ctx, taskId, plan, picked, enabled, diff, agentInput) {
   if (!enabled) return void 0;
   const { candidate } = picked;
-  if (picked.agent) {
+  if (picked.tab) {
     const exhausted2 = budgetState(ctx, taskId).status === "hard" ? "the task or daily budget is exhausted." : void 0;
-    if (exhausted2) return { provider: AGENT_PROVIDER, model: picked.agent.name, findings: [], truncated: false, error: exhausted2 };
-    return runAgentReview(ctx, { ...agentInput, taskId, plan, agent: picked.agent }, (line) => ctx.progress?.(`Review: ${line}`));
+    if (exhausted2) return picked.model.kind === "agent" ? { provider: AGENT_PROVIDER, model: picked.model.name, findings: [], truncated: false, error: exhausted2 } : { provider: picked.model.provider, model: picked.model.id, findings: [], truncated: false, error: exhausted2 };
+    return runAgentReview(ctx, { ...agentInput, taskId, plan, model: picked.model }, (line) => ctx.progress?.(`Review: ${line}`));
   }
   const skip = (error) => ({ provider: candidate?.provider ?? "none", model: candidate?.model ?? picked.route.label, findings: [], truncated: false, error });
-  if (!ctx.chat) return skip("no model connection (only available inside a Pi session).");
   if (!candidate) return skip(picked.problem ?? "no review model is available.");
+  if (!ctx.chat) return skip("no model connection.");
   const exhausted = () => budgetState(ctx, taskId).status === "hard" ? "the task or daily budget is exhausted." : void 0;
   const stop = exhausted();
   if (stop) return skip(stop);
@@ -13345,13 +13354,13 @@ function modelCost(ctx, taskId, sinceMs) {
 }
 function ticketRows(state) {
   return (state?.plan?.tickets ?? []).map((ticket) => {
-    const run2 = state?.ticketRuns?.[ticket.id];
+    const run3 = state?.ticketRuns?.[ticket.id];
     return {
       id: ticket.id,
       difficulty: ticketDifficulty(ticket),
-      implementer: run2?.provider && run2.model ? ranModelText(run2.provider, run2.model) : "\u2014",
-      review: reviewLabel(run2),
-      cost: run2 ? costLabel(run2) : "\u2014"
+      implementer: run3?.provider && run3.model ? ranModelText(run3.provider, run3.model) : "\u2014",
+      review: reviewLabel(run3),
+      cost: run3 ? costLabel(run3) : "\u2014"
     };
   });
 }
@@ -13407,7 +13416,7 @@ async function runReview(ctx, override) {
   const started = ctx.now().getTime();
   const progress = (line) => ctx.progress?.(`Review: ${line}`);
   const checks = reviewChecks(ctx, plan);
-  progress(`started \xB7 ${branch} against ${ref} \xB7 ${ctx.config.setup.length} setup step(s), ${checks.length} check(s) \xB7 model ${modelOn ? picked.candidate || picked.agent ? picked.route.label : `unavailable (${picked.problem})` : "off"}`);
+  progress(`started \xB7 ${branch} against ${ref} \xB7 ${ctx.config.setup.length} setup step(s), ${checks.length} check(s) \xB7 model ${modelOn ? picked.candidate || picked.tab ? picked.route.label : `unavailable (${picked.problem})` : "off"}`);
   const diff = redact(rawDiff);
   const report = await reviewDiff({
     diff: rawDiff,
@@ -13420,7 +13429,7 @@ async function runReview(ctx, override) {
     planAcceptance: plan?.acceptance ?? []
   });
   const reviewPlan = plan ?? { version: 0, createdAt: iso(ctx), summary: `Ad-hoc changes on ${branch}.`, risks: [], acceptance: [], groups: [], overlap: [], securitySensitive: false };
-  const mergeBase = picked.agent ? await ctx.git.mergeBase(ref).catch(() => ref) : ref;
+  const mergeBase = picked.tab ? await ctx.git.mergeBase(ref).catch(() => ref) : ref;
   const modelReview = await modelPass(ctx, taskId, reviewPlan, picked, modelOn, report.diff ?? diff, { hasTask: !!state, base: { ref, sha: mergeBase }, exclude: excludedPaths(ctx), stamp: stamp(ctx) });
   report.modelReview = modelReview;
   const carried = carriedFindings(state, modelReview?.findings);
@@ -13449,14 +13458,14 @@ async function runReview(ctx, override) {
   const items = reviewItems(report);
   const result = (message) => report.passed ? { ok: true, text: message, data: report } : { ok: false, code: "REVIEW_BLOCKING", text: `${message}
 Fix the problems, then /review again. Nothing was committed or pushed.`, data: report };
-  if (items.length === 0 && report.passed) return result(`Review passed: ${report.checks.length} check(s), no findings.`);
+  if (items.length === 0 && report.passed && (!!ctx.report || !report.modelReview?.error)) return result(`Review passed: ${report.checks.length} check(s), no findings.`);
   if (!ctx.review || items.length === 0) return result(text);
-  let fixModel;
+  let fixModel2;
   try {
     const medium = parseTicketModel(ctx.config.models.medium, ctx.config);
-    if (!("problem" in await herdrSpace(ctx.herdr)) && (medium.kind === "agent" || ctx.ticketModePath)) fixModel = medium;
+    if (!("problem" in await herdrSpace(ctx.herdr)) && (medium.kind === "agent" || ctx.ticketModePath)) fixModel2 = medium;
   } catch {
-    fixModel = void 0;
+    fixModel2 = void 0;
   }
   const choice = await ctx.review({
     title: `Review \xB7 ${items.length} finding(s)`,
@@ -13464,14 +13473,14 @@ Fix the problems, then /review again. Nothing was committed or pushed.`, data: r
     // The report above already holds this table; only the choice is shown.
     alreadyShown: !!ctx.report,
     actions: [
-      ...fixModel ? [{ value: "fix-tab", label: `Fix all in a tab (${modelText(fixModel)})` }] : [],
+      ...fixModel2 ? [{ value: "fix-tab", label: `Fix all in a tab (${modelText(fixModel2)})` }] : [],
       { value: "fix-all", label: "Fix all" },
       { value: "fix-some", label: "Fix\u2026", input: "What should be fixed? (finding numbers like 1, 3, and/or your own instructions)" },
       { value: "close", label: "Close" }
     ]
   });
-  if (choice?.value === "fix-tab" && fixModel) {
-    const fixed = await runFixInTab(ctx, { prompt: fixMessage(items, checks, void 0, true), model: fixModel, taskId, taskName: state ? displayName(state) : "" });
+  if (choice?.value === "fix-tab" && fixModel2) {
+    const fixed = await runFixInTab(ctx, { prompt: fixMessage(items, checks, void 0, true), model: fixModel2, taskId, taskName: state ? displayName(state) : "" });
     return fixed.ok ? done(fixed.text, report) : { ok: false, code: "REVIEW_FIX_FAILED", text: fixed.text, data: report };
   }
   const request = choice?.value === "fix-some" ? (choice.text ?? "").trim() : void 0;
@@ -13482,8 +13491,68 @@ Fix the problems, then /review again. Nothing was committed or pushed.`, data: r
   return result(text);
 }
 
-// src/orchestrator/reports.ts
+// src/orchestrator/review-latest.ts
+import { existsSync as existsSync7, readdirSync as readdirSync5, readFileSync as readFileSync10 } from "node:fs";
 import path16 from "node:path";
+async function latestReview(ctx) {
+  const found = await activeTask(ctx);
+  const state = found && found.phase !== "COMPLETE" && found.phase !== "IDLE" ? found : void 0;
+  if (state) {
+    const dir2 = path16.join(ctx.store.taskDir(state.taskId), "reports");
+    const json = path16.join(dir2, "review.json");
+    const report = state.review ?? (existsSync7(json) ? JSON.parse(readFileSync10(json, "utf8")) : void 0);
+    return report ? { report, file: path16.join(dir2, "review.md"), taskId: state.taskId, taskName: displayName(state) } : void 0;
+  }
+  const dir = path16.join(ctx.store.root, "reports");
+  const name = existsSync7(dir) ? readdirSync5(dir).filter((item) => /^review-\d{8}-\d{6}\.json$/.test(item)).sort().pop() : void 0;
+  if (!name) return void 0;
+  try {
+    return { report: JSON.parse(readFileSync10(path16.join(dir, name), "utf8")), file: path16.join(dir, name.replace(/\.json$/, ".md")), taskId: SESSION_TASK_ID, taskName: "" };
+  } catch {
+    return void 0;
+  }
+}
+function findingsData(report) {
+  return reviewRows(report).map((row) => ({ n: row.n, title: row.finding, file: row.file ?? null, line: null, risk: row.risk }));
+}
+async function fixModel(ctx) {
+  let model;
+  try {
+    model = parseTicketModel(ctx.config.models.medium, ctx.config);
+  } catch (error) {
+    return { problem: `models.medium is not usable: ${error.message}` };
+  }
+  const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
+  if ("problem" in where) return { problem: `fixing in a tab needs herdr (${where.problem})` };
+  if (model.kind === "pi" && !ctx.ticketModePath) return { problem: `${modelText(model)} is a Pi model and this install does not know where the ticket-mode extension is` };
+  return { model };
+}
+var nothing = () => fail("NO_REVIEW", "No review to fix yet: run /review first.");
+async function fixLatestInTab(ctx) {
+  const latest = await latestReview(ctx);
+  if (!latest) return nothing();
+  const items = reviewItems(latest.report);
+  if (items.length === 0) return done("The latest review has no findings to fix.");
+  const exhausted = gateBudget(ctx, latest.taskId);
+  if (exhausted) return exhausted;
+  const picked = await fixModel(ctx);
+  if ("problem" in picked) return fail("NEEDS_HERDR", `Cannot fix in a tab: ${picked.problem}.`);
+  const found = await activeTask(ctx);
+  const checks = reviewChecks(ctx, found?.plan);
+  const fixed = await runFixInTab(ctx, { prompt: fixMessage(items, checks, void 0, true), model: picked.model, taskId: latest.taskId, taskName: latest.taskName });
+  return fixed.ok ? done(fixed.text, { report: latest.file, findings: items.length }) : fail("REVIEW_FIX_FAILED", fixed.text);
+}
+async function fixList(ctx) {
+  const latest = await latestReview(ctx);
+  if (!latest) return nothing();
+  const items = reviewItems(latest.report);
+  if (items.length === 0) return done("The latest review has no findings to fix.");
+  const found = await activeTask(ctx);
+  return done(fixMessage(items, reviewChecks(ctx, found?.plan)), { report: latest.file, findings: findingsData(latest.report) });
+}
+
+// src/orchestrator/reports.ts
+import path17 from "node:path";
 function cost(ctx, format = "") {
   return guard(() => costReport(ctx, format.trim()));
 }
@@ -13516,7 +13585,7 @@ async function costReport(ctx, format) {
   const summary = summarize(records, { pricing: ctx.config.pricing, unknownCallUsd: ctx.config.budgets.unknownCallUsd });
   const budget = budgetState(ctx, task?.taskId, records);
   if (format === "csv" || format === "json") {
-    const file = path16.join(ctx.store.root, "reports", `cost-${ctx.now().toISOString().replace(/[-:.]/g, "").slice(0, 15)}.${format}`);
+    const file = path17.join(ctx.store.root, "reports", `cost-${ctx.now().toISOString().replace(/[-:.]/g, "").slice(0, 15)}.${format}`);
     atomicWrite(file, format === "csv" ? toCsv(records) : JSON.stringify({ summary, records }, null, 2));
     return done(`Wrote ${records.length} ledger record(s) to ${file}.`, { file, summary });
   }
@@ -13555,7 +13624,7 @@ var Workflow = class {
   constructor(options) {
     this.cwd = options.cwd;
     const config = options.config ?? loadConfig(options.cwd);
-    this.store = options.store ?? new TaskStore(path17.join(options.cwd, config.workspaceDir));
+    this.store = options.store ?? new TaskStore(path18.join(options.cwd, config.workspaceDir));
     this.git = options.git ?? new GitWorkspace(options.cwd);
     const ctx = {
       cwd: this.cwd,
@@ -13759,6 +13828,22 @@ var Workflow = class {
   review(args = "") {
     return review(this.ctx, args);
   }
+  /** The latest saved review report and where it is on disk; undefined before any review. */
+  latestReview() {
+    return latestReview(this.ctx);
+  }
+  /** `models.medium` when "Fix all in a tab" can run here, else why not. */
+  fixModel() {
+    return fixModel(this.ctx);
+  }
+  /** `shepherd fix --tab`: the latest report's findings fixed by `models.medium` in a herdr sub-agent. Never commits. */
+  fixInTab() {
+    return guard(() => fixLatestInTab(this.ctx));
+  }
+  /** `shepherd fix --list`: the findings and rules as text, for fixing in the chat. */
+  fixList() {
+    return guard(() => fixList(this.ctx));
+  }
   cost(format = "") {
     return cost(this.ctx, format);
   }
@@ -13768,7 +13853,7 @@ var Workflow = class {
   /** `<task dir>/sessions` of the active task: where the Pi ticket runner keeps a child's session dirs and status files. */
   ticketSessionsRoot() {
     const state = active(this.ctx);
-    return state ? path17.join(this.store.taskDir(state.taskId), "sessions") : void 0;
+    return state ? path18.join(this.store.taskDir(state.taskId), "sessions") : void 0;
   }
   /** The active task's readable name (for a herdr tab name). */
   ticketSessionsName() {
@@ -13788,8 +13873,8 @@ var Workflow = class {
     return recordAgentUsage(this.ctx, input);
   }
   /** A ticket meter has read an agent log to `offset`: the repo's watermark moves there so the sweep skips it (asynchronous: the watermark lock orders it before any later sweep in this process). */
-  advanceAgentLog(file, offset) {
-    this.store.advanceAgentLog(file, offset).catch(() => void 0);
+  advanceAgentLog(file, offset, owner) {
+    this.store.advanceAgentLog(file, offset, owner).catch(() => void 0);
   }
   /** Ledgers the calls Pi made on its own (cache warming, its own compaction and branch summaries) from the session file. */
   recordPiUsage(input) {
@@ -13813,26 +13898,26 @@ var Workflow = class {
 };
 
 // src/shepherd-home.ts
-import { existsSync as existsSync7, readFileSync as readFileSync10, rmSync as rmSync3 } from "node:fs";
+import { existsSync as existsSync8, readFileSync as readFileSync11, rmSync as rmSync3 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import path18 from "node:path";
+import path19 from "node:path";
 function shepherdHome(env = process.env, home = homedir4()) {
-  return env.SHEPHERD_HOME || path18.join(home, ".claude", "shepherd");
+  return env.SHEPHERD_HOME || path19.join(home, ".claude", "shepherd");
 }
-var reposFile = (shepherd) => path18.join(shepherd, "repos.json");
+var reposFile = (shepherd) => path19.join(shepherd, "repos.json");
 function registeredRepos(shepherd) {
   try {
-    const parsed = JSON.parse(readFileSync10(reposFile(shepherd), "utf8"));
-    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string" && path18.isAbsolute(item)) : [];
+    const parsed = JSON.parse(readFileSync11(reposFile(shepherd), "utf8"));
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string" && path19.isAbsolute(item)) : [];
   } catch {
     return [];
   }
 }
 async function registerRepo(shepherd, workspaceDir) {
   try {
-    await withLock(path18.join(shepherd, "repos.lock"), () => {
+    await withLock(path19.join(shepherd, "repos.lock"), () => {
       const known = registeredRepos(shepherd);
-      const dir = path18.resolve(workspaceDir);
+      const dir = path19.resolve(workspaceDir);
       if (known.includes(dir)) return;
       atomicWrite(reposFile(shepherd), JSON.stringify([...known, dir], null, 2));
     });
@@ -13841,18 +13926,18 @@ async function registerRepo(shepherd, workspaceDir) {
 }
 function dailyRecordsOf(dirs, now) {
   const out = [];
-  for (const dir of new Set(dirs.map((item) => path18.resolve(item)))) {
+  for (const dir of new Set(dirs.map((item) => path19.resolve(item)))) {
     try {
-      if (existsSync7(dir)) out.push(...recordsForDay(new TaskStore(dir).readLedger(), now));
+      if (existsSync8(dir)) out.push(...recordsForDay(new TaskStore(dir).readLedger(), now));
     } catch {
     }
   }
   return out;
 }
-var sessionFile = (shepherd, sessionId, kind = "") => path18.join(shepherd, "sessions", `${sessionId.replace(/[^A-Za-z0-9_-]/g, "_")}${kind}.json`);
+var sessionFile = (shepherd, sessionId, kind = "") => path19.join(shepherd, "sessions", `${sessionId.replace(/[^A-Za-z0-9_-]/g, "_")}${kind}.json`);
 function readJson(file) {
   try {
-    return JSON.parse(readFileSync10(file, "utf8"));
+    return JSON.parse(readFileSync11(file, "utf8"));
   } catch {
     return void 0;
   }
@@ -14088,8 +14173,8 @@ function createHerdrClient(options = {}) {
 }
 
 // src/cli/build-host.ts
-import { existsSync as existsSync8 } from "node:fs";
-import path19 from "node:path";
+import { existsSync as existsSync9 } from "node:fs";
+import path20 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/runner/host.ts
@@ -14107,7 +14192,7 @@ function ticketHost(getWorkflow, changed = () => void 0) {
       getWorkflow().recordAgentUsage({ reason: `agent ${agent}`, entries, ticketId: id });
       changed();
     },
-    agentLogRead: (file, offset) => getWorkflow().advanceAgentLog(file, offset),
+    agentLogRead: (file, offset, owner) => getWorkflow().advanceAgentLog(file, offset, owner),
     agentLogExcluded: (file) => getWorkflow().isSessionLog(file),
     head: () => getWorkflow().git.head().catch(() => void 0),
     branch: () => getWorkflow().git.currentBranch().catch(() => void 0),
@@ -14128,7 +14213,7 @@ function createBuildDriver(options) {
       const where = await herdrSpace(client, visible());
       return "problem" in where ? needsHerdr(where.problem) : void 0;
     },
-    async fresh(model, run2, ticketId, limits, attempt2 = 1) {
+    async fresh(model, run3, ticketId, limits, attempt2 = 1) {
       if (!model.agent) {
         const problem = await Promise.resolve(options.modelPreflight?.(model, ticketId)).catch((error) => `${model.provider}/${model.id} could not be checked: ${redact(error instanceof Error ? error.message : String(error))}`);
         if (problem) return { stopped: `Ticket ${ticketId} cannot start on ${problem}. Fix the models config or sign in, then /build again.` };
@@ -14152,27 +14237,26 @@ function createBuildDriver(options) {
           ...options.home ? { home: options.home } : {},
           host: ticketHost(options.getWorkflow, options.changed)
         },
-        run2
+        run3
       );
     }
   };
 }
 function ticketModePath(from = import.meta.url) {
-  const start = path19.dirname(typeof from === "string" && !from.startsWith("file:") ? from : fileURLToPath(from));
+  const start = path20.dirname(typeof from === "string" && !from.startsWith("file:") ? from : fileURLToPath(from));
   let dir = start;
   for (let depth = 0; depth < 6; depth += 1) {
-    const candidate = path19.join(dir, "src", "ticket-mode.ts");
-    if (existsSync8(candidate)) return candidate;
-    const parent = path19.dirname(dir);
+    for (const candidate of [path20.join(dir, "dist", "ticket-mode.mjs"), path20.join(dir, "src", "ticket-mode.ts")]) if (existsSync9(candidate)) return candidate;
+    const parent = path20.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return path19.join(path19.dirname(start), "src", "ticket-mode.ts");
+  return path20.join(path20.dirname(start), "src", "ticket-mode.ts");
 }
 
 // src/cli/plan.ts
-import { existsSync as existsSync9, readFileSync as readFileSync11 } from "node:fs";
-import path20 from "node:path";
+import { existsSync as existsSync10, readFileSync as readFileSync12 } from "node:fs";
+import path21 from "node:path";
 var PLAN_USAGE = `Usage:
   shepherd plan start "<request>"     (or "-" to read the request from stdin)
   shepherd plan spec <file|->         the spec as JSON
@@ -14250,10 +14334,10 @@ function readJsonInput(ref, stdin, cwd, what) {
   let text;
   if (ref === "-") text = stdin;
   else {
-    const file = path20.resolve(cwd, ref);
-    if (!existsSync9(file)) return { failed: fail("BAD_INPUT", `No such file: ${ref}`) };
+    const file = path21.resolve(cwd, ref);
+    if (!existsSync10(file)) return { failed: fail("BAD_INPUT", `No such file: ${ref}`) };
     try {
-      text = readFileSync11(file, "utf8");
+      text = readFileSync12(file, "utf8");
     } catch (error) {
       return { failed: fail("BAD_INPUT", `Cannot read ${ref}: ${error.message.split("\n")[0]}`) };
     }
@@ -14392,7 +14476,7 @@ function tracked(inner) {
   return { client, open: open2 };
 }
 function words(text) {
-  return cliText(text).replace(/start Pi inside herdr and run \/shepherd:build again/g, "run shepherd from a terminal inside herdr (HC_TERMINAL_ID set, `hc` working) and run /shepherd:build again").replace(/Another Pi session/g, "Another shepherd build").replace(/or answer yes when \/shepherd:build asks, so they don't land in ticket 01's commit\./g, "so they don't land in ticket 01's commit.").replace(/Run \/review/g, "Run /shepherd:review").replace(/\/review/g, "/shepherd:review");
+  return cliText(text).replace(/start Pi inside herdr and run \/shepherd:build again/g, "run shepherd from a terminal inside herdr (HC_TERMINAL_ID set, `hc` working) and run /shepherd:build again").replace(/Another Pi session/g, "Another shepherd build").replace(/or answer yes when \/shepherd:build asks, so they don't land in ticket 01's commit\./g, "so they don't land in ticket 01's commit.").replace(/Run \/review/g, "Run /shepherd:review").replace(/(?<![\w.])\/review\b/g, "/shepherd:review");
 }
 async function buildCommand(rest, io, options, open2) {
   const json = rest.includes("--json");
@@ -14477,14 +14561,97 @@ function firstTicketNeedsPi(workflow, piAvailable) {
   }
 }
 
+// src/cli/review.ts
+var REVIEW_USAGE = "Usage: shepherd review [--with <provider/id | agent:name[/model]>] [--json]";
+var FIX_USAGE = "Usage: shepherd fix --tab [--json]   (fix the latest review's findings with models.medium in a herdr sub-agent; never commits)\n       shepherd fix --list [--json]   (print the findings and rules, to fix them in this chat)";
+async function run(rest, io, options, open2, exec3) {
+  const json = rest.includes("--json");
+  const progressLines = [];
+  const emit2 = (result, data) => {
+    const text = words(result.text);
+    if (json) io.out(`${JSON.stringify({ ok: result.ok, ...result.code ? { code: result.code } : {}, text, ...data !== void 0 ? { data } : {} }, null, 2)}
+`);
+    else (result.ok ? io.out : io.err)(`${text}
+`);
+    return result.ok ? 0 : 1;
+  };
+  const env = options.env ?? process.env;
+  const inner = options.herdr ?? createHerdrClient({ env });
+  const { client, open: openTabs } = tracked(inner);
+  const piAvailable = options.piAvailable ?? (() => piOnPath(env));
+  const progress = (line) => {
+    const clean = words(redact(line));
+    progressLines.push(clean);
+    if (!json) io.out(`${clean}
+`);
+  };
+  const opened = await open2({ progress, herdr: client, piAvailable, ticketModePath: options.ticketModePath ?? ticketModePath(), ...options.runner ? { runner: options.runner } : {}, ...options.herdrTimings ? { herdrTimings: options.herdrTimings } : {} });
+  if ("problem" in opened) return emit2({ ok: false, code: "NO_REPO", text: opened.problem });
+  const exit = options.exit ?? ((code) => process.exit(code));
+  let leaving = false;
+  const onSignal = () => {
+    if (leaving) return;
+    leaving = true;
+    void Promise.allSettled([...openTabs].map((address) => inner.kill(address))).then(() => exit(130));
+  };
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+  try {
+    const { result, data } = await exec3(opened.workflow);
+    return emit2(result, data);
+  } catch (error) {
+    return emit2({ ok: false, code: "ERROR", text: redact((error instanceof Error ? error.message : String(error)).split("\n")[0]) });
+  } finally {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+  }
+}
+async function reviewCommand(rest, io, options, open2) {
+  const args = rest.filter((word) => word !== "--json");
+  const usage = () => {
+    if (rest.includes("--json")) io.out(`${JSON.stringify({ ok: false, code: "USAGE", text: REVIEW_USAGE })}
+`);
+    else io.err(`${REVIEW_USAGE}
+`);
+    return 1;
+  };
+  if (args.length > 0 && (args[0] !== "--with" || args.length !== 2)) return usage();
+  return run(rest, io, options, open2, async (workflow) => {
+    const result = await workflow.review(args.length > 0 ? `--with ${args[1]}` : "");
+    const report = result.data;
+    if (!report || typeof report !== "object" || !("checks" in report)) return { result, data: { report: null, findings: [], passed: result.ok, fixTab: null } };
+    const latest = await workflow.latestReview();
+    const findings2 = findingsData(report);
+    const fix = findings2.length > 0 ? await workflow.fixModel() : void 0;
+    return { result, data: { report: latest?.file ?? null, findings: findings2, passed: report.passed, fixTab: fix && "model" in fix ? modelText(fix.model) : null } };
+  });
+}
+async function fixCommand(rest, io, options, open2) {
+  const args = rest.filter((word) => word !== "--json");
+  const mode = args.length === 1 && args[0] === "--tab" ? "fix-tab" : args.length === 1 && args[0] === "--list" ? "fix-list" : void 0;
+  if (!mode) {
+    if (rest.includes("--json")) io.out(`${JSON.stringify({ ok: false, code: "USAGE", text: FIX_USAGE })}
+`);
+    else io.err(`${FIX_USAGE}
+`);
+    return 1;
+  }
+  return run(rest, io, options, open2, async (workflow) => {
+    const result = mode === "fix-tab" ? await workflow.fixInTab() : await workflow.fixList();
+    return { result, data: result.data };
+  });
+}
+
 // src/cli/shepherd.ts
-var run = promisify3(execFile4);
+var run2 = promisify3(execFile4);
 var USAGE = `Usage:
   shepherd version
   shepherd cost [--json]
   shepherd status
   shepherd hook <stop|prompt|pretool>   (reads the hook JSON on stdin)
   shepherd build [--once] [--json]   (runs the approved plan's tickets as herdr sub-agents; --once builds one ticket)
+  shepherd review [--with <model>] [--json]   (checks, static scan and the model pass in a herdr sub-agent; writes the numbered report)
+  shepherd fix <--tab|--list> [--json]   (fix the latest review's findings in a herdr sub-agent, or print them for this chat)
   shepherd plan <start|spec|tickets|show|revise|approve> ...   (shepherd plan --help)
   shepherd plans [<name> | close <name> | --all]
   shepherd task <list|use <name>|close [<name>]>
@@ -14493,7 +14660,7 @@ var defaultIo = { out: (text) => process.stdout.write(text), err: (text) => proc
 function packageVersion() {
   for (const rel of ["../../package.json", "../package.json"]) {
     try {
-      const pkg = JSON.parse(readFileSync12(new URL(rel, import.meta.url), "utf8"));
+      const pkg = JSON.parse(readFileSync13(new URL(rel, import.meta.url), "utf8"));
       if (pkg.name === "claude-shepherd" && pkg.version) return pkg.version;
     } catch {
     }
@@ -14503,7 +14670,7 @@ function packageVersion() {
 async function open(cwd, options, confirm, extras = {}) {
   let root;
   try {
-    root = (await run("git", ["rev-parse", "--show-toplevel"], { cwd })).stdout.trim();
+    root = (await run2("git", ["rev-parse", "--show-toplevel"], { cwd })).stdout.trim();
   } catch {
     return { problem: "no-repo" };
   }
@@ -14518,7 +14685,7 @@ async function open(cwd, options, confirm, extras = {}) {
   const now = options.now ?? (() => /* @__PURE__ */ new Date());
   const home = options.home ?? homedir5();
   const shepherd = shepherdHome(options.env ?? process.env, home);
-  const workspace = path21.join(root, config.workspaceDir);
+  const workspace = path22.join(root, config.workspaceDir);
   ignoreWorkspace(workspace);
   await registerRepo(shepherd, workspace);
   const workflow = new Workflow({ cwd: root, config, now, ...confirm ? { confirm } : {}, agentLogHome: home, knownSessions: () => knownSessions(shepherd), dailyRecords: () => dailyRecordsOf([...registeredRepos(shepherd), workspace], now()), ...extras });
@@ -14587,8 +14754,8 @@ async function statusCommand(io, options) {
 }
 function knownSessions(shepherd) {
   try {
-    return readdirSync5(path21.join(shepherd, "sessions")).filter((name) => name.endsWith(".json") && !name.endsWith(".pending.json")).flatMap((name) => {
-      const note = readJson(path21.join(shepherd, "sessions", name));
+    return readdirSync6(path22.join(shepherd, "sessions")).filter((name) => name.endsWith(".json") && !name.endsWith(".pending.json")).flatMap((name) => {
+      const note = readJson(path22.join(shepherd, "sessions", name));
       return note && typeof note.transcriptPath === "string" && typeof note.sessionId === "string" ? [{ transcriptPath: note.transcriptPath, sessionId: note.sessionId }] : [];
     });
   } catch {
@@ -14650,7 +14817,7 @@ async function runHook(kind, input, session) {
     const prompt = (input.prompt ?? "").trim();
     if (!prompt || prompt.startsWith("/")) return void 0;
     await sweep();
-    if (sessionId && input.transcript_path && !existsSync10(sessionFile(shepherd, sessionId))) writeJson(sessionFile(shepherd, sessionId), { transcriptPath: input.transcript_path, sessionId });
+    if (sessionId && input.transcript_path && !existsSync11(sessionFile(shepherd, sessionId))) writeJson(sessionFile(shepherd, sessionId), { transcriptPath: input.transcript_path, sessionId });
     const budget = budgetOf(session, task);
     if (budget.status === "hard") {
       return { decision: "block", reason: `Budget exhausted: ${budget.text}. Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.` };
@@ -14659,7 +14826,7 @@ async function runHook(kind, input, session) {
     if (idle) return { decision: "block", reason: idle };
     if (budget.status === "soft") {
       const open2 = openTask(task);
-      const mark = path21.join(shepherd, "warned.json");
+      const mark = path22.join(shepherd, "warned.json");
       const day = now().toISOString().slice(0, 10);
       const key = open2?.taskId ?? "daily";
       const warned = readJson(mark);
@@ -14763,23 +14930,26 @@ async function planFamily(command, rest, io, options) {
   }
 }
 function ignoreWorkspace(workspace) {
-  const file = path21.join(workspace, ".gitignore");
-  if (existsSync10(file)) return;
+  const file = path22.join(workspace, ".gitignore");
+  if (existsSync11(file)) return;
   mkdirSync7(workspace, { recursive: true });
   writeFileSync2(file, "*\n");
 }
-async function buildFamily(rest, io, options) {
-  if (rest.includes("--help") || rest.includes("-h")) {
-    io.out(`${BUILD_USAGE}
-`);
-    return 0;
-  }
-  const cwd = options.cwd ?? process.cwd();
-  return buildCommand(rest, io, options, async (extras) => {
+function opener(cwd, options) {
+  return async (extras) => {
     const opened = await open(cwd, options, void 0, extras).catch((error) => ({ problem: "error", message: redact((error instanceof Error ? error.message : String(error)).split("\n")[0]) }));
     if ("problem" in opened) return { problem: opened.problem === "no-repo" ? "shepherd: not inside a git repository." : opened.message };
     return { workflow: opened.session.workflow, root: opened.session.root, config: opened.session.config };
-  });
+  };
+}
+async function buildFamily(command, rest, io, options) {
+  if (rest.includes("--help") || rest.includes("-h")) {
+    io.out(`${command === "build" ? BUILD_USAGE : command === "review" ? REVIEW_USAGE : FIX_USAGE}
+`);
+    return 0;
+  }
+  const run3 = command === "build" ? buildCommand : command === "review" ? reviewCommand : fixCommand;
+  return run3(rest, io, options, opener(options.cwd ?? process.cwd(), options));
 }
 async function main(argv, io = defaultIo, options = {}) {
   const [command, ...rest] = argv;
@@ -14791,7 +14961,7 @@ async function main(argv, io = defaultIo, options = {}) {
   if (command === "cost") return costCommand(rest, io, options);
   if (command === "status") return statusCommand(io, options);
   if (command === "hook") return hookCommand(rest[0], io, options);
-  if (command === "build") return buildFamily(rest, io, options);
+  if (command === "build" || command === "review" || command === "fix") return buildFamily(command, rest, io, options);
   if (command === "plan" || command === "plans" || command === "task") return planFamily(command, rest, io, options);
   io.err(USAGE);
   return 2;
@@ -14801,7 +14971,7 @@ function isEntry() {
   if (!invoked) return false;
   try {
     const real = realpathSync2(invoked);
-    return real === realpathSync2(fileURLToPath2(import.meta.url)) || path21.basename(real) === "shepherd";
+    return real === realpathSync2(fileURLToPath2(import.meta.url)) || path22.basename(real) === "shepherd";
   } catch {
     return false;
   }

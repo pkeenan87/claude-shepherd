@@ -45,6 +45,8 @@ export interface ReviewRow {
   /** The Risk column: `L7×S8=56` for a model finding, "BLOCKING" or "SUGGESTION" for a static one or a failed check. */
   risk: string;
   where: string;
+  /** The file a model or carried finding names; none for a static finding or a failed check. */
+  file?: string;
   finding: string;
 }
 
@@ -88,6 +90,7 @@ export function reviewRows(report: ReviewReport): ReviewRow[] {
       item: { kind: "model", text: `${scoreLabel(finding)} ${finding.file ? `${finding.file}: ` : ""}${finding.message}${evidence}` },
       risk: riskLabel(finding),
       where: finding.file ?? NONE,
+      ...(finding.file ? { file: finding.file } : {}),
       finding: finding.message,
     });
   }
@@ -97,6 +100,7 @@ export function reviewRows(report: ReviewReport): ReviewRow[] {
       item: { kind: "carried", text: `${scoreLabel(finding)} ${finding.file ? `${finding.file}: ` : ""}${finding.issue} (carried from build, ticket ${finding.ticket})` },
       risk: riskLabel(finding),
       where: finding.file ?? NONE,
+      ...(finding.file ? { file: finding.file } : {}),
       finding: `${finding.issue} (carried from build, ticket ${finding.ticket})`,
     });
   }

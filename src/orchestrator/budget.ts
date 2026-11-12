@@ -82,13 +82,14 @@ export function observeUsage(
   ctx: WorkflowContext,
   input: { provider: string; model: string; usage: TokenUsage },
   /** A call read back after the fact (a herdr child's session file): its ledger id and time, and the ticket it belongs to. */
-  extra: { id?: string; at?: Date; ticketId?: string; /** The job the rows are ledgered under, instead of the main session's "observed assistant usage" (a fix run in a tab). */ job?: string; tier?: string } = {},
+  extra: { id?: string; at?: Date; ticketId?: string; /** The job the rows are ledgered under, instead of the main session's "observed assistant usage" (a fix run in a tab). */ job?: string; tier?: string; /** The task and phase the row is ledgered under, instead of the active task's (a review or fix tab, which names them). */ taskId?: string; phase?: Phase } = {},
 ): CostRecord | undefined {
   const state = active(ctx);
   const when = { ...(extra.id ? { id: extra.id } : {}), ...(extra.at ? { at: extra.at } : {}) };
   const known = input.usage.input !== null && input.usage.output !== null;
   const base = extra.job ? (known ? extra.job : `${extra.job} missing tokens`) : known ? "observed assistant usage" : "observed assistant usage missing tokens";
   const tier = extra.tier ?? "interactive";
+  if (extra.taskId) return record(ctx, extra.taskId, extra.phase ?? state?.phase ?? "IDLE", tier, input.provider, input.model, input.usage, "unknown", 0, extra.ticketId ? `${base} · ticket ${extra.ticketId}` : base, when);
   // No task: still ledger the turn so it counts toward the daily limit.
   if (!state) return record(ctx, SESSION_TASK_ID, "IDLE", tier, input.provider, input.model, input.usage, "unknown", 0, extra.ticketId ? `${base} · ticket ${extra.ticketId}` : base, when);
   // Only a runner that reads a ticket's tab back names the ticket (`extra.ticketId`); the main session's own turns are not a ticket's spend.

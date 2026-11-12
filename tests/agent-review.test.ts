@@ -168,11 +168,11 @@ describe("/review with an agent", () => {
   it("is unavailable, saying why, when shepherd is not inside herdr", async () => {
     const outside = await agentReview({ fake: { self: { problem: "HC_TERMINAL_ID is not set" } } });
     expect((await outside.run()).ok).toBe(true);
-    expect(outside.report().modelReview!.error).toContain("start Pi inside herdr");
+    expect(outside.report().modelReview!.error).toContain("the model pass needs herdr");
     expect(outside.fake.tabs).toEqual([]);
     const unbound = await agentReview({ herdr: false });
     expect((await unbound.run()).ok).toBe(true);
-    expect(unbound.report().modelReview!.error).toContain("start Pi inside herdr");
+    expect(unbound.report().modelReview!.error).toContain("the model pass needs herdr");
   });
 });
 

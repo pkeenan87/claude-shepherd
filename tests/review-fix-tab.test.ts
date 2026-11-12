@@ -22,7 +22,8 @@ function child(dir: string, provider: string, model: string, text = "Fixed 1 of 
 
 /** A repo with an eval in an uncommitted file (a static finding, so the picker opens), and a picker that answers `choice`. */
 async function fixing(options: { medium?: string; choice?: string; herdr?: boolean; self?: { problem: string }; fake?: FakeHerdrClientOptions; ticketModePath?: string } = {}) {
-  const config = tieredConfig(options.medium ? `models: { medium: '${options.medium}' }\n` : "");
+  // The model pass would open a review tab first; these tests are about the fix tab.
+  const config = tieredConfig(`review: { model: false }\n${options.medium ? `models: { medium: '${options.medium}' }\n` : ""}`);
   const progress: string[] = [];
   const turns: string[] = [];
   const dialogs: PlanReviewRequest[] = [];
@@ -183,7 +184,7 @@ describe("Fix all in a tab with a Pi model", () => {
     expect(tab.killed).toBe(true);
     expect(result.text).toContain("Fixed 1 of 1.");
     expect(fixRows(t)).toHaveLength(1);
-    expect(fixRows(t)[0]).toMatchObject({ taskId: "session", provider: "anthropic", model: "claude-sonnet-5-5", inputTokens: 1000, outputTokens: 100, phase: "IDLE", tier: "medium", reason: "review fix" });
+    expect(fixRows(t)[0]).toMatchObject({ taskId: "session", provider: "anthropic", model: "claude-sonnet-5-5", inputTokens: 1000, outputTokens: 100, phase: "REVIEWING", tier: "medium", reason: "review fix" });
     expect(t.turns).toEqual([]);
   });
 

@@ -322,7 +322,8 @@ function processAlive(pid: number): boolean {
  */
 export interface AgentWatermark {
   since: string;
-  files: Record<string, { offset: number }>;
+  /** `owner`: the job whose meter read the file ("model review", "agent claude"); bytes it writes after that are swept under it, not as outside chef. */
+  files: Record<string, { offset: number; owner?: string }>;
 }
 
 export class TaskStore {
@@ -413,7 +414,7 @@ export class TaskStore {
       const parsed = JSON.parse(readFileSync(this.watermarkPath(), "utf8")) as Partial<AgentWatermark>;
       if (typeof parsed.since !== "string" || !parsed.files || typeof parsed.files !== "object") return undefined;
       const files: AgentWatermark["files"] = {};
-      for (const [file, entry] of Object.entries(parsed.files)) if (typeof entry?.offset === "number" && entry.offset >= 0) files[file] = { offset: entry.offset };
+      for (const [file, entry] of Object.entries(parsed.files)) if (typeof entry?.offset === "number" && entry.offset >= 0) files[file] = { offset: entry.offset, ...(typeof entry.owner === "string" && entry.owner ? { owner: entry.owner } : {}) };
       return { since: parsed.since, files };
     } catch {
       return undefined;
@@ -426,11 +427,11 @@ export class TaskStore {
   }
 
   /** Moves a file's offset forward (a ticket meter has consumed it), under the lock. Does nothing before the watermark exists. */
-  advanceAgentLog(file: string, offset: number): Promise<void> {
+  advanceAgentLog(file: string, offset: number, owner?: string): Promise<void> {
     return this.withWatermarkLock(() => {
       const mark = this.readAgentWatermark();
       if (!mark || (mark.files[file]?.offset ?? -1) >= offset) return;
-      mark.files[file] = { offset };
+      mark.files[file] = { offset, ...(owner ? { owner } : mark.files[file]?.owner ? { owner: mark.files[file]!.owner } : {}) };
       this.writeAgentWatermark(mark);
     });
   }
