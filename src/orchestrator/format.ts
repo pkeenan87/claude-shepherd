@@ -1,0 +1,50 @@
+/** Small formatting helpers for progress lines and reports. */
+
+/** "0.8s", "12.3s", "4m21s", "1h02m". */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "?";
+  // Below 59.95s, toFixed(1) cannot round up to "60.0s".
+  if (ms < 59_950) return `${(ms / 1000).toFixed(1)}s`;
+  // Round once, then split, so 119.6s is 2m00s and not 1m60s.
+  const total = Math.round(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if (minutes < 60) return `${minutes}m${String(seconds).padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/** "$0.1234", or "cost unknown" for null. */
+export function formatUsd(usd: number | null | undefined): string {
+  return usd === null || usd === undefined ? "cost unknown" : `$${usd.toFixed(4)}`;
+}
+
+/** Plain one-line text: newlines and runs of space collapsed, clipped to `max` characters with an ellipsis. No markdown escapes. */
+export function flat(text: string, max?: number): string {
+  const one = text.replace(/\s+/g, " ").trim();
+  return max !== undefined && one.length > max ? `${one.slice(0, Math.max(0, max - 1)).trimEnd()}…` : one;
+}
+
+/**
+ * Text for one markdown table cell: `flat` text with `|` escaped (the clip happens first, so it never splits an escape).
+ * Escape only here, at the table; text for a notify or a result stays plain.
+ */
+export function cell(text: string, max?: number): string {
+  return flat(text, max).replace(/\|/g, "\\|");
+}
+
+/** "$0.19", "<$0.01" for a positive amount under a cent, "$0.00" for none. For report tables; the ledger keeps full precision. */
+export function formatUsdShort(usd: number): string {
+  return usd > 0 && usd < 0.005 ? "<$0.01" : `$${usd.toFixed(2)}`;
+}
+
+/** A markdown table: pass cells through `cell` so a `|` cannot split a row. */
+export const mdTable = (head: string[], rows: string[][]): string[] => [`| ${head.join(" | ")} |`, `| ${head.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${row.join(" | ")} |`)];
+
+/** "14:32" in the local time zone; undefined for a missing or unreadable timestamp. */
+export function clock(iso: string | undefined): string | undefined {
+  if (!iso) return undefined;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return undefined;
+  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+}

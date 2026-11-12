@@ -1,2 +1,8 @@
 node_modules/
 .shepherd/
+build/
+*.tsbuildinfo
+dist/*
+!dist/shepherd.mjs
+*.local.yaml
+.DS_Store
