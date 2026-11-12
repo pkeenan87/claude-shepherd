@@ -57,7 +57,7 @@ var require_identity = __commonJS({
         }
       return false;
     }
-    function isNode(node) {
+    function isNode2(node) {
       if (node && typeof node === "object")
         switch (node[NODE_TYPE]) {
           case ALIAS:
@@ -81,7 +81,7 @@ var require_identity = __commonJS({
     exports.isCollection = isCollection;
     exports.isDocument = isDocument;
     exports.isMap = isMap;
-    exports.isNode = isNode;
+    exports.isNode = isNode2;
     exports.isPair = isPair;
     exports.isScalar = isScalar;
     exports.isSeq = isSeq;
@@ -108,17 +108,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path24) {
-      const ctrl = callVisitor(key, node, visitor, path24);
+    function visit_(key, node, visitor, path26) {
+      const ctrl = callVisitor(key, node, visitor, path26);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path24, ctrl);
-        return visit_(key, ctrl, visitor, path24);
+        replaceNode(key, path26, ctrl);
+        return visit_(key, ctrl, visitor, path26);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path24 = Object.freeze(path24.concat(node));
+          path26 = Object.freeze(path26.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path24);
+            const ci = visit_(i, node.items[i], visitor, path26);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -129,13 +129,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path24 = Object.freeze(path24.concat(node));
-          const ck = visit_("key", node.key, visitor, path24);
+          path26 = Object.freeze(path26.concat(node));
+          const ck = visit_("key", node.key, visitor, path26);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path24);
+          const cv = visit_("value", node.value, visitor, path26);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -156,17 +156,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path24) {
-      const ctrl = await callVisitor(key, node, visitor, path24);
+    async function visitAsync_(key, node, visitor, path26) {
+      const ctrl = await callVisitor(key, node, visitor, path26);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path24, ctrl);
-        return visitAsync_(key, ctrl, visitor, path24);
+        replaceNode(key, path26, ctrl);
+        return visitAsync_(key, ctrl, visitor, path26);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path24 = Object.freeze(path24.concat(node));
+          path26 = Object.freeze(path26.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path24);
+            const ci = await visitAsync_(i, node.items[i], visitor, path26);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -177,13 +177,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path24 = Object.freeze(path24.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path24);
+          path26 = Object.freeze(path26.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path26);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path24);
+          const cv = await visitAsync_("value", node.value, visitor, path26);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -210,23 +210,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path24) {
+    function callVisitor(key, node, visitor, path26) {
       if (typeof visitor === "function")
-        return visitor(key, node, path24);
+        return visitor(key, node, path26);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path24);
+        return visitor.Map?.(key, node, path26);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path24);
+        return visitor.Seq?.(key, node, path26);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path24);
+        return visitor.Pair?.(key, node, path26);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path24);
+        return visitor.Scalar?.(key, node, path26);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path24);
+        return visitor.Alias?.(key, node, path26);
       return void 0;
     }
-    function replaceNode(key, path24, node) {
-      const parent = path24[path24.length - 1];
+    function replaceNode(key, path26, node) {
+      const parent = path26[path26.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -838,10 +838,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path24, value) {
+    function collectionFromPath(schema, path26, value) {
       let v = value;
-      for (let i = path24.length - 1; i >= 0; --i) {
-        const k = path24[i];
+      for (let i = path26.length - 1; i >= 0; --i) {
+        const k = path26[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -860,7 +860,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path24) => path24 == null || typeof path24 === "object" && !!path24[Symbol.iterator]().next().done;
+    var isEmptyPath = (path26) => path26 == null || typeof path26 === "object" && !!path26[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -890,11 +890,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path24, value) {
-        if (isEmptyPath(path24))
+      addIn(path26, value) {
+        if (isEmptyPath(path26))
           this.add(value);
         else {
-          const [key, ...rest] = path24;
+          const [key, ...rest] = path26;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -908,8 +908,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path24) {
-        const [key, ...rest] = path24;
+      deleteIn(path26) {
+        const [key, ...rest] = path26;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -923,8 +923,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path24, keepScalar) {
-        const [key, ...rest] = path24;
+      getIn(path26, keepScalar) {
+        const [key, ...rest] = path26;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -942,8 +942,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path24) {
-        const [key, ...rest] = path24;
+      hasIn(path26) {
+        const [key, ...rest] = path26;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -953,8 +953,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path24, value) {
-        const [key, ...rest] = path24;
+      setIn(path26, value) {
+        const [key, ...rest] = path26;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -3469,9 +3469,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path24, value) {
+      addIn(path26, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path24, value);
+          this.contents.addIn(path26, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -3546,14 +3546,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path24) {
-        if (Collection.isEmptyPath(path24)) {
+      deleteIn(path26) {
+        if (Collection.isEmptyPath(path26)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path24) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path26) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -3568,10 +3568,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path24, keepScalar) {
-        if (Collection.isEmptyPath(path24))
+      getIn(path26, keepScalar) {
+        if (Collection.isEmptyPath(path26))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path24, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path26, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -3582,10 +3582,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path24) {
-        if (Collection.isEmptyPath(path24))
+      hasIn(path26) {
+        if (Collection.isEmptyPath(path26))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path24) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path26) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -3602,13 +3602,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path24, value) {
-        if (Collection.isEmptyPath(path24)) {
+      setIn(path26, value) {
+        if (Collection.isEmptyPath(path26)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path24), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path26), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path24, value);
+          this.contents.setIn(path26, value);
         }
       }
       /**
@@ -5569,9 +5569,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path24) => {
+    visit.itemAtPath = (cst, path26) => {
       let item = cst;
-      for (const [field, index] of path24) {
+      for (const [field, index] of path26) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -5580,23 +5580,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path24) => {
-      const parent = visit.itemAtPath(cst, path24.slice(0, -1));
-      const field = path24[path24.length - 1][0];
+    visit.parentCollection = (cst, path26) => {
+      const parent = visit.itemAtPath(cst, path26.slice(0, -1));
+      const field = path26[path26.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path24, item, visitor) {
-      let ctrl = visitor(item, path24);
+    function _visit(path26, item, visitor) {
+      let ctrl = visitor(item, path26);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path24.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path26.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -5607,10 +5607,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path24);
+            ctrl = ctrl(item, path26);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path24) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path26) : ctrl;
     }
     exports.visit = visit;
   }
@@ -7364,10 +7364,10 @@ var require_dist = __commonJS({
 // src/cli/shepherd.ts
 import { execFile as execFile4 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
-import { closeSync as closeSync2, existsSync as existsSync12, fstatSync, mkdirSync as mkdirSync7, openSync as openSync2, writeFileSync as writeFileSync2, readdirSync as readdirSync6, readFileSync as readFileSync14, readSync as readSync2, realpathSync as realpathSync2 } from "node:fs";
-import { homedir as homedir6 } from "node:os";
-import path23 from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { closeSync as closeSync2, existsSync as existsSync14, fstatSync, mkdirSync as mkdirSync9, openSync as openSync2, writeFileSync as writeFileSync4, readdirSync as readdirSync6, readFileSync as readFileSync15, readSync as readSync2, realpathSync as realpathSync2 } from "node:fs";
+import { homedir as homedir7 } from "node:os";
+import path25 from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { promisify as promisify3 } from "node:util";
 
 // src/config.ts
@@ -7944,12 +7944,12 @@ function toMicroUsd(usd) {
 function fromMicroUsd(micro) {
   return micro / MICRO;
 }
-function estimateUsd(row, usage) {
+function estimateUsd(row, usage2) {
   if (!row) return null;
-  if (usage.input === null || usage.output === null) return null;
+  if (usage2.input === null || usage2.output === null) return null;
   const cachePriced = (row.cacheReadPerMillionUsd ?? 0) > 0 || (row.cacheWritePerMillionUsd ?? 0) > 0;
-  if (cachePriced && (usage.cacheRead === null || usage.cacheWrite === null)) return null;
-  const scaled = usage.input * toMicroUsd(row.inputPerMillionUsd) + usage.output * toMicroUsd(row.outputPerMillionUsd) + (usage.cacheRead ?? 0) * toMicroUsd(row.cacheReadPerMillionUsd ?? row.inputPerMillionUsd) + (usage.cacheWrite ?? 0) * toMicroUsd(row.cacheWritePerMillionUsd ?? row.inputPerMillionUsd);
+  if (cachePriced && (usage2.cacheRead === null || usage2.cacheWrite === null)) return null;
+  const scaled = usage2.input * toMicroUsd(row.inputPerMillionUsd) + usage2.output * toMicroUsd(row.outputPerMillionUsd) + (usage2.cacheRead ?? 0) * toMicroUsd(row.cacheReadPerMillionUsd ?? row.inputPerMillionUsd) + (usage2.cacheWrite ?? 0) * toMicroUsd(row.cacheWritePerMillionUsd ?? row.inputPerMillionUsd);
   return fromMicroUsd(Math.round(scaled / MICRO));
 }
 function unpricedConfigModels(config) {
@@ -8349,7 +8349,7 @@ var GitWorkspace = class {
     const add = await this.git([...safe, "add", "-A", "--", "."], cwd);
     if (add.code !== 0) throw new WorkflowError("GIT", add.stderr);
     if (skip.length > 0) {
-      const unstage = await this.git([...safe, "reset", "-q", "--", ...skip.map((path24) => `:(literal)${path24}`)], cwd);
+      const unstage = await this.git([...safe, "reset", "-q", "--", ...skip.map((path26) => `:(literal)${path26}`)], cwd);
       if (unstage.code !== 0) throw new WorkflowError("GIT", unstage.stderr);
     }
     const commit = await this.git([...safe, "commit", "--no-verify", "-m", message], cwd);
@@ -9285,8 +9285,8 @@ function claudeMessages(buffer, before) {
       continue;
     }
     if (earlier.has(id)) continue;
-    const usage = isRecord2(message.usage) ? message.usage : {};
-    const totals = { input: num(usage.input_tokens), output: num(usage.output_tokens), cacheRead: num(usage.cache_read_input_tokens), cacheWrite: num(usage.cache_creation_input_tokens), requests: 1 };
+    const usage2 = isRecord2(message.usage) ? message.usage : {};
+    const totals = { input: num(usage2.input_tokens), output: num(usage2.output_tokens), cacheRead: num(usage2.cache_read_input_tokens), cacheWrite: num(usage2.cache_creation_input_tokens), requests: 1 };
     const model = typeof message.model === "string" && message.model ? message.model : "unknown";
     const seen = found.get(id);
     if (!seen) found.set(id, { provider: PRICING_PROVIDER.claude, model, totals });
@@ -9414,8 +9414,8 @@ function createAgentMeter(agent, options) {
           if (delta.input + delta.output + delta.cacheRead + delta.cacheWrite === 0) continue;
           const name = `${found.provider}/${found.model}`;
           const sum = merged.get(name);
-          const usage = sum ? { input: sum.usage.input + delta.input, output: sum.usage.output + delta.output, cacheRead: sum.usage.cacheRead + delta.cacheRead, cacheWrite: sum.usage.cacheWrite + delta.cacheWrite, requests: sum.usage.requests + delta.requests } : { input: delta.input, output: delta.output, cacheRead: delta.cacheRead, cacheWrite: delta.cacheWrite, requests: delta.requests };
-          merged.set(name, { provider: found.provider, model: found.model, usage });
+          const usage2 = sum ? { input: sum.usage.input + delta.input, output: sum.usage.output + delta.output, cacheRead: sum.usage.cacheRead + delta.cacheRead, cacheWrite: sum.usage.cacheWrite + delta.cacheWrite, requests: sum.usage.requests + delta.requests } : { input: delta.input, output: delta.output, cacheRead: delta.cacheRead, cacheWrite: delta.cacheWrite, requests: delta.requests };
+          merged.set(name, { provider: found.provider, model: found.model, usage: usage2 });
         }
         return [...merged.values()].map((call) => ({ ...call, usage: { ...call.usage, requests: Math.max(1, call.usage.requests) } }));
       } catch {
@@ -9455,9 +9455,9 @@ function gateBudget(ctx, taskId) {
   if (status === "soft") warnSoft(ctx, taskId);
   return void 0;
 }
-function record(ctx, taskId, phase, tier, provider, model, usage, outcome, retries, reason, when = {}) {
-  const entry = buildCostRecord({ provider, model, phase, taskId, tier, usage, outcome, retries, reason }, ctx.config.pricing, when.at ?? ctx.now(), when.id ?? ctx.id());
-  if (usage.input === 0 && usage.output === 0 && entry.actualUsd === null) {
+function record(ctx, taskId, phase, tier, provider, model, usage2, outcome, retries, reason, when = {}) {
+  const entry = buildCostRecord({ provider, model, phase, taskId, tier, usage: usage2, outcome, retries, reason }, ctx.config.pricing, when.at ?? ctx.now(), when.id ?? ctx.id());
+  if (usage2.input === 0 && usage2.output === 0 && entry.actualUsd === null) {
     entry.actualUsd = 0;
     entry.usageKnown = true;
   }
@@ -9507,8 +9507,8 @@ function recordPiUsage(ctx, input) {
     const provider = typeof entry.provider === "string" ? entry.provider : input.model?.provider ?? "pi";
     const model = typeof entry.model === "string" ? entry.model : input.model?.id ?? "unknown";
     const listed = count(entry.usage.cost?.total);
-    const usage = { input: count(entry.usage.input), output: count(entry.usage.output), cacheRead: count(entry.usage.cacheRead), cacheWrite: count(entry.usage.cacheWrite), requests: 1, ...listed !== null ? { listPriceUsd: listed } : {} };
-    out.push(record(ctx, state?.taskId ?? SESSION_TASK_ID, state?.phase ?? "IDLE", "pi", provider, model, usage, "success", 0, input.ticketId ? `${job} \xB7 ticket ${input.ticketId}` : job, { id, at }));
+    const usage2 = { input: count(entry.usage.input), output: count(entry.usage.output), cacheRead: count(entry.usage.cacheRead), cacheWrite: count(entry.usage.cacheWrite), requests: 1, ...listed !== null ? { listPriceUsd: listed } : {} };
+    out.push(record(ctx, state?.taskId ?? SESSION_TASK_ID, state?.phase ?? "IDLE", "pi", provider, model, usage2, "success", 0, input.ticketId ? `${job} \xB7 ticket ${input.ticketId}` : job, { id, at }));
   }
   return out;
 }
@@ -10393,9 +10393,9 @@ function waitProblem(waited, tab, minutes) {
   if (waited.status === "error") return `the program in tab ${tab} reported an error; look at the tab`;
   return void 0;
 }
-function withPath(argv, path24) {
-  if (!path24 || path24.includes("\n")) return argv;
-  const assignment = `PATH=${path24}`;
+function withPath(argv, path26) {
+  if (!path26 || path26.includes("\n")) return argv;
+  const assignment = `PATH=${path26}`;
   return argv[0] === "env" ? ["env", assignment, ...argv.slice(1)] : ["env", assignment, ...argv];
 }
 async function openTab(input) {
@@ -10574,7 +10574,7 @@ function usageOfMessage(message) {
   const raw = message.usage;
   const stop = message.stopReason;
   if ((stop === "error" || stop === "aborted") && !raw.input && !raw.output && !raw.cacheRead && !raw.cacheWrite) return void 0;
-  const usage = {
+  const usage2 = {
     input: typeof raw.input === "number" ? raw.input : null,
     output: typeof raw.output === "number" ? raw.output : null,
     cacheRead: typeof raw.cacheRead === "number" ? raw.cacheRead : null,
@@ -10582,8 +10582,8 @@ function usageOfMessage(message) {
     requests: 1
   };
   const listed = raw.cost?.total;
-  if (typeof listed === "number" && Number.isFinite(listed)) usage.listPriceUsd = listed;
-  return { provider: String(message.provider ?? ""), model: String(message.model ?? ""), usage };
+  if (typeof listed === "number" && Number.isFinite(listed)) usage2.listPriceUsd = listed;
+  return { provider: String(message.provider ?? ""), model: String(message.model ?? ""), usage: usage2 };
 }
 
 // src/herdr/session-file.ts
@@ -13890,14 +13890,14 @@ async function run(rest, io, options, open2, exec3) {
 }
 async function reviewCommand(rest, io, options, open2) {
   const args = rest.filter((word) => word !== "--json");
-  const usage = () => {
+  const usage2 = () => {
     if (rest.includes("--json")) io.out(`${JSON.stringify({ ok: false, code: "USAGE", text: REVIEW_USAGE })}
 `);
     else io.err(`${REVIEW_USAGE}
 `);
     return 1;
   };
-  if (args.length > 0 && (args[0] !== "--with" || args.length !== 2)) return usage();
+  if (args.length > 0 && (args[0] !== "--with" || args.length !== 2)) return usage2();
   return run(rest, io, options, open2, async (workflow) => {
     const result = await workflow.review(args.length > 0 ? `--with ${args[1]}` : "");
     const report = result.data;
@@ -13924,29 +13924,182 @@ async function fixCommand(rest, io, options, open2) {
   });
 }
 
+// src/cli/herdr-install.ts
+import { cpSync, existsSync as existsSync12, mkdirSync as mkdirSync8, rmSync as rmSync4, copyFileSync as copyFileSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import path23 from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+
+// src/cli/herdr-layout.ts
+import { copyFileSync, existsSync as existsSync11, mkdirSync as mkdirSync7, readFileSync as readFileSync13, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import path22 from "node:path";
+var SHEPHERD_MOD = "shepherd-config";
+var SHEPHERD_ID = "shepherd";
+var DEFAULT_LAYOUT = "shepherd";
+var SHIPPED_LAYOUTS = ["main", "terminals", "win98"];
+var SHEPHERD_COLUMN = { id: SHEPHERD_ID, type: "block", size: { px: 340 }, min: 280, max: 640, content: { mod: SHEPHERD_MOD } };
+function isNode(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function childrenOf(node) {
+  return Array.isArray(node.children) ? node.children.filter(isNode) : [];
+}
+function walk(node, visit) {
+  visit(node);
+  for (const child of childrenOf(node)) walk(child, visit);
+}
+function dockShepherdPanel(layout) {
+  const copy = structuredClone(layout);
+  if (!isNode(copy)) return { layout: copy, status: "no-row" };
+  let present = false;
+  let taken = false;
+  walk(copy, (node) => {
+    if (isNode(node.content) && node.content.mod === SHEPHERD_MOD) present = true;
+    else if (node.id === SHEPHERD_ID) taken = true;
+  });
+  if (present) return { layout: copy, status: "present" };
+  if (copy.type !== "row") return { layout: copy, status: "no-row" };
+  if (taken) return { layout: copy, status: "id-taken" };
+  copy.children = [...childrenOf(copy), structuredClone(SHEPHERD_COLUMN)];
+  return { layout: copy, status: "added" };
+}
+function shownLayout(appHome) {
+  try {
+    const shared = JSON.parse(readFileSync13(path22.join(appHome, "shared.json"), "utf8"));
+    if (typeof shared.layout === "string" && /^[\w.-]+$/.test(shared.layout)) return shared.layout;
+  } catch {
+  }
+  return "main";
+}
+function readLayout(file) {
+  return JSON.parse(readFileSync13(file, "utf8"));
+}
+function writeJson2(file, value) {
+  mkdirSync7(path22.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync2(tmp, `${JSON.stringify(value, null, 2)}
+`);
+  renameSync2(tmp, file);
+}
+function usage(name) {
+  return [
+    `Switch to it: herdr-app do layout.switch '{"name":"${name}"}'   (ctrl-shift-l cycles layouts)`,
+    `Toggle the panel with a key: add this to the "global" section of ~/.config/herdr-app/keys.json (this tool does not edit it):`,
+    `  "ctrl-shift-g": {"command": "layout.toggle", "args": {"id": "${SHEPHERD_ID}"}}`
+  ];
+}
+function dockLayoutFile(appHome, options = {}) {
+  const name = options.layout ?? DEFAULT_LAYOUT;
+  const file = path22.join(appHome, "layouts", `${name}.json`);
+  if (SHIPPED_LAYOUTS.includes(name)) {
+    return { status: "refused", file, lines: [`Did not edit the ${name} layout: herdr ships it and rewrites it on every start (an edited copy is moved to ${name}-edited.json).`, `Dock into a layout of your own instead: leave out --layout (it makes "${DEFAULT_LAYOUT}" from the layout in use), or name one.`] };
+  }
+  let created = false;
+  let parsed;
+  let sourceName = name;
+  try {
+    if (existsSync11(file)) {
+      parsed = readLayout(file);
+    } else {
+      sourceName = shownLayout(appHome);
+      if (!existsSync11(path22.join(appHome, "layouts", `${sourceName}.json`))) sourceName = "main";
+      parsed = readLayout(path22.join(appHome, "layouts", `${sourceName}.json`));
+      created = true;
+    }
+  } catch (error) {
+    return { status: "unreadable", file, lines: [`Could not read a layout to dock into (${created || !existsSync11(file) ? sourceName : name}): ${error instanceof Error ? error.message : String(error)}`, "Not docked. Add the column yourself (see README.md#herdr-panel)."] };
+  }
+  const result = dockShepherdPanel(parsed);
+  if (result.status === "no-row") return { status: "no-row", file, lines: [`Did not edit ${file}: its root is not a row, so there is no right edge to add a column to.`, `Add ${JSON.stringify(SHEPHERD_COLUMN)} to a row you choose (README.md#herdr-panel), or use --layout <name>.`] };
+  if (result.status === "id-taken") return { status: "id-taken", file, lines: [`Did not edit ${file}: a node with id "${SHEPHERD_ID}" already exists that does not show ${SHEPHERD_MOD}.`, "Add the column yourself with another id (README.md#herdr-panel)."] };
+  if (result.status === "present" && !created) return { status: "present", file, lines: [`The ${name} layout already shows the ${SHEPHERD_MOD} panel; nothing changed.`, ...usage(name)] };
+  let backup;
+  if (!created) {
+    const stamp2 = (options.now ?? /* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+    backup = `${file}.bak-${stamp2}`;
+    copyFileSync(file, backup);
+  }
+  writeJson2(file, result.layout);
+  return {
+    status: created ? "created" : "added",
+    file,
+    ...backup ? { backup } : {},
+    lines: [
+      created ? result.status === "present" ? `Made the ${name} layout from ${sourceName}, which already shows the ${SHEPHERD_MOD} panel (${file}).` : `Made the ${name} layout from ${sourceName} with the panel as a ${SHEPHERD_COLUMN.size.px}px column on the right edge (${file}).` : `Docked the panel in the ${name} layout as a ${SHEPHERD_COLUMN.size.px}px column on the right edge (${file}).`,
+      ...backup ? [`Backup: ${backup}`] : [],
+      ...usage(name)
+    ]
+  };
+}
+
+// src/cli/herdr-install.ts
+var HERDR_INSTALL_USAGE = "Usage: shepherd herdr-install [--layout <name>] [--no-dock]";
+var EDITOR_ONLY = ["gpui-kit.d.ts", "jsconfig.json"];
+var CLI_FILE = "shepherd-config.mjs";
+function findRoot() {
+  let dir = path23.dirname(fileURLToPath2(import.meta.url));
+  for (let i = 0; i < 4; i++) {
+    if (existsSync12(path23.join(dir, "herdr", "shepherd-config"))) return dir;
+    dir = path23.dirname(dir);
+  }
+  return path23.resolve(path23.dirname(fileURLToPath2(import.meta.url)), "..");
+}
+function herdrInstall(args, out, err, options = {}) {
+  const layoutAt = args.indexOf("--layout");
+  const layout = layoutAt >= 0 ? args[layoutAt + 1] : void 0;
+  if (layoutAt >= 0 && (!layout || layout.startsWith("--") || !/^[\w.-]+$/.test(layout))) {
+    err("herdr-install: --layout needs a layout name (the file in layouts/ without .json)\n");
+    return 2;
+  }
+  const root = options.root ?? findRoot();
+  const appHome = options.appHome ?? process.env.HERDR_APP_HOME ?? path23.join(homedir5(), ".config", "herdr-app");
+  const source = path23.join(root, "herdr", "shepherd-config");
+  const bundle = path23.join(root, "dist", CLI_FILE);
+  for (const needed of [source, bundle]) {
+    if (!existsSync12(needed)) {
+      err(`herdr-install: ${needed} is missing; is this the plugin's folder?
+`);
+      return 1;
+    }
+  }
+  const target = path23.join(appHome, "mods", "shepherd-config");
+  mkdirSync8(target, { recursive: true });
+  for (const name of ["main.js", "lib.js", "edit.js", "mod.json", CLI_FILE, ...EDITOR_ONLY]) rmSync4(path23.join(target, name), { force: true });
+  cpSync(source, target, { recursive: true, filter: (file) => !EDITOR_ONLY.includes(path23.basename(file)) });
+  copyFileSync2(bundle, path23.join(target, CLI_FILE));
+  writeFileSync3(path23.join(target, "install.json"), JSON.stringify({ cli: ["node", path23.join(target, CLI_FILE)] }, null, 2) + "\n");
+  out(`shepherd-config mod installed in ${target}
+`);
+  if (!args.includes("--no-dock")) {
+    for (const line of dockLayoutFile(appHome, layout ? { layout } : {}).lines) out(`${line}
+`);
+  }
+  return 0;
+}
+
 // src/cli/migrate-config.ts
 var import_yaml2 = __toESM(require_dist(), 1);
-import { existsSync as existsSync11, readFileSync as readFileSync13 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import path22 from "node:path";
+import { existsSync as existsSync13, readFileSync as readFileSync14 } from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import path24 from "node:path";
 var MIGRATE_USAGE = "Usage: shepherd migrate-config [--force] [--json]   (copies ~/.pi/agent/chef.yaml to ~/.claude/shepherd.yaml)";
 function firstExisting(base2) {
-  return [`${base2}.yaml`, `${base2}.yml`].find((file) => existsSync11(file));
+  return [`${base2}.yaml`, `${base2}.yml`].find((file) => existsSync13(file));
 }
 function backupName(file) {
   let candidate = `${file}.bak`;
-  for (let n = 2; existsSync11(candidate); n += 1) candidate = `${file}.bak.${n}`;
+  for (let n = 2; existsSync13(candidate); n += 1) candidate = `${file}.bak.${n}`;
   return candidate;
 }
 function migrateConfig(options = {}) {
-  const home = options.home ?? homedir5();
-  const shown = (file) => file.startsWith(home + path22.sep) ? `~${file.slice(home.length)}` : file;
-  const source = firstExisting(path22.join(home, ".pi", "agent", "chef"));
-  if (!source) return fail("NO_SOURCE", `No pi-chef config found (looked for ${shown(path22.join(home, ".pi", "agent", "chef.yaml"))} and chef.yml). Copy templates/shepherd.yaml to ~/.claude/shepherd.yaml instead.`);
-  const existing = firstExisting(path22.join(home, ".claude", "shepherd"));
-  const dest = existing ?? path22.join(home, ".claude", "shepherd.yaml");
+  const home = options.home ?? homedir6();
+  const shown = (file) => file.startsWith(home + path24.sep) ? `~${file.slice(home.length)}` : file;
+  const source = firstExisting(path24.join(home, ".pi", "agent", "chef"));
+  if (!source) return fail("NO_SOURCE", `No pi-chef config found (looked for ${shown(path24.join(home, ".pi", "agent", "chef.yaml"))} and chef.yml). Copy templates/shepherd.yaml to ~/.claude/shepherd.yaml instead.`);
+  const existing = firstExisting(path24.join(home, ".claude", "shepherd"));
+  const dest = existing ?? path24.join(home, ".claude", "shepherd.yaml");
   if (existing && !options.force) return fail("EXISTS", `${shown(existing)} already exists, so nothing was changed. Run \`shepherd migrate-config --force\` to replace it (the old file is kept as ${shown(backupName(existing))}).`);
-  const doc = (0, import_yaml2.parseDocument)(readFileSync13(source, "utf8"));
+  const doc = (0, import_yaml2.parseDocument)(readFileSync14(source, "utf8"));
   if (doc.errors.length > 0) return fail("BAD_YAML", `${shown(source)}: YAML could not be read (${doc.errors[0].message.split("\n")[0]}). Nothing was written.`);
   const raw = doc.toJS();
   const dropped = raw && typeof raw === "object" && !Array.isArray(raw) ? unknownKeys(raw) : [];
@@ -13965,7 +14118,7 @@ function migrateConfig(options = {}) {
   const lines2 = [];
   if (existing) {
     const backup = backupName(existing);
-    atomicWrite(backup, readFileSync13(existing, "utf8"));
+    atomicWrite(backup, readFileSync14(existing, "utf8"));
     lines2.push(`Backed up ${shown(existing)} to ${shown(backup)}.`);
   }
   atomicWrite(dest, text);
@@ -13973,7 +14126,7 @@ function migrateConfig(options = {}) {
   lines2.push(dropped.length > 0 ? `Dropped ${dropped.length} setting(s) shepherd does not read: ${dropped.join(", ")}.` : "Every setting is one shepherd reads; none were dropped.");
   const workspace = raw?.workspaceDir;
   if (typeof workspace === "string" && workspace !== ".shepherd") lines2.push(`workspaceDir is ${workspace}; shepherd's default is .shepherd. Existing pi-chef tasks there are not picked up by name; remove the line to start fresh in .shepherd.`);
-  if (home === homedir5()) {
+  if (home === homedir6()) {
     try {
       warnings = loadConfig(options.cwd ?? process.cwd()).warnings ?? warnings;
     } catch (error) {
@@ -13997,13 +14150,14 @@ var USAGE = `Usage:
   shepherd plan <start|spec|tickets|show|revise|approve> ...   (shepherd plan --help)
   shepherd plans [<name> | close <name> | --all]
   shepherd task <list|use <name>|close [<name>]>
+  shepherd herdr-install [--layout <name>] [--no-dock]   (installs the herdr panel into the herdr app; re-run after a plugin update)
   shepherd migrate-config [--force] [--json]   (copies ~/.pi/agent/chef.yaml to ~/.claude/shepherd.yaml, never over an existing one)
 `;
 var defaultIo = { out: (text) => process.stdout.write(text), err: (text) => process.stderr.write(text) };
 function packageVersion() {
   for (const rel of ["../../package.json", "../package.json"]) {
     try {
-      const pkg = JSON.parse(readFileSync14(new URL(rel, import.meta.url), "utf8"));
+      const pkg = JSON.parse(readFileSync15(new URL(rel, import.meta.url), "utf8"));
       if (pkg.name === "claude-shepherd" && pkg.version) return pkg.version;
     } catch {
     }
@@ -14026,9 +14180,9 @@ async function open(cwd, options, confirm, extras = {}) {
     throw error;
   }
   const now = options.now ?? (() => /* @__PURE__ */ new Date());
-  const home = options.home ?? homedir6();
+  const home = options.home ?? homedir7();
   const shepherd = shepherdHome(options.env ?? process.env, home);
-  const workspace = path23.join(root, config.workspaceDir);
+  const workspace = path25.join(root, config.workspaceDir);
   ignoreWorkspace(workspace);
   await registerRepo(shepherd, workspace);
   const workflow = new Workflow({ cwd: root, config, now, ...confirm ? { confirm } : {}, agentLogHome: home, knownSessions: () => knownSessions(shepherd), dailyRecords: () => dailyRecordsOf([...registeredRepos(shepherd), workspace], now()), ...extras });
@@ -14097,8 +14251,8 @@ async function statusCommand(io, options) {
 }
 function knownSessions(shepherd) {
   try {
-    return readdirSync6(path23.join(shepherd, "sessions")).filter((name) => name.endsWith(".json") && !name.endsWith(".pending.json")).flatMap((name) => {
-      const note = readJson(path23.join(shepherd, "sessions", name));
+    return readdirSync6(path25.join(shepherd, "sessions")).filter((name) => name.endsWith(".json") && !name.endsWith(".pending.json")).flatMap((name) => {
+      const note = readJson(path25.join(shepherd, "sessions", name));
       return note && typeof note.transcriptPath === "string" && typeof note.sessionId === "string" ? [{ transcriptPath: note.transcriptPath, sessionId: note.sessionId }] : [];
     });
   } catch {
@@ -14122,10 +14276,10 @@ function lastAssistant(file) {
         } catch {
           continue;
         }
-        const usage = line.message?.usage;
-        if (line.type !== "assistant" || line.isSidechain === true || !usage || !line.message?.model || line.message.model === "<synthetic>") continue;
+        const usage2 = line.message?.usage;
+        if (line.type !== "assistant" || line.isSidechain === true || !usage2 || !line.message?.model || line.message.model === "<synthetic>") continue;
         const n = (value) => typeof value === "number" && Number.isFinite(value) ? value : 0;
-        return { contextTokens: n(usage.input_tokens) + n(usage.cache_read_input_tokens) + n(usage.cache_creation_input_tokens), model: line.message.model };
+        return { contextTokens: n(usage2.input_tokens) + n(usage2.cache_read_input_tokens) + n(usage2.cache_creation_input_tokens), model: line.message.model, ...typeof line.timestamp === "string" ? { at: line.timestamp } : {} };
       }
       if (length >= size) break;
     }
@@ -14152,7 +14306,7 @@ async function runHook(kind, input, session) {
     await sweep();
     if (sessionId && input.transcript_path) {
       const last = lastAssistant(input.transcript_path);
-      if (last) writeJson(sessionFile(shepherd, sessionId), { lastTurnEnd: now().toISOString(), ...last, transcriptPath: input.transcript_path, sessionId });
+      if (last) writeJson(sessionFile(shepherd, sessionId), { lastTurnEnd: now().toISOString(), contextTokens: last.contextTokens, model: last.model, transcriptPath: input.transcript_path, sessionId });
     }
     return void 0;
   }
@@ -14160,16 +14314,16 @@ async function runHook(kind, input, session) {
     const prompt = (input.prompt ?? "").trim();
     if (!prompt || prompt.startsWith("/")) return void 0;
     await sweep();
-    if (sessionId && input.transcript_path && !existsSync12(sessionFile(shepherd, sessionId))) writeJson(sessionFile(shepherd, sessionId), { transcriptPath: input.transcript_path, sessionId });
+    if (sessionId && input.transcript_path && !existsSync14(sessionFile(shepherd, sessionId))) writeJson(sessionFile(shepherd, sessionId), { transcriptPath: input.transcript_path, sessionId });
     const budget = budgetOf(session, task);
     if (budget.status === "hard") {
       return { decision: "block", reason: `Budget exhausted: ${budget.text}. Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.` };
     }
-    const idle = idleBlock(session, sessionId, prompt);
+    const idle = idleBlock(session, sessionId, prompt, input.transcript_path);
     if (idle) return { decision: "block", reason: idle };
     if (budget.status === "soft") {
       const open2 = openTask(task);
-      const mark = path23.join(shepherd, "warned.json");
+      const mark = path25.join(shepherd, "warned.json");
       const day = now().toISOString().slice(0, 10);
       const key = open2?.taskId ?? "daily";
       const warned = readJson(mark);
@@ -14201,13 +14355,21 @@ async function runHook(kind, input, session) {
   }
   return void 0;
 }
-function idleBlock(session, sessionId, prompt) {
+function idleBlock(session, sessionId, prompt, transcriptPath) {
   const { config, shepherd, now } = session;
   const { idleWarnMinutes, idleWarnTokens } = config.budgets;
   if (!sessionId || idleWarnMinutes <= 0 || idleWarnTokens <= 0) return void 0;
-  const note = readJson(sessionFile(shepherd, sessionId));
-  const ended = note?.lastTurnEnd ? Date.parse(note.lastTurnEnd) : NaN;
-  if (!note || !Number.isFinite(ended) || typeof note.contextTokens !== "number") return void 0;
+  const saved = readJson(sessionFile(shepherd, sessionId));
+  let fresh;
+  try {
+    fresh = transcriptPath ? lastAssistant(transcriptPath) : void 0;
+  } catch {
+    fresh = void 0;
+  }
+  const times = [saved?.lastTurnEnd, fresh?.at].map((value) => value ? Date.parse(value) : NaN).filter(Number.isFinite);
+  const ended = times.length > 0 ? Math.max(...times) : NaN;
+  const note = { contextTokens: fresh?.contextTokens ?? saved?.contextTokens, model: fresh?.model ?? saved?.model };
+  if (!Number.isFinite(ended) || typeof note.contextTokens !== "number") return void 0;
   const at = now();
   const idleMs = at.getTime() - ended;
   if (idleMs < idleWarnMinutes * 6e4 || note.contextTokens < idleWarnTokens) return void 0;
@@ -14273,10 +14435,10 @@ async function planFamily(command, rest, io, options) {
   }
 }
 function ignoreWorkspace(workspace) {
-  const file = path23.join(workspace, ".gitignore");
-  if (existsSync12(file)) return;
-  mkdirSync7(workspace, { recursive: true });
-  writeFileSync2(file, "*\n");
+  const file = path25.join(workspace, ".gitignore");
+  if (existsSync14(file)) return;
+  mkdirSync9(workspace, { recursive: true });
+  writeFileSync4(file, "*\n");
 }
 function opener(cwd, options) {
   return async (extras) => {
@@ -14305,6 +14467,14 @@ async function main(argv, io = defaultIo, options = {}) {
   if (command === "status") return statusCommand(io, options);
   if (command === "hook") return hookCommand(rest[0], io, options);
   if (command === "build" || command === "review" || command === "fix") return buildFamily(command, rest, io, options);
+  if (command === "herdr-install") {
+    if (rest.includes("--help") || rest.includes("-h")) {
+      io.out(`${HERDR_INSTALL_USAGE}
+`);
+      return 0;
+    }
+    return herdrInstall(rest, io.out, io.err);
+  }
   if (command === "migrate-config") {
     const json = rest.includes("--json");
     if (rest.includes("--help") || rest.includes("-h")) return emit(done(MIGRATE_USAGE), json, io);
@@ -14321,7 +14491,7 @@ function isEntry() {
   if (!invoked) return false;
   try {
     const real = realpathSync2(invoked);
-    return real === realpathSync2(fileURLToPath2(import.meta.url)) || path23.basename(real) === "shepherd";
+    return real === realpathSync2(fileURLToPath3(import.meta.url)) || path25.basename(real) === "shepherd";
   } catch {
     return false;
   }

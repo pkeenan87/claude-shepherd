@@ -100,14 +100,15 @@ A plugin cannot set Claude Code's status line, so add this to `~/.claude/setting
 
 ## Herdr panel
 
-An optional side panel in the herdr app edits `~/.claude/shepherd.yaml` for you (models per difficulty, with Cursor's models offered as buttons; the local server; budgets), lists the project's tasks and shows today's and the task's cost by model. From a checkout:
+An optional side panel in the herdr app edits `~/.claude/shepherd.yaml` for you (models per difficulty, with Cursor's models offered as buttons; the local server; budgets), lists the project's tasks and shows today's and the task's cost by model. Install it from the plugin, with nothing to build:
 
 ```bash
-npm install
-npm run herdr:install                        # builds to build/, installs mods/shepherd-config, docks the panel
-npm run herdr:install -- --layout mine       # dock into another layout of yours
-npm run herdr:install -- --no-dock           # copy the mod only
+! shepherd herdr-install                     # inside Claude Code: the plugin's bin/ is on its Bash PATH
+! shepherd herdr-install --layout mine       # dock into another layout of yours
+! shepherd herdr-install --no-dock           # copy the mod only
 ```
+
+From a plain terminal, run the same with node and the plugin's folder: `node <the plugin's folder>/dist/shepherd.mjs herdr-install`. From a checkout of this repo, `npm run herdr:install` bundles and runs it. Run it again after a plugin update to refresh the panel.
 
 `$HERDR_APP_HOME` overrides `~/.config/herdr-app`. herdr places a mod only the first time it sees it, so the install adds the panel to a layout of its own named `shepherd` (made from the layout in use) as a 340 px column on the right edge; it never edits the layouts herdr ships and rewrites. It is idempotent. Switch to it with `herdr-app do layout.switch '{"name":"shepherd"}'`, and optionally bind a toggle in `~/.config/herdr-app/keys.json`:
 
@@ -115,7 +116,7 @@ npm run herdr:install -- --no-dock           # copy the mod only
 "ctrl-shift-g": {"command": "layout.toggle", "args": {"id": "shepherd"}}
 ```
 
-The install writes `install.json` naming this checkout's `bin/shepherd-config.mjs`; run it again after moving the checkout. The panel's CLI (`shepherd-config show|set|local-add|local-remove|local-detect|cursor-models|plan-activate|plan-close`) prints one JSON document per command; `set` refuses a stale file (`--expect <sha256>`) and anything that looks like a secret.
+The install copies the mod and the bundled panel CLI into `<herdr app home>/mods/shepherd-config/` and writes `install.json` naming that copy, so the panel does not depend on where the plugin lives (its folder changes on every update). The panel's CLI (`shepherd-config show|set|local-add|local-remove|local-detect|cursor-models|plan-activate|plan-close`) prints one JSON document per command; `set` refuses a stale file (`--expect <sha256>`) and anything that looks like a secret.
 
 **Cursor.** In the model picker, choose the `cursor-agent` agent to see `auto` (`agent:cursor-agent/auto`) and, when `cursor-agent --list-models` lists `auto-smart`, its three router settings: `auto-smart[optimize_for=cost]`, `[optimize_for=balanced]` and `[optimize_for=intelligence]`. The list is read with a short timeout and cached for an hour. Cursor is not metered (it counts $0 and shows as "not metered"), and the `auto-smart` router needs a Teams or Enterprise plan. In YAML, quote a value with brackets: `medium: "agent:cursor-agent/auto-smart[optimize_for=balanced]"`.
 

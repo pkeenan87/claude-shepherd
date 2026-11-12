@@ -7,8 +7,8 @@ claude-shepherd is a Claude Code plugin for `/shepherd:plan` → `/shepherd:buil
 ```bash
 npm test            # vitest, no network
 npm run typecheck   # src and tests
-npm run build       # tsc to build/ (gitignored; the shepherd-config CLI and herdr:install run from it)
-npm run bundle      # esbuild: src/cli/shepherd.ts to dist/shepherd.mjs and src/ticket-mode.ts to dist/ticket-mode.mjs (the Pi worker: Pi's own @earendil-works/* and typebox external, yaml inlined); both committed and kept fresh (CI runs git diff --exit-code dist/)
+npm run build       # tsc to build/ (gitignored; type output only: the panel CLI and the installer run from dist/)
+npm run bundle      # esbuild: src/cli/shepherd.ts to dist/shepherd.mjs, src/cli/shepherd-config-main.ts to dist/shepherd-config.mjs (the herdr panel CLI) and src/ticket-mode.ts to dist/ticket-mode.mjs (the Pi worker: Pi's own @earendil-works/* and typebox external, yaml inlined); all committed and kept fresh (CI runs git diff --exit-code dist/)
 claude plugin validate .   # the plugin manifest, hooks and skills
 ```
 
@@ -50,7 +50,7 @@ Runners, providers, review, storage
 - Plugin: `.claude-plugin/plugin.json` and `marketplace.json` (the plugin name must not start with `claude-`), `hooks/hooks.json`, `skills/<name>/SKILL.md`. Check with `claude plugin validate .` (it needs `README.md`; the missing icon is a warning).
 - `src/cli/shepherd-config.ts` (with `bin/shepherd-config.mjs`): JSON CLI for the herdr panel (`show`, `set`, `local-*`, `cursor-models`, `plan-*`). `src/cli/herdr-layout.ts`: docks the panel in a layout (id and layout `shepherd`, mod `shepherd-config`).
 
-Elsewhere: `scripts/herdr-install.mjs` (honours `$HERDR_APP_HOME`; test it against a scratch dir, never your real herdr app home), `herdr/shepherd-config/` (the panel mod; check with `node --check` and `herdr-app check herdr/shepherd-config`), `templates/shepherd.yaml` (user config template), `templates/project-config.yaml` (project sample; two tests read it), `tests/` (mocks only; `helpers.ts`, `herdr-fake.ts`).
+Elsewhere: `src/cli/herdr-install.ts` (`shepherd herdr-install`, logic bundled into dist/shepherd.mjs; `scripts/herdr-install.mjs` and `bin/shepherd-config.mjs` are shims over the bundles; `src/cli/shepherd-config-main.ts` is the entry of dist/shepherd-config.mjs; the installer copies the mod and that bundle into the herdr app's mods folder and writes install.json inside it, never into the plugin folder; honours `$HERDR_APP_HOME`; test it against a scratch dir, never your real herdr app home), `herdr/shepherd-config/` (the panel mod; check with `node --check` and `herdr-app check herdr/shepherd-config`), `templates/shepherd.yaml` (user config template), `templates/project-config.yaml` (project sample; two tests read it), `tests/` (mocks only; `helpers.ts`, `herdr-fake.ts`).
 
 ## Rules
 

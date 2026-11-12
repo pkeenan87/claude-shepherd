@@ -23,7 +23,7 @@ Unit tests cover the code around these with fakes; none ran against a live servi
 - Codex as a ticket builder or reviewer: its default command, the rollout files as the meter reads them, and that they are flushed when the agent reports idle.
 - Cursor: `cursor-agent --auto-review` as a ticket builder or reviewer, `--model 'auto-smart[optimize_for=balanced]'` accepted by a real `cursor-agent` and passed through `hc run` as one argument, and `auto-smart` appearing in `--list-models` (the router needs a Teams or Enterprise plan; the machine this was written on does not list it). Not metered either way.
 
-Also not yet run live, from the phases after the ones above: the build-in-progress marker held between `shepherd build --once` runs, `shepherd migrate-config` on a real pi-chef config, and the herdr panel's rendering (including the Cursor buttons) and layout docking in a live herdr app. The panel's mod passes `herdr-app check`, and `npm run herdr:install` was run against a scratch app home, not a real one.
+Also not yet run live, from the phases after the ones above: the build-in-progress marker held between `shepherd build --once` runs, `shepherd migrate-config` on a real pi-chef config, and the herdr panel's rendering (including the Cursor buttons) and layout docking in a live herdr app. The panel's mod passes `herdr-app check`, and `shepherd herdr-install` was run against a scratch app home, not a real one.
 
 ## Claude Code plugin
 

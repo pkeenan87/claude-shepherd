@@ -4,6 +4,7 @@ node_modules/
 *.tsbuildinfo
 dist/*
 !dist/shepherd.mjs
+!dist/shepherd-config.mjs
 !dist/ticket-mode.mjs
 *.local.yaml
 .DS_Store

@@ -1,7 +1,7 @@
 // shepherd-config: a herdr side panel for shepherd. Four collapsible sections: the model for each ticket difficulty
 // (a Pi-worker model, local model or external agent, with Cursor's models offered), the local model server, the plans of the
 // project, and what they cost. It reads and writes ~/.claude/shepherd.yaml.
-// Everything is read and written through the shepherd CLI named in install.json (written by `npm run herdr:install`):
+// Everything is read and written through the shepherd CLI named in install.json (written by `shepherd herdr-install`):
 // `show` for the data, `set` / `local-add` / `local-remove` / `plan-activate` / `plan-close` for changes. Writes to the
 // user config carry --expect with the file's sha256 from the last show. This mod never writes a file itself and never
 // logs a value.
@@ -115,9 +115,9 @@ export default class ShepherdConfig extends View {
 
   async load(cx) {
     const raw = await readTextFile(`${appHome()}/mods/shepherd-config/install.json`);
-    if (!raw) { this.failure = "install.json is missing: run `npm run herdr:install` in the shepherd checkout."; return; }
+    if (!raw) { this.failure = "install.json is missing: run `shepherd herdr-install` (in Claude Code: `! shepherd herdr-install`)."; return; }
     const cli = JSON.parse(raw).cli;
-    if (!Array.isArray(cli) || cli.length === 0) { this.failure = "install.json has no `cli` argv array: run `npm run herdr:install` again."; return; }
+    if (!Array.isArray(cli) || cli.length === 0) { this.failure = "install.json has no `cli` argv array: run `shepherd herdr-install` again."; return; }
     this.cli = cli;
     const start = this.start;
     if (!start) { this.failure = "No project folder: open the panel from a space with a folder."; return; }

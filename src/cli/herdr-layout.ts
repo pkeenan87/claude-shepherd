@@ -3,7 +3,7 @@
  * mod's `place` only the first time it sees the mod, and rewrites its shipped layouts (`main`, `terminals`, `win98`) on
  * every start, so the panel lives in a layout of the user's own (default name `shepherd`, made from the layout in use).
  * `dockShepherdPanel` is the pure transform; `dockLayoutFile` reads, backs up and writes the files.
- * `scripts/herdr-install.mjs` calls the second from `build/`.
+ * `shepherd herdr-install` (src/cli/herdr-install.ts) calls the second.
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";

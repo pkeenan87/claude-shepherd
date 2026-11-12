@@ -200,8 +200,8 @@ describe("hook prompt: budgets", () => {
     expect(first.json?.systemMessage).toContain("Budget warning: today $8.50 of $10");
     expect(first.json?.decision).toBeUndefined();
     expect((await t.prompt("go again")).out).toBe("");
-    t.clock.at += 24 * 60 * MIN; // the next day: the spend no longer counts, so no warning either
-    expect((await t.prompt("go")).out).toBe("");
+    t.clock.at += 24 * 60 * MIN; // the next day: the spend no longer counts, so no budget warning (a day idle is the idle warning's)
+    expect((await t.prompt("go")).json?.systemMessage).toBeUndefined();
   });
 
   it("counts the daily budget across every registered repo", async () => {
@@ -220,11 +220,20 @@ describe("hook prompt: idle warning", () => {
   async function idle(config = CONFIG()) {
     const t = await setup(config);
     await t.begin();
-    appendFileSync(t.transcript, line("m1", usage(10, 10, 250_000)));
+    appendFileSync(t.transcript, line("m1", usage(10, 10, 250_000), new Date(t.clock.at).toISOString()));
     await t.stop();
     t.clock.at += 125 * MIN;
     return t;
   }
+
+  it("warns when Stop ran before the reply reached the transcript: the prompt reads the reply then", async () => {
+    const t = await setup();
+    await t.begin();
+    await t.stop(); // Claude Code has not written the reply yet
+    appendFileSync(t.transcript, line("late", usage(10, 10, 250_000), new Date(t.clock.at).toISOString()));
+    t.clock.at += 125 * MIN;
+    expect((await t.prompt("hello")).json?.decision).toBe("block");
+  });
 
   it("blocks over both thresholds, with tokens, idle time and the cache-write price", async () => {
     const t = await idle();
