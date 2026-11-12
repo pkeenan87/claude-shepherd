@@ -3,7 +3,7 @@
 export const MAX_INTERVIEW_QUESTIONS = 7;
 
 /** What a plan must contain. Shared by the interview, no-questions, and revision rules. */
-const TECHNICAL_PLAN = `The spec is a technical implementation plan, like an engineer's plan mode, not a product brief. Read the code that will change first. In plan_spec:
+export const TECHNICAL_PLAN = `The spec is a technical implementation plan, like an engineer's plan mode, not a product brief. Read the code that will change first. In plan_spec:
 - context: what the code does today in that area, naming the files and functions you read.
 - approach: the design. Components, data flow, new types and function signatures, error handling, config.
 - changes: every file to create or modify, each with the concrete change (functions added or edited, fields, exports).

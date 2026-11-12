@@ -108,17 +108,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path16) {
-      const ctrl = callVisitor(key, node, visitor, path16);
+    function visit_(key, node, visitor, path17) {
+      const ctrl = callVisitor(key, node, visitor, path17);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path16, ctrl);
-        return visit_(key, ctrl, visitor, path16);
+        replaceNode(key, path17, ctrl);
+        return visit_(key, ctrl, visitor, path17);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path16 = Object.freeze(path16.concat(node));
+          path17 = Object.freeze(path17.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path16);
+            const ci = visit_(i, node.items[i], visitor, path17);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -129,13 +129,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path16 = Object.freeze(path16.concat(node));
-          const ck = visit_("key", node.key, visitor, path16);
+          path17 = Object.freeze(path17.concat(node));
+          const ck = visit_("key", node.key, visitor, path17);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path16);
+          const cv = visit_("value", node.value, visitor, path17);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -156,17 +156,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path16) {
-      const ctrl = await callVisitor(key, node, visitor, path16);
+    async function visitAsync_(key, node, visitor, path17) {
+      const ctrl = await callVisitor(key, node, visitor, path17);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path16, ctrl);
-        return visitAsync_(key, ctrl, visitor, path16);
+        replaceNode(key, path17, ctrl);
+        return visitAsync_(key, ctrl, visitor, path17);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path16 = Object.freeze(path16.concat(node));
+          path17 = Object.freeze(path17.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path16);
+            const ci = await visitAsync_(i, node.items[i], visitor, path17);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -177,13 +177,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path16 = Object.freeze(path16.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path16);
+          path17 = Object.freeze(path17.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path17);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path16);
+          const cv = await visitAsync_("value", node.value, visitor, path17);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -210,23 +210,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path16) {
+    function callVisitor(key, node, visitor, path17) {
       if (typeof visitor === "function")
-        return visitor(key, node, path16);
+        return visitor(key, node, path17);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path16);
+        return visitor.Map?.(key, node, path17);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path16);
+        return visitor.Seq?.(key, node, path17);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path16);
+        return visitor.Pair?.(key, node, path17);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path16);
+        return visitor.Scalar?.(key, node, path17);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path16);
+        return visitor.Alias?.(key, node, path17);
       return void 0;
     }
-    function replaceNode(key, path16, node) {
-      const parent = path16[path16.length - 1];
+    function replaceNode(key, path17, node) {
+      const parent = path17[path17.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -838,10 +838,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path16, value) {
+    function collectionFromPath(schema, path17, value) {
       let v = value;
-      for (let i = path16.length - 1; i >= 0; --i) {
-        const k = path16[i];
+      for (let i = path17.length - 1; i >= 0; --i) {
+        const k = path17[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -860,7 +860,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path16) => path16 == null || typeof path16 === "object" && !!path16[Symbol.iterator]().next().done;
+    var isEmptyPath = (path17) => path17 == null || typeof path17 === "object" && !!path17[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -890,11 +890,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path16, value) {
-        if (isEmptyPath(path16))
+      addIn(path17, value) {
+        if (isEmptyPath(path17))
           this.add(value);
         else {
-          const [key, ...rest] = path16;
+          const [key, ...rest] = path17;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -908,8 +908,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path16) {
-        const [key, ...rest] = path16;
+      deleteIn(path17) {
+        const [key, ...rest] = path17;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -923,8 +923,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path16, keepScalar) {
-        const [key, ...rest] = path16;
+      getIn(path17, keepScalar) {
+        const [key, ...rest] = path17;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -942,8 +942,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path16) {
-        const [key, ...rest] = path16;
+      hasIn(path17) {
+        const [key, ...rest] = path17;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -953,8 +953,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path16, value) {
-        const [key, ...rest] = path16;
+      setIn(path17, value) {
+        const [key, ...rest] = path17;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -3469,9 +3469,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path16, value) {
+      addIn(path17, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path16, value);
+          this.contents.addIn(path17, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -3546,14 +3546,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path16) {
-        if (Collection.isEmptyPath(path16)) {
+      deleteIn(path17) {
+        if (Collection.isEmptyPath(path17)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path16) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path17) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -3568,10 +3568,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path16, keepScalar) {
-        if (Collection.isEmptyPath(path16))
+      getIn(path17, keepScalar) {
+        if (Collection.isEmptyPath(path17))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path16, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path17, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -3582,10 +3582,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path16) {
-        if (Collection.isEmptyPath(path16))
+      hasIn(path17) {
+        if (Collection.isEmptyPath(path17))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path16) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path17) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -3602,13 +3602,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path16, value) {
-        if (Collection.isEmptyPath(path16)) {
+      setIn(path17, value) {
+        if (Collection.isEmptyPath(path17)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path16), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path17), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path16, value);
+          this.contents.setIn(path17, value);
         }
       }
       /**
@@ -5569,9 +5569,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path16) => {
+    visit.itemAtPath = (cst, path17) => {
       let item = cst;
-      for (const [field, index] of path16) {
+      for (const [field, index] of path17) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -5580,23 +5580,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path16) => {
-      const parent = visit.itemAtPath(cst, path16.slice(0, -1));
-      const field = path16[path16.length - 1][0];
+    visit.parentCollection = (cst, path17) => {
+      const parent = visit.itemAtPath(cst, path17.slice(0, -1));
+      const field = path17[path17.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path16, item, visitor) {
-      let ctrl = visitor(item, path16);
+    function _visit(path17, item, visitor) {
+      let ctrl = visitor(item, path17);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path16.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path17.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -5607,10 +5607,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path16);
+            ctrl = ctrl(item, path17);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path16) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path17) : ctrl;
     }
     exports.visit = visit;
   }
@@ -7364,9 +7364,9 @@ var require_dist = __commonJS({
 // src/cli/shepherd.ts
 import { execFile as execFile3 } from "node:child_process";
 import { createHash as createHash2 } from "node:crypto";
-import { closeSync as closeSync2, existsSync as existsSync7, fstatSync, mkdirSync as mkdirSync5, openSync as openSync2, writeFileSync as writeFileSync2, readdirSync as readdirSync5, readFileSync as readFileSync9, readSync as readSync2, realpathSync as realpathSync2 } from "node:fs";
+import { closeSync as closeSync2, existsSync as existsSync8, fstatSync, mkdirSync as mkdirSync5, openSync as openSync2, writeFileSync as writeFileSync2, readdirSync as readdirSync5, readFileSync as readFileSync10, readSync as readSync2, realpathSync as realpathSync2 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import path15 from "node:path";
+import path16 from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify as promisify3 } from "node:util";
 
@@ -8130,6 +8130,90 @@ function toCsv(records) {
 `;
 }
 
+// src/orchestrator/machine.ts
+var ACTIVE = [
+  "PLANNING",
+  "AWAITING_PLAN_APPROVAL",
+  "IMPLEMENTING",
+  "REVIEWING"
+];
+var EDGES = {
+  IDLE: ["PLANNING", "PAUSED"],
+  PLANNING: ["AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
+  AWAITING_PLAN_APPROVAL: ["IMPLEMENTING", "PLANNING", "AWAITING_PLAN_APPROVAL", "PAUSED", "FAILED", "BLOCKED"],
+  IMPLEMENTING: ["REVIEWING", "COMPLETE", "IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
+  REVIEWING: ["IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
+  COMPLETE: ["IDLE", "PLANNING"],
+  FAILED: ["IDLE", "PLANNING", "IMPLEMENTING", "PAUSED"],
+  BLOCKED: ["PAUSED", "PLANNING", "IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "IDLE"],
+  PAUSED: []
+};
+function canTransition(from, to, state) {
+  if (to === "COMPLETE" && from !== "COMPLETE") return true;
+  if (from === to && from !== "PAUSED") {
+    return EDGES[from].includes(to) || from === "IMPLEMENTING" || from === "AWAITING_PLAN_APPROVAL";
+  }
+  if (from === "PAUSED") {
+    return to === state?.pausedFrom || to === "FAILED" || to === "IDLE" || to === "PLANNING";
+  }
+  if (ACTIVE.includes(from) && (to === "PAUSED" || to === "BLOCKED" || to === "FAILED")) return true;
+  return EDGES[from].includes(to);
+}
+function assertTransition(from, to, state) {
+  if (!canTransition(from, to, state)) {
+    throw new WorkflowError("ILLEGAL_TRANSITION", `Cannot move from ${from} to ${to}.`);
+  }
+}
+function move(state, to, at, reason) {
+  assertTransition(state.phase, to, state);
+  const next = { ...state, phase: to, updatedAt: at, phaseEnteredAt: to === state.phase ? state.phaseEnteredAt : at };
+  if (to === "PAUSED") next.pausedFrom = state.phase === "PAUSED" ? state.pausedFrom : state.phase;
+  if (to !== "PAUSED") next.pausedFrom = void 0;
+  if (to === "BLOCKED" || to === "FAILED" || to === "PAUSED") {
+    if (reason) next.blockedReason = reason;
+  } else {
+    next.blockedReason = void 0;
+  }
+  return next;
+}
+
+// src/orchestrator/context.ts
+function fail(code, text) {
+  return { ok: false, code, text };
+}
+function done(text, data) {
+  return { ok: true, text, data };
+}
+function iso(ctx) {
+  return ctx.now().toISOString();
+}
+function active(ctx) {
+  const id = ctx.store.readActive();
+  return id ? ctx.store.load(id) : void 0;
+}
+function requireActive(ctx) {
+  const state = active(ctx);
+  if (!state) throw new WorkflowError("NO_TASK", "No active task.");
+  return state;
+}
+function asResult(error) {
+  if (error instanceof WorkflowError) return fail(error.code, error.message);
+  return fail("ERROR", redact(error.message || "Unknown error"));
+}
+async function guard(fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    return asResult(error);
+  }
+}
+function workspaceName(ctx) {
+  return ctx.config.workspaceDir.replace(/^\.\//, "").replace(/\/$/, "");
+}
+function excludedPaths(ctx) {
+  return [workspaceName(ctx)];
+}
+
 // src/orchestrator/format.ts
 function formatDuration(ms) {
   if (!Number.isFinite(ms) || ms < 0) return "?";
@@ -8254,7 +8338,7 @@ var GitWorkspace = class {
     const add = await this.git([...safe, "add", "-A", "--", "."], cwd);
     if (add.code !== 0) throw new WorkflowError("GIT", add.stderr);
     if (skip.length > 0) {
-      const unstage = await this.git([...safe, "reset", "-q", "--", ...skip.map((path16) => `:(literal)${path16}`)], cwd);
+      const unstage = await this.git([...safe, "reset", "-q", "--", ...skip.map((path17) => `:(literal)${path17}`)], cwd);
       if (unstage.code !== 0) throw new WorkflowError("GIT", unstage.stderr);
     }
     const commit = await this.git([...safe, "commit", "--no-verify", "-m", message], cwd);
@@ -9329,90 +9413,6 @@ function meteredEntries(agent, calls) {
   return calls.map((call) => ({ agent, meter: "agent-log", provider: call.provider, model: call.model, usage: call.usage }));
 }
 
-// src/orchestrator/machine.ts
-var ACTIVE = [
-  "PLANNING",
-  "AWAITING_PLAN_APPROVAL",
-  "IMPLEMENTING",
-  "REVIEWING"
-];
-var EDGES = {
-  IDLE: ["PLANNING", "PAUSED"],
-  PLANNING: ["AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
-  AWAITING_PLAN_APPROVAL: ["IMPLEMENTING", "PLANNING", "AWAITING_PLAN_APPROVAL", "PAUSED", "FAILED", "BLOCKED"],
-  IMPLEMENTING: ["REVIEWING", "COMPLETE", "IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
-  REVIEWING: ["IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
-  COMPLETE: ["IDLE", "PLANNING"],
-  FAILED: ["IDLE", "PLANNING", "IMPLEMENTING", "PAUSED"],
-  BLOCKED: ["PAUSED", "PLANNING", "IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "IDLE"],
-  PAUSED: []
-};
-function canTransition(from, to, state) {
-  if (to === "COMPLETE" && from !== "COMPLETE") return true;
-  if (from === to && from !== "PAUSED") {
-    return EDGES[from].includes(to) || from === "IMPLEMENTING" || from === "AWAITING_PLAN_APPROVAL";
-  }
-  if (from === "PAUSED") {
-    return to === state?.pausedFrom || to === "FAILED" || to === "IDLE" || to === "PLANNING";
-  }
-  if (ACTIVE.includes(from) && (to === "PAUSED" || to === "BLOCKED" || to === "FAILED")) return true;
-  return EDGES[from].includes(to);
-}
-function assertTransition(from, to, state) {
-  if (!canTransition(from, to, state)) {
-    throw new WorkflowError("ILLEGAL_TRANSITION", `Cannot move from ${from} to ${to}.`);
-  }
-}
-function move(state, to, at, reason) {
-  assertTransition(state.phase, to, state);
-  const next = { ...state, phase: to, updatedAt: at, phaseEnteredAt: to === state.phase ? state.phaseEnteredAt : at };
-  if (to === "PAUSED") next.pausedFrom = state.phase === "PAUSED" ? state.pausedFrom : state.phase;
-  if (to !== "PAUSED") next.pausedFrom = void 0;
-  if (to === "BLOCKED" || to === "FAILED" || to === "PAUSED") {
-    if (reason) next.blockedReason = reason;
-  } else {
-    next.blockedReason = void 0;
-  }
-  return next;
-}
-
-// src/orchestrator/context.ts
-function fail(code, text) {
-  return { ok: false, code, text };
-}
-function done(text, data) {
-  return { ok: true, text, data };
-}
-function iso(ctx) {
-  return ctx.now().toISOString();
-}
-function active(ctx) {
-  const id = ctx.store.readActive();
-  return id ? ctx.store.load(id) : void 0;
-}
-function requireActive(ctx) {
-  const state = active(ctx);
-  if (!state) throw new WorkflowError("NO_TASK", "No active task.");
-  return state;
-}
-function asResult(error) {
-  if (error instanceof WorkflowError) return fail(error.code, error.message);
-  return fail("ERROR", redact(error.message || "Unknown error"));
-}
-async function guard(fn) {
-  try {
-    return await fn();
-  } catch (error) {
-    return asResult(error);
-  }
-}
-function workspaceName(ctx) {
-  return ctx.config.workspaceDir.replace(/^\.\//, "").replace(/\/$/, "");
-}
-function excludedPaths(ctx) {
-  return [workspaceName(ctx)];
-}
-
 // src/orchestrator/budget.ts
 var SESSION_TASK_ID = "session";
 function budgetState(ctx, taskId, records = ctx.store.readLedger()) {
@@ -10430,7 +10430,7 @@ function startPlan(ctx, request, options = {}) {
     const current = await activeTask(ctx);
     const text = request.trim();
     if (!text && !current?.planning) return fail("USAGE", "Usage: /plan [--no-questions] <request>");
-    if (!ctx.startTurn) return fail("NO_SESSION", "Planning needs a Pi session to run the interview.");
+    if (!ctx.startTurn && !options.headless) return fail("NO_SESSION", "Planning needs a Pi session to run the interview.");
     const safe = redact(text);
     const noQuestions = options.noQuestions ?? false;
     const at = iso(ctx);
@@ -10439,7 +10439,7 @@ function startPlan(ctx, request, options = {}) {
       if (interview) {
         await ctx.store.update(current.taskId, "plan resumed", (task) => toPlanning(task, at));
         showStatus(ctx);
-        ctx.startTurn(resumeMessage(current.request));
+        ctx.startTurn?.(resumeMessage(current.request));
         return done(`Resuming the plan for ${displayName(current)}. ${planningStatusText(ctx) ?? ""}`.trim(), { taskId: current.taskId, resumed: true });
       }
     }
@@ -10453,7 +10453,7 @@ function startPlan(ctx, request, options = {}) {
     await initAgentWatermark(ctx);
     writeInterview(ctx, state.taskId, { version: 1, request: safe, noQuestions, rounds: [] });
     showStatus(ctx);
-    ctx.startTurn(`Plan this request${noQuestions ? " (no questions)" : ""}:
+    ctx.startTurn?.(`Plan this request${noQuestions ? " (no questions)" : ""}:
 
 ${safe}`);
     return done(
@@ -10704,11 +10704,11 @@ function stagePrompt(ctx, found) {
   }
   return lines2.join("\n");
 }
-async function requestPlanChanges(ctx, task, feedback) {
+async function requestPlanChanges(ctx, task, feedback, options = {}) {
   const text = redact(feedback.trim());
   if (!text) return fail("USAGE", "Describe the changes you want, then run /show-plan again.");
   if (!readInterview(ctx, task.taskId)) return fail("NO_INTERVIEW", "This plan was not drafted by the /plan interview. Run /plan again with the changes in the request.");
-  if (!ctx.startTurn) return fail("NO_SESSION", "Revising the plan needs a Pi session.");
+  if (!ctx.startTurn && !options.headless) return fail("NO_SESSION", "Revising the plan needs a Pi session.");
   const at = iso(ctx);
   await ctx.store.update(task.taskId, "plan changes requested", (current) => ({
     ...toPlanning(current, at),
@@ -10716,7 +10716,7 @@ async function requestPlanChanges(ctx, task, feedback) {
     planning: { stage: "interview", noQuestions: true, revision: text }
   }));
   showStatus(ctx);
-  ctx.startTurn(`Revise the plan with these changes:
+  ctx.startTurn?.(`Revise the plan with these changes:
 
 ${text}`);
   return done("Sent the plan back for changes. The revised plan will be shown for review again.", { taskId: task.taskId });
@@ -12339,9 +12339,9 @@ function waitProblem(waited, tab, minutes) {
   if (waited.status === "error") return `the program in tab ${tab} reported an error; look at the tab`;
   return void 0;
 }
-function withPath(argv, path16) {
-  if (!path16 || path16.includes("\n")) return argv;
-  const assignment = `PATH=${path16}`;
+function withPath(argv, path17) {
+  if (!path17 || path17.includes("\n")) return argv;
+  const assignment = `PATH=${path17}`;
   return argv[0] === "env" ? ["env", assignment, ...argv.slice(1)] : ["env", assignment, ...argv];
 }
 async function openTab(input) {
@@ -13196,6 +13196,11 @@ var Workflow = class {
   presentPendingPlan() {
     return presentPendingPlan(this.ctx);
   }
+  /** Sends the active draft back to planning with the person's requested changes (no session turn: the caller redrafts). */
+  async reviseDraft(feedback) {
+    const task = await activeTask(this.ctx);
+    return task ? requestPlanChanges(this.ctx, task, feedback, { headless: true }) : fail("NO_TASK", "No active task.");
+  }
   /** Approves the active draft: freezes plan.vN.approved.json. The choice was made on a review screen. */
   approveDraft() {
     return approveDraft(this.ctx);
@@ -13437,12 +13442,213 @@ function hitsOf(words, depth) {
     return [];
   }
   if (name === "hc" && command[1] === "run") return ["hc run"];
-  if ((name === "shepherd" || name === "shepherd.mjs") && ["build", "review", "fix"].includes(command[1] ?? "")) return ["shepherd run"];
-  if ((name === "node" || name === "npx") && command[1] && base(command[1]).startsWith("shepherd") && ["build", "review", "fix"].includes(command[2] ?? "")) return ["shepherd run"];
+  const verbs = (from) => command.slice(from).filter((word) => !word.startsWith("-"));
+  const shepherdHits = (verb) => ["build", "review", "fix"].includes(verb[0] ?? "") ? ["shepherd run"] : verb[0] === "plan" && verb[1] === "approve" ? ["plan approve"] : [];
+  if (name === "shepherd" || name === "shepherd.mjs") return shepherdHits(verbs(1));
+  if ((name === "node" || name === "npx") && command[1] && base(command[1]).startsWith("shepherd")) return shepherdHits(verbs(2));
   return [];
 }
 function guardHits(line) {
   return commandsOf(line).flatMap((words) => hitsOf(words, 0));
+}
+
+// src/cli/plan.ts
+import { existsSync as existsSync7, readFileSync as readFileSync9 } from "node:fs";
+import path15 from "node:path";
+var PLAN_USAGE = `Usage:
+  shepherd plan start "<request>"     (or "-" to read the request from stdin)
+  shepherd plan spec <file|->         the spec as JSON
+  shepherd plan tickets <file|->      the tickets as JSON
+  shepherd plan show
+  shepherd plan revise "<changes>"    send the draft back for changes, then resend spec and tickets
+  shepherd plan approve
+  shepherd plans [<name> | close <name> | --all]
+  shepherd task list [--all] | use <name> | close [<name>] [--force]
+All commands accept --json.`;
+var SPEC_SCHEMA = `{
+  "summary": "what will be built and why, a short paragraph",
+  "context": "what the code does today in the area that changes (files and functions you read)",
+  "approach": "the technical design: components, data flow, new types and signatures, error handling, config",
+  "changes": [{ "path": "repo/relative/file.ts", "change": "functions, types or exports added or modified (or 'new file: ...')" }],
+  "reuse": ["existing function or utility, with its path"],
+  "decisions": [{ "question": "...", "answer": "...", "rationale": "..." }],
+  "assumptions": ["a decision made without asking, and why"],
+  "outOfScope": ["..."],
+  "risks": ["..."],
+  "verification": ["a test to add or a command to run"],
+  "complexity": "low | medium | high",
+  "risk": "low | medium | high",
+  "securitySensitive": false,
+  "classificationReason": "one short sentence on the rating"
+}
+Required: summary, approach, changes (at least one), verification (at least one).`;
+var TICKETS_SCHEMA = `{ "tickets": [
+  {
+    "id": "01",
+    "slug": "lowercase-kebab-case",
+    "title": "single line",
+    "whatToBuild": "the end-to-end behavior to deliver",
+    "implementation": "files, functions and signatures to add, how they wire in, tests to write (lists or ### headings, never # or ##)",
+    "acceptanceCriteria": ["at least one checkable criterion, one line each"],
+    "blockedBy": [],
+    "difficulty": "low | medium | high",
+    "files": ["repo/relative/file.ts"],
+    "estimatedContextTokens": 30000,
+    "checks": ["npm test"]
+  }
+] }
+Required per ticket: id, slug, title, whatToBuild, acceptanceCriteria, estimatedContextTokens (a positive number). difficulty, files and checks are optional but set difficulty on every ticket.`;
+function rephrase(text) {
+  return text.replace(/plan_tickets/g, "`shepherd plan tickets`").replace(/plan_spec/g, "`shepherd plan spec`").replace(/plan_questions/g, "AskUserQuestion");
+}
+function specGuide() {
+  return rephrase(`Next: write the spec as JSON to a file and run \`shepherd plan spec <file>\`.
+${TECHNICAL_PLAN}
+
+Spec JSON:
+${SPEC_SCHEMA}`);
+}
+function ticketsGuide(config) {
+  const limits = localLimits(config);
+  const rules = TICKET_RULES(CLOUD_TICKET_TOKENS).split("\n").slice(0, -1).join("\n");
+  return rephrase(`Next: write the tickets as JSON to a file and run \`shepherd plan tickets <file>\`. Every problem is listed; fix them all and resend.
+${rules}${limits.length ? `
+
+${LOCAL_SIZE_RULES(limits)}` : ""}
+
+Tickets JSON:
+${TICKETS_SCHEMA}`);
+}
+var NEXT_APPROVAL = "Next: `shepherd plan show` and show it to the user, then ask whether to approve.";
+function cliText(text) {
+  return text.replace(/Call plan_tickets\.?/g, "Resend with `shepherd plan tickets`.").replace(/and call plan_tickets again/g, "and run `shepherd plan tickets` again").replace(/Write the spec first with plan_spec, then call plan_tickets\./g, "Save the spec first with `shepherd plan spec <file>`, then run `shepherd plan tickets <file>`.").replace(/No \/plan is running\. Start one with \/plan <request>\./g, 'No plan is being drafted. Run `shepherd plan start "<request>"`.').replace(/plan_tickets/g, "`shepherd plan tickets`").replace(/plan_spec/g, "`shepherd plan spec`").replace(/\/show-plan/g, "`shepherd plan show`").replace(/\/plan <request>/g, '`shepherd plan start "<request>"`').replace(/\/plans/g, "`shepherd plans`").replace(/Run \/build\./g, "/shepherd:build runs it.").replace(/\/build/g, "/shepherd:build");
+}
+function asResult2(error) {
+  if (error instanceof WorkflowError) return fail(error.code, cliText(error.message));
+  return fail("ERROR", redact(error instanceof Error ? error.message.split("\n")[0] : String(error)));
+}
+function readJsonInput(ref, stdin, cwd, what) {
+  if (!ref) return { failed: fail("USAGE", `Give the ${what} file, or "-" to read it from stdin.`) };
+  let text;
+  if (ref === "-") text = stdin;
+  else {
+    const file = path15.resolve(cwd, ref);
+    if (!existsSync7(file)) return { failed: fail("BAD_INPUT", `No such file: ${ref}`) };
+    try {
+      text = readFileSync9(file, "utf8");
+    } catch (error) {
+      return { failed: fail("BAD_INPUT", `Cannot read ${ref}: ${error.message.split("\n")[0]}`) };
+    }
+  }
+  try {
+    return { value: JSON.parse(text) };
+  } catch (error) {
+    return { failed: fail("BAD_INPUT", `The ${what} is not valid JSON (${error.message.split("\n")[0]}). Write the JSON to a file with the Write tool, then pass its path.`) };
+  }
+}
+function modelSummary(task, config) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const ticket of task.plan?.tickets ?? []) {
+    const difficulty = ticketDifficulty(ticket);
+    const entry = counts.get(difficulty) ?? { n: 0, model: ticketRouteView(config, ticket).implementer };
+    entry.n += 1;
+    counts.set(difficulty, entry);
+  }
+  return ["low", "medium", "high"].flatMap((d) => counts.has(d) ? [`${counts.get(d).n} ${d} (${counts.get(d).model})`] : []).join(", ");
+}
+async function approvalReason(workflow, config) {
+  const task = await workflow.activeTask();
+  const tickets = task?.plan?.tickets?.length ?? 0;
+  if (!task || !task.plan || task.phase !== "AWAITING_PLAN_APPROVAL") return `Approve the plan${task ? ` for ${displayName(task)}` : ""}? There is no drafted plan waiting, so this will most likely fail.`;
+  return `Approve the plan for ${displayName(task)}? ${tickets} ticket${tickets === 1 ? "" : "s"}, models ${modelSummary(task, config)}. Approving lets /shepherd:build run it.`;
+}
+async function planCommand({ workflow, config, args, stdin, cwd }) {
+  const [sub, ...rest] = args;
+  try {
+    switch (sub) {
+      case "start": {
+        const request = rest.length === 1 && rest[0] === "-" ? stdin.trim() : rest.join(" ").trim();
+        const started = await workflow.startPlan(request, { headless: true });
+        if (!started.ok) return fail(started.code ?? "ERROR", cliText(started.text));
+        const task = workflow.activeTaskId() ? workflow.store.load(workflow.activeTaskId()) : void 0;
+        const name = task ? displayName(task) : "";
+        const stage = workflow.planningStage();
+        const head = `${started.data?.resumed ? "Resuming" : "Planning"} task ${name}. Do not edit the repository while planning.`;
+        return done(`${head}
+
+${stage === "tickets" ? ticketsGuide(config) : `${specGuide()}
+
+After the spec is saved, the tickets. ${ticketsGuide(config)}`}`, { ...started.data, name, stage });
+      }
+      case "spec": {
+        const input = readJsonInput(rest[0], stdin, cwd, "spec");
+        if ("failed" in input) return input.failed;
+        const saved = await workflow.savePlanSpec(input.value);
+        const rated = saved.classification;
+        return done(`Spec saved to ${saved.file}. Rated ${rated.complexity} complexity, ${rated.risk} risk.
+
+${ticketsGuide(config)}`, { file: saved.file, classification: rated });
+      }
+      case "tickets": {
+        const input = readJsonInput(rest[0], stdin, cwd, "tickets");
+        if ("failed" in input) return input.failed;
+        workflow.requireTicketStage();
+        const raw = input.value && typeof input.value === "object" && !Array.isArray(input.value) ? input.value.tickets : input.value;
+        const check = workflow.checkTickets(raw);
+        if (check.errors.length) return fail("TICKETS_INVALID", `Tickets rejected (${check.errors.length} problem${check.errors.length === 1 ? "" : "s"}). Fix all of them and run \`shepherd plan tickets\` again:
+${check.errors.map((e) => `- ${cliText(e)}`).join("\n")}`);
+        const { plan, files, table } = await workflow.commitTickets(check.tickets);
+        return done(`${check.tickets.length} tickets written (${files.length} files). Plan v${plan.version} is a draft.
+
+${table}
+
+${NEXT_APPROVAL}`, { version: plan.version, tickets: check.tickets.length, files });
+      }
+      case "show": {
+        const shown = await workflow.showPlan();
+        return shown.ok ? shown : fail(shown.code ?? "ERROR", cliText(shown.text));
+      }
+      case "revise": {
+        const changes = rest.length === 1 && rest[0] === "-" ? stdin.trim() : rest.join(" ").trim();
+        if (!changes) return fail("USAGE", 'Describe the changes: shepherd plan revise "<what should change>".');
+        const revised = await workflow.reviseDraft(changes);
+        if (!revised.ok) return fail(revised.code ?? "ERROR", cliText(revised.text));
+        return done(`The plan is back in planning with your changes. Re-read code where needed, then resend the full spec and the full tickets.
+
+${specGuide()}`, revised.data);
+      }
+      case "approve": {
+        const approved = await workflow.approveDraft();
+        return approved.ok ? done(cliText(approved.text), approved.data) : fail(approved.code ?? "ERROR", cliText(approved.text));
+      }
+      default:
+        return fail("USAGE", PLAN_USAGE);
+    }
+  } catch (error) {
+    return asResult2(error);
+  }
+}
+async function plansCommand(workflow, args) {
+  try {
+    const result = await workflow.plans(args.join(" "));
+    return { ...result, text: cliText(result.text) };
+  } catch (error) {
+    return asResult2(error);
+  }
+}
+async function taskCommand(workflow, args) {
+  const [sub, ...rest] = args;
+  try {
+    if (sub === "list") return plansCommand(workflow, rest);
+    if (sub === "use") return rest.length ? plansCommand(workflow, rest) : fail("USAGE", "Usage: shepherd task use <name>");
+    if (sub === "close") {
+      const name = rest.length ? rest.join(" ") : await workflow.activeTask() ? displayName(await workflow.activeTask()) : "";
+      return name ? plansCommand(workflow, ["close", name]) : fail("NO_TASK", "No active task to close.");
+    }
+    return fail("USAGE", PLAN_USAGE);
+  } catch (error) {
+    return asResult2(error);
+  }
 }
 
 // src/cli/shepherd.ts
@@ -13452,19 +13658,22 @@ var USAGE = `Usage:
   shepherd cost [--json]
   shepherd status
   shepherd hook <stop|prompt|pretool>   (reads the hook JSON on stdin)
+  shepherd plan <start|spec|tickets|show|revise|approve> ...   (shepherd plan --help)
+  shepherd plans [<name> | close <name> | --all]
+  shepherd task <list|use <name>|close [<name>]>
 `;
 var defaultIo = { out: (text) => process.stdout.write(text), err: (text) => process.stderr.write(text) };
 function packageVersion() {
   for (const rel of ["../../package.json", "../package.json"]) {
     try {
-      const pkg = JSON.parse(readFileSync9(new URL(rel, import.meta.url), "utf8"));
+      const pkg = JSON.parse(readFileSync10(new URL(rel, import.meta.url), "utf8"));
       if (pkg.name === "claude-shepherd" && pkg.version) return pkg.version;
     } catch {
     }
   }
   return "unknown";
 }
-async function open(cwd, options) {
+async function open(cwd, options, confirm) {
   let root;
   try {
     root = (await run("git", ["rev-parse", "--show-toplevel"], { cwd })).stdout.trim();
@@ -13482,10 +13691,10 @@ async function open(cwd, options) {
   const now = options.now ?? (() => /* @__PURE__ */ new Date());
   const home = options.home ?? homedir5();
   const shepherd = shepherdHome(options.env ?? process.env, home);
-  const workspace = path15.join(root, config.workspaceDir);
+  const workspace = path16.join(root, config.workspaceDir);
   ignoreWorkspace(workspace);
   await registerRepo(shepherd, workspace);
-  const workflow = new Workflow({ cwd: root, config, now, agentLogHome: home, dailyRecords: () => dailyRecordsOf([...registeredRepos(shepherd), workspace], now()) });
+  const workflow = new Workflow({ cwd: root, config, now, ...confirm ? { confirm } : {}, agentLogHome: home, dailyRecords: () => dailyRecordsOf([...registeredRepos(shepherd), workspace], now()) });
   return { session: { root, workflow, config, shepherd, now } };
 }
 var spend = (s) => `${s.unknownRecords > 0 ? "\u2248" : ""}$${fromMicroUsd(toMicroUsd(s.knownUsd) + toMicroUsd(s.estimatedUnknownUsd)).toFixed(2)}`;
@@ -13551,8 +13760,8 @@ async function statusCommand(io, options) {
 }
 function knownSessions(shepherd) {
   try {
-    return readdirSync5(path15.join(shepherd, "sessions")).filter((name) => name.endsWith(".json") && !name.endsWith(".pending.json")).flatMap((name) => {
-      const note = readJson(path15.join(shepherd, "sessions", name));
+    return readdirSync5(path16.join(shepherd, "sessions")).filter((name) => name.endsWith(".json") && !name.endsWith(".pending.json")).flatMap((name) => {
+      const note = readJson(path16.join(shepherd, "sessions", name));
       return note && typeof note.transcriptPath === "string" && typeof note.sessionId === "string" ? [{ transcriptPath: note.transcriptPath, sessionId: note.sessionId }] : [];
     });
   } catch {
@@ -13594,7 +13803,8 @@ var GUARD_WHY = {
   "git branch change": "a build is running on its branch; switching branches would break it",
   "git worktree": "a build is running in this checkout; worktree changes would break it",
   "shepherd run": "",
-  "hc run": ""
+  "hc run": "",
+  "plan approve": ""
 };
 async function runHook(kind, input, session) {
   const { workflow, config, shepherd, now } = session;
@@ -13613,7 +13823,7 @@ async function runHook(kind, input, session) {
     const prompt = (input.prompt ?? "").trim();
     if (!prompt || prompt.startsWith("/")) return void 0;
     await sweep();
-    if (sessionId && input.transcript_path && !existsSync7(sessionFile(shepherd, sessionId))) writeJson(sessionFile(shepherd, sessionId), { transcriptPath: input.transcript_path, sessionId });
+    if (sessionId && input.transcript_path && !existsSync8(sessionFile(shepherd, sessionId))) writeJson(sessionFile(shepherd, sessionId), { transcriptPath: input.transcript_path, sessionId });
     const budget = budgetOf(session, task);
     if (budget.status === "hard") {
       return { decision: "block", reason: `Budget exhausted: ${budget.text}. Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.` };
@@ -13622,7 +13832,7 @@ async function runHook(kind, input, session) {
     if (idle) return { decision: "block", reason: idle };
     if (budget.status === "soft") {
       const open2 = openTask(task);
-      const mark = path15.join(shepherd, "warned.json");
+      const mark = path16.join(shepherd, "warned.json");
       const day = now().toISOString().slice(0, 10);
       const key = open2?.taskId ?? "daily";
       const warned = readJson(mark);
@@ -13649,6 +13859,7 @@ async function runHook(kind, input, session) {
       const budget = budgetOf(session, task);
       if (budget.status === "hard") return deny(`Budget exhausted: ${budget.text}. Not starting more agent work (${spendHit === "hc run" ? "hc run" : "shepherd build/review/fix"}). Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.`);
     }
+    if (hits.includes("plan approve")) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: await approvalReason(workflow, config) } };
     return void 0;
   }
   return void 0;
@@ -13701,9 +13912,32 @@ async function hookCommand(kind, io, options) {
   }
   return 0;
 }
+function emit(result, json, io) {
+  if (json) io.out(`${JSON.stringify({ ok: result.ok, ...result.code ? { code: result.code } : {}, text: result.text, ...result.data !== void 0 ? { data: result.data } : {} }, null, 2)}
+`);
+  else (result.ok ? io.out : io.err)(`${result.text}
+`);
+  return result.ok ? 0 : 1;
+}
+async function planFamily(command, rest, io, options) {
+  const json = rest.includes("--json");
+  const force = rest.includes("--force");
+  const args = rest.filter((word) => word !== "--json" && word !== "--force");
+  try {
+    if (args.includes("--help") || args.includes("-h")) return emit(done(PLAN_USAGE), json, io);
+    const cwd = options.cwd ?? process.cwd();
+    const opened = await open(cwd, options, force ? async () => true : void 0);
+    if ("problem" in opened) return emit(fail(opened.problem === "no-repo" ? "NO_REPO" : "CONFIG", opened.problem === "no-repo" ? "shepherd: not inside a git repository." : opened.message), json, io);
+    const { workflow, config } = opened.session;
+    const result = command === "plan" ? await planCommand({ workflow, config, args, stdin: options.stdin ?? "", cwd }) : command === "plans" ? await plansCommand(workflow, args) : await taskCommand(workflow, args);
+    return emit(result, json, io);
+  } catch (error) {
+    return emit(fail("ERROR", redact((error instanceof Error ? error.message : String(error)).split("\n")[0])), json, io);
+  }
+}
 function ignoreWorkspace(workspace) {
-  const file = path15.join(workspace, ".gitignore");
-  if (existsSync7(file)) return;
+  const file = path16.join(workspace, ".gitignore");
+  if (existsSync8(file)) return;
   mkdirSync5(workspace, { recursive: true });
   writeFileSync2(file, "*\n");
 }
@@ -13717,6 +13951,7 @@ async function main(argv, io = defaultIo, options = {}) {
   if (command === "cost") return costCommand(rest, io, options);
   if (command === "status") return statusCommand(io, options);
   if (command === "hook") return hookCommand(rest[0], io, options);
+  if (command === "plan" || command === "plans" || command === "task") return planFamily(command, rest, io, options);
   io.err(USAGE);
   return 2;
 }
@@ -13725,7 +13960,7 @@ function isEntry() {
   if (!invoked) return false;
   try {
     const real = realpathSync2(invoked);
-    return real === realpathSync2(fileURLToPath(import.meta.url)) || path15.basename(real) === "shepherd";
+    return real === realpathSync2(fileURLToPath(import.meta.url)) || path16.basename(real) === "shepherd";
   } catch {
     return false;
   }
@@ -13741,7 +13976,7 @@ if (isEntry()) {
   readStdinFor(argv).then((stdin) => main(argv, defaultIo, { stdin })).then((code) => void (process.exitCode = code), () => void (process.exitCode = argv[0] === "hook" ? 0 : 1));
 }
 function readStdinFor(argv) {
-  return argv[0] === "hook" ? readStdin() : Promise.resolve("");
+  return argv[0] === "hook" || argv.includes("-") ? readStdin() : Promise.resolve("");
 }
 export {
   main

@@ -130,12 +130,12 @@ function resumeMessage(request: string): string {
 }
 
 /** `/plan` entry point. Starts (or resumes) the model-run interview in the session. */
-export function startPlan(ctx: WorkflowContext, request: string, options: { noQuestions?: boolean } = {}): Promise<CommandResult> {
+export function startPlan(ctx: WorkflowContext, request: string, options: { noQuestions?: boolean; /** The caller drives the interview itself (the shepherd CLI): no session turn is started. */ headless?: boolean } = {}): Promise<CommandResult> {
   return guard(async () => {
     const current = await activeTask(ctx);
     const text = request.trim();
     if (!text && !current?.planning) return fail("USAGE", "Usage: /plan [--no-questions] <request>");
-    if (!ctx.startTurn) return fail("NO_SESSION", "Planning needs a Pi session to run the interview.");
+    if (!ctx.startTurn && !options.headless) return fail("NO_SESSION", "Planning needs a Pi session to run the interview.");
     const safe = redact(text);
     const noQuestions = options.noQuestions ?? false;
     const at = iso(ctx);
@@ -145,7 +145,7 @@ export function startPlan(ctx: WorkflowContext, request: string, options: { noQu
       if (interview) {
         await ctx.store.update(current.taskId, "plan resumed", (task) => toPlanning(task, at));
         showStatus(ctx);
-        ctx.startTurn(resumeMessage(current.request));
+        ctx.startTurn?.(resumeMessage(current.request));
         return done(`Resuming the plan for ${displayName(current)}. ${planningStatusText(ctx) ?? ""}`.trim(), { taskId: current.taskId, resumed: true });
       }
     }
@@ -161,7 +161,7 @@ export function startPlan(ctx: WorkflowContext, request: string, options: { noQu
     await initAgentWatermark(ctx);
     writeInterview(ctx, state.taskId, { version: 1, request: safe, noQuestions, rounds: [] });
     showStatus(ctx);
-    ctx.startTurn(`Plan this request${noQuestions ? " (no questions)" : ""}:\n\n${safe}`);
+    ctx.startTurn?.(`Plan this request${noQuestions ? " (no questions)" : ""}:\n\n${safe}`);
     return done(
       `${noQuestions ? `Planning ${displayName(state)} without an interview. The model will write the spec and tickets.` : `Interview started for ${displayName(state)}. ${planningStatusText(ctx)}`}`,
       { taskId: state.taskId },
@@ -445,11 +445,11 @@ function stagePrompt(ctx: WorkflowContext, found: NonNullable<ReturnType<typeof 
  * Sends a drafted plan back to planning with the person's requested changes. The model rewrites the spec and
  * tickets (no new interview questions), and the plan returns for approval. Plan approval stays required.
  */
-export async function requestPlanChanges(ctx: WorkflowContext, task: TaskState, feedback: string): Promise<CommandResult> {
+export async function requestPlanChanges(ctx: WorkflowContext, task: TaskState, feedback: string, options: { headless?: boolean } = {}): Promise<CommandResult> {
   const text = redact(feedback.trim());
   if (!text) return fail("USAGE", "Describe the changes you want, then run /show-plan again.");
   if (!readInterview(ctx, task.taskId)) return fail("NO_INTERVIEW", "This plan was not drafted by the /plan interview. Run /plan again with the changes in the request.");
-  if (!ctx.startTurn) return fail("NO_SESSION", "Revising the plan needs a Pi session.");
+  if (!ctx.startTurn && !options.headless) return fail("NO_SESSION", "Revising the plan needs a Pi session.");
   const at = iso(ctx);
   await ctx.store.update(task.taskId, "plan changes requested", (current) => ({
     ...toPlanning(current, at),
@@ -457,6 +457,6 @@ export async function requestPlanChanges(ctx: WorkflowContext, task: TaskState, 
     planning: { stage: "interview", noQuestions: true, revision: text },
   }));
   showStatus(ctx);
-  ctx.startTurn(`Revise the plan with these changes:\n\n${text}`);
+  ctx.startTurn?.(`Revise the plan with these changes:\n\n${text}`);
   return done("Sent the plan back for changes. The revised plan will be shown for review again.", { taskId: task.taskId });
 }

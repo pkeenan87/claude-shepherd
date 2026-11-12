@@ -5,12 +5,12 @@ import { GitWorkspace } from "../git/workspace.js";
 import { TaskStore } from "../storage/store.js";
 import { buildReport, finishChunk, nextChunk, startBuild, unstartChunk } from "./build.js";
 import { budgetState, checkBudget, observeUsage, recordAgentUsage, recordPiUsage, recordWebSearch } from "./budget.js";
-import { active, type WorkflowContext } from "./context.js";
+import { active, fail, type WorkflowContext } from "./context.js";
 import { ledgerChildSession, sweepTicketSessions } from "../herdr/session-file.js";
 import { activeTask, displayName, stateText } from "./tasks.js";
 import { sweepAgentLogs, type SweepOptions } from "./agent-sweep.js";
 import { cachingRunner, defaultRunner } from "./exec.js";
-import { abandonRound, beginRound, planningPrompt, planningStatusText, recordAnswers, savePlanSpec, startPlan, activePlanning, type InterviewAnswer, type InterviewQuestion } from "./interview.js";
+import { abandonRound, beginRound, requestPlanChanges, planningPrompt, planningStatusText, recordAnswers, savePlanSpec, startPlan, activePlanning, type InterviewAnswer, type InterviewQuestion } from "./interview.js";
 import { checkTickets, commitTickets, requireTicketStage } from "./ticket-plan.js";
 import { presentPendingPlan } from "./present-plan.js";
 import { plans, taskNames } from "./plans.js";
@@ -104,7 +104,7 @@ export class Workflow {
   }
 
   /** `/plan`: starts or resumes the model-run interview. */
-  startPlan(request: string, options: { noQuestions?: boolean } = {}): Promise<CommandResult> {
+  startPlan(request: string, options: Parameters<typeof startPlan>[2] = {}): Promise<CommandResult> {
     return startPlan(this.ctx, request, options);
   }
 
@@ -185,6 +185,13 @@ export class Workflow {
   presentPendingPlan(): Promise<void> {
     return presentPendingPlan(this.ctx);
   }
+
+  /** Sends the active draft back to planning with the person's requested changes (no session turn: the caller redrafts). */
+  async reviseDraft(feedback: string): Promise<CommandResult> {
+    const task = await activeTask(this.ctx);
+    return task ? requestPlanChanges(this.ctx, task, feedback, { headless: true }) : fail("NO_TASK", "No active task.");
+  }
+
   /** Approves the active draft: freezes plan.vN.approved.json. The choice was made on a review screen. */
   approveDraft(): Promise<CommandResult> {
     return approveDraft(this.ctx);
