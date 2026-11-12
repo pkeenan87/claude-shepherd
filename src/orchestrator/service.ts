@@ -7,7 +7,8 @@ import { buildReport, finishChunk, nextChunk, startBuild, unstartChunk } from ".
 import { budgetState, checkBudget, observeUsage, recordAgentUsage, recordPiUsage, recordWebSearch } from "./budget.js";
 import { active, type WorkflowContext } from "./context.js";
 import { ledgerChildSession, sweepTicketSessions } from "../herdr/session-file.js";
-import { displayName, stateText } from "./tasks.js";
+import { activeTask, displayName, stateText } from "./tasks.js";
+import { sweepAgentLogs, type SweepOptions } from "./agent-sweep.js";
 import { cachingRunner, defaultRunner } from "./exec.js";
 import { abandonRound, beginRound, planningPrompt, planningStatusText, recordAnswers, savePlanSpec, startPlan, activePlanning, type InterviewAnswer, type InterviewQuestion } from "./interview.js";
 import { checkTickets, commitTickets, requireTicketStage } from "./ticket-plan.js";
@@ -53,6 +54,8 @@ export class Workflow {
       herdr: options.herdr,
       herdrTimings: options.herdrTimings,
       ticketModePath: options.ticketModePath,
+      agentLogHome: options.agentLogHome,
+      dailyRecords: options.dailyRecords,
       status: options.status,
       planStatus: options.planStatus,
       startTurn: options.startTurn,
@@ -124,6 +127,21 @@ export class Workflow {
     const today = `today ${spend(daily)} of $${dailyUsd}`;
     if (!state || state.phase === "IDLE" || state.phase === "COMPLETE") return daily.knownUsd > 0 || daily.unknownRecords > 0 ? `chef · ${today}` : undefined;
     return ["chef", displayName(state), planningStatusText(this.ctx) ?? stateText(state), `${spend(task)} of $${taskUsd}`, today].join(" · ");
+  }
+
+  /** The active task's and today's spend against the budgets (the stored active task, no git call). */
+  budgetState(taskId?: string) {
+    return budgetState(this.ctx, taskId ?? active(this.ctx)?.taskId);
+  }
+
+  /** The active task, resolved from the checked-out branch (see `activeTask`). */
+  activeTask() {
+    return activeTask(this.ctx);
+  }
+
+  /** The agent-log sweep (see `sweepAgentLogs`): ledgers use that shepherd did not start, and the main session's own turns. */
+  sweepAgentLogs(options?: SweepOptions) {
+    return sweepAgentLogs(this.ctx, options);
   }
 
   /** Validates a round of plan_questions input against the cap and ordering rules and records it as pending. */
@@ -278,10 +296,9 @@ export class Workflow {
     return recordAgentUsage(this.ctx, input);
   }
 
-  /** A ticket meter has read an agent log to `offset`: the active task's watermark moves there so the sweep skips it. */
+  /** A ticket meter has read an agent log to `offset`: the repo's watermark moves there so the sweep skips it (asynchronous: the watermark lock orders it before any later sweep in this process). */
   advanceAgentLog(file: string, offset: number): void {
-    const taskId = this.store.readActive();
-    if (taskId) this.store.advanceAgentLog(taskId, file, offset);
+    this.store.advanceAgentLog(file, offset).catch(() => undefined);
   }
 
   /** Ledgers the calls Pi made on its own (cache warming, its own compaction and branch summaries) from the session file. */

@@ -158,7 +158,7 @@ export function startPlan(ctx: WorkflowContext, request: string, options: { noQu
     const classification: AcceptedClassification = defaultClassification();
     const state = await ctx.store.create({ ...newTask(ctx, safe, at), classification, planning: { stage: "interview", noQuestions } });
     announceParked(ctx, parked);
-    initAgentWatermark(ctx, state.taskId);
+    await initAgentWatermark(ctx);
     writeInterview(ctx, state.taskId, { version: 1, request: safe, noQuestions, rounds: [] });
     showStatus(ctx);
     ctx.startTurn(`Plan this request${noQuestions ? " (no questions)" : ""}:\n\n${safe}`);

@@ -1,3 +1,4 @@
+import type { CostRecord } from "../domain.js";
 import type { WorkflowConfig } from "../config.js";
 import type { HerdrClient } from "../herdr/client.js";
 import type { TabTimings } from "../runner/tab.js";
@@ -71,6 +72,10 @@ export interface WorkflowOptions {
   /** Test seam: timings and sleeps of the herdr tab waits. */
   herdrTimings?: TabTimings;
   ticketModePath?: string;
+  /** Home directory the agent logs are looked for under (default: the user's). */
+  agentLogHome?: string;
+  /** Today's records for the daily budget, across repos (default: this repo's ledger). */
+  dailyRecords?: () => CostRecord[];
   status?: (text: string | undefined) => void;
   planStatus?: (text: string | undefined) => void;
   startTurn?: (text: string) => void;

@@ -23,6 +23,7 @@ import { usageOfMessage } from "./usage-message.js";
 import { registerPlanTools, registerWebTools, type WebToolsDeps } from "./tools/index.js";
 import { isReadOnlyCommand, PLAN_TOOL_NAMES, PLANNING_DISABLED_TOOLS, PLANNING_TOOLS } from "./tools/readonly-bash.js";
 import { SEARCH_MODEL } from "./tools/web-search.js";
+import { formatIdle, formatTokens } from "./orchestrator/format.js";
 
 let active: Workflow | undefined;
 let cwd = process.cwd();
@@ -496,15 +497,6 @@ export function registerWorkflow(pi: ExtensionAPI): void {
 /** When the last assistant turn ended (the workflow clock), and whether the idle warning was already asked since. */
 let lastTurnEnd: Date | undefined;
 let idleAsked = false;
-
-function formatTokens(tokens: number): string {
-  return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
-}
-
-function formatIdle(ms: number): string {
-  const minutes = Math.floor(ms / 60_000);
-  return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;
-}
 
 /**
  * Pi's `input` hook, the idle-cache warning: a big context that sat idle has probably lost its prompt cache, so the next

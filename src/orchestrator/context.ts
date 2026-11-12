@@ -1,4 +1,4 @@
-import { WorkflowError, type CommandResult, type Phase, type TaskState } from "../domain.js";
+import { WorkflowError, type CommandResult, type CostRecord, type Phase, type TaskState } from "../domain.js";
 import type { WorkflowConfig } from "../config.js";
 import type { GitWorkspace } from "../git/workspace.js";
 import type { HerdrClient } from "../herdr/client.js";
@@ -26,6 +26,10 @@ export interface WorkflowContext {
   shutdown: AbortController;
   /** Keys of warnings already shown, so each appears once. */
   readonly warned: Set<string>;
+  /** Replaces the home directory the agent logs are looked for under (tests, the CLI). */
+  agentLogHome?: string;
+  /** Today's budget counts these records (every registered repo's ledger) instead of this repo's own. Absent: the repo ledger. */
+  dailyRecords?: () => CostRecord[];
   /** Ledger ids of Pi's own calls already recorded (`recordPiUsage`), loaded from the ledger on first use. */
   piLedgered?: Set<string>;
   confirm: (title: string, message: string) => Promise<boolean>;

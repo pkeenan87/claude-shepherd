@@ -205,7 +205,7 @@ async function runReview(ctx: WorkflowContext, override?: TicketModel): Promise<
   // Workflow state is not the user's code: it stays out of the review and out of every model packet.
   const rawDiff = await ctx.git.workingDiff(ref, excludedPaths(ctx));
   if (!rawDiff.trim()) return done(`Nothing to review: no changes against ${base}.`);
-  if (state) sweepAgentLogs(ctx, state.taskId);
+  await sweepAgentLogs(ctx);
   const exhausted = gateBudget(ctx, taskId);
   if (exhausted) return exhausted;
 

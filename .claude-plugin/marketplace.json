@@ -1,0 +1,12 @@
+{
+  "name": "claude-shepherd",
+  "owner": { "name": "pkeenan87" },
+  "metadata": { "description": "Claude Shepherd: plan, build and review with a model per ticket, herdr sub-agents and cost controls" },
+  "plugins": [
+    {
+      "name": "shepherd",
+      "source": "./",
+      "description": "Plan, build and review with a model per ticket, herdr sub-agents and cost controls"
+    }
+  ]
+}

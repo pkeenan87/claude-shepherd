@@ -139,7 +139,7 @@ export function startBuild(ctx: WorkflowContext): Promise<CommandResult> {
     const gitProblem = await ctx.git.preflight();
     if (gitProblem) return fail("GIT_NOT_READY", gitProblem);
     // Before the claim: outside use since the last sweep is counted now, because the tickets' meters read the logs from here.
-    sweepAgentLogs(ctx, state.taskId);
+    await sweepAgentLogs(ctx);
     const exhausted = gateBudget(ctx, state.taskId);
     if (exhausted) return exhausted;
     const resumeFrom = state.phase === "PAUSED" ? state.pausedFrom : state.phase;

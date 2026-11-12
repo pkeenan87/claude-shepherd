@@ -52,7 +52,7 @@ function spendRows(ctx: WorkflowContext, records: CostRecord[], key: (entry: Cos
 async function costReport(ctx: WorkflowContext, format: string): Promise<CommandResult> {
   const task = await activeTask(ctx);
   // Agent use in this repo that shepherd did not start counts first, so the report and the budgets include it.
-  if (task) sweepAgentLogs(ctx, task.taskId);
+  await sweepAgentLogs(ctx);
   const records = ctx.store.readLedger();
   const summary = summarize(records, { pricing: ctx.config.pricing, unknownCallUsd: ctx.config.budgets.unknownCallUsd });
   const budget = budgetState(ctx, task?.taskId, records);

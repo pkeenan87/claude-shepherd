@@ -49,6 +49,8 @@ Then copy `.pi-workflows/config.yaml` from a checkout into the project and gitig
 .pi-workflows/reports/
 .pi-workflows/notifications.jsonl
 .pi-workflows/active-task.json
+.pi-workflows/agent-logs.json
+.pi-workflows/agent-logs.lock
 .pi-workflows/*.local.yaml
 ```
 

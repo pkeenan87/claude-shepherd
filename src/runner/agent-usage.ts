@@ -48,7 +48,7 @@ export interface AgentMeterOptions {
   cwd: string;
   /** Replaces the home directory the logs are looked for under (tests). */
   home?: string;
-  /** Called with a log file and the byte offset `collect()` has read it to (the per-task watermark follows it). */
+  /** Called with a log file and the byte offset `collect()` has read it to (the repo's agent-log watermark follows it). */
   onConsumed?: (file: string, offset: number) => void;
 }
 

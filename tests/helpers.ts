@@ -20,7 +20,7 @@ const exec = promisify(execFile);
 
 export async function tempRepo(): Promise<string> {
   const cwd = mkdtempSync(path.join(tmpdir(), "shepherd-"));
-  writeFileSync(path.join(cwd, ".gitignore"), ".shepherd/tasks/\n.shepherd/cost/\n.shepherd/metrics/\n.shepherd/reports/\n.shepherd/active-task.json\n.shepherd/active/\n.shepherd/notifications.jsonl\n");
+  writeFileSync(path.join(cwd, ".gitignore"), ".shepherd/tasks/\n.shepherd/cost/\n.shepherd/metrics/\n.shepherd/reports/\n.shepherd/active-task.json\n.shepherd/agent-logs.json\n.shepherd/agent-logs.lock\n.shepherd/active/\n.shepherd/notifications.jsonl\n");
   writeFileSync(path.join(cwd, "README.md"), "base\n");
   await exec("git", ["init"], { cwd });
   await exec("git", ["config", "user.email", "test@example.com"], { cwd });

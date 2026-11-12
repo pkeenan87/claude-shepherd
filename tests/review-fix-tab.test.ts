@@ -198,7 +198,7 @@ describe("Fix all in a tab with a Pi model", () => {
 });
 
 describe("Fix all in a tab and the outside-chef sweep", () => {
-  it("advances the task's agent-log watermark, so a following sweep counts nothing more", async () => {
+  it("advances the repo's agent-log watermark, so a following sweep counts nothing more", async () => {
     const home = mkdtempSync(path.join(tmpdir(), "agent-home-"));
     const prior = process.env.HOME;
     process.env.HOME = home;
@@ -216,13 +216,13 @@ describe("Fix all in a tab and the outside-chef sweep", () => {
       const task = await addTask(t.app, "fix");
       const ctx = contextOf(t.app);
       mkdirSync(path.join(home, ".claude", "projects", claudeProjectSlug(ctx.git.repoRoot)), { recursive: true });
-      sweepAgentLogs(ctx, task.taskId, home); // the first sweep only sets the watermark
-      expect(ctx.store.readAgentWatermark(task.taskId)).toBeDefined();
+      await sweepAgentLogs(ctx, { home }); // the first sweep only sets the watermark
+      expect(ctx.store.readAgentWatermark()).toBeDefined();
       await t.app.review();
       expect(fixRows(t)).toHaveLength(1);
       expect(fixRows(t)[0]).toMatchObject({ taskId: task.taskId, meter: "agent-log", inputTokens: 1000 });
       const before = ctx.store.readLedger().length;
-      sweepAgentLogs(ctx, task.taskId, home);
+      await sweepAgentLogs(ctx, { home });
       expect(ctx.store.readLedger()).toHaveLength(before);
       expect(ctx.store.readLedger().filter((row) => row.reason === "outside chef")).toHaveLength(0);
     } finally {

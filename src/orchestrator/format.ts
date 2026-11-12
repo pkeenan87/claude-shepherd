@@ -48,3 +48,14 @@ export function clock(iso: string | undefined): string | undefined {
   if (Number.isNaN(at.getTime())) return undefined;
   return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
 }
+
+/** "250k" for 250000; the count itself below 1000. */
+export function formatTokens(tokens: number): string {
+  return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
+}
+
+/** "2h 5m", "45m". */
+export function formatIdle(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;
+}

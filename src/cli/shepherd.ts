@@ -1,14 +1,49 @@
 /**
- * shepherd: the command line of the Claude Code plugin. For now it only prints its version; the workflow commands arrive
- * in later phases. `main` returns the exit code.
+ * shepherd: the command line of the Claude Code plugin. `cost` and `status` are for people and skills; `hook` is what the
+ * plugin's hooks run (stdin is Claude Code's hook JSON). A hook never throws and exits 0 except where it blocks by its
+ * JSON output; any internal error is one line on stderr and no stdout. `main` returns the exit code.
  */
-import { readFileSync, realpathSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { ConfigFileError, fromMicroUsd, loadConfig, priceFor, toMicroUsd, type WorkflowConfig } from "../config.js";
+import { budgetStatusFor } from "../cost/ledger.js";
+import type { TaskState } from "../domain.js";
+import { formatIdle, formatTokens } from "../orchestrator/format.js";
+import { Workflow } from "../orchestrator/service.js";
+import { dailyRecordsOf, readJson, registerRepo, registeredRepos, removeFile, sessionFile, shepherdHome, writeJson } from "../shepherd-home.js";
+import { guardHits, type GuardHit } from "./bash-guard.js";
+
+const run = promisify(execFile);
 
 const USAGE = `Usage:
   shepherd version
+  shepherd cost [--json]
+  shepherd status
+  shepherd hook <stop|prompt|pretool>   (reads the hook JSON on stdin)
 `;
+
+export interface CliIo {
+  out: (text: string) => void;
+  err: (text: string) => void;
+}
+
+export interface CliOptions {
+  /** The hook JSON (default: read from process.stdin by the entry point). */
+  stdin?: string;
+  env?: NodeJS.ProcessEnv;
+  now?: () => Date;
+  /** The home directory the agent logs and `~/.claude/shepherd` are under (default: the user's). */
+  home?: string;
+  /** Where the command runs (default: process.cwd(); a hook uses the cwd in its JSON). */
+  cwd?: string;
+}
+
+const defaultIo: CliIo = { out: (text) => process.stdout.write(text), err: (text) => process.stderr.write(text) };
 
 /** The version in package.json. It sits one level above src/cli, build/cli and dist (the bundle). */
 function packageVersion(): string {
@@ -23,12 +58,312 @@ function packageVersion(): string {
   return "unknown";
 }
 
-export function main(argv: string[], out: (text: string) => void = (text) => process.stdout.write(text)): number {
-  if (argv[0] === "version" && argv.length === 1) {
-    out(`${packageVersion()}\n`);
+interface Session {
+  root: string;
+  workflow: Workflow;
+  config: WorkflowConfig;
+  shepherd: string;
+  now: () => Date;
+}
+
+type Opened = { session: Session } | { problem: "no-repo" } | { problem: "config"; message: string };
+
+/** The repo around `cwd`, its config, and a Workflow whose daily budget spans every registered repo. No UI. */
+async function open(cwd: string, options: CliOptions): Promise<Opened> {
+  let root: string;
+  try {
+    root = (await run("git", ["rev-parse", "--show-toplevel"], { cwd })).stdout.trim();
+  } catch {
+    return { problem: "no-repo" };
+  }
+  if (!root) return { problem: "no-repo" };
+  let config: WorkflowConfig;
+  try {
+    config = loadConfig(root);
+  } catch (error) {
+    if (error instanceof ConfigFileError) return { problem: "config", message: error.message };
+    throw error;
+  }
+  const now = options.now ?? (() => new Date());
+  const home = options.home ?? homedir();
+  const shepherd = shepherdHome(options.env ?? process.env, home);
+  const workspace = path.join(root, config.workspaceDir);
+  ignoreWorkspace(workspace);
+  await registerRepo(shepherd, workspace);
+  const workflow = new Workflow({ cwd: root, config, now, agentLogHome: home, dailyRecords: () => dailyRecordsOf([...registeredRepos(shepherd), workspace], now()) });
+  return { session: { root, workflow, config, shepherd, now } };
+}
+
+const spend = (s: { knownUsd: number; estimatedUnknownUsd: number; unknownRecords: number }) =>
+  `${s.unknownRecords > 0 ? "≈" : ""}$${fromMicroUsd(toMicroUsd(s.knownUsd) + toMicroUsd(s.estimatedUnknownUsd)).toFixed(2)}`;
+
+function openTask(task: TaskState | undefined): TaskState | undefined {
+  return task && task.phase !== "IDLE" && task.phase !== "COMPLETE" ? task : undefined;
+}
+
+/** Where the budgets stand for the open task and today: the worst status and the sentence that names what is spent. */
+function budgetOf(session: Session, task: TaskState | undefined) {
+  const { workflow, config } = session;
+  const open = openTask(task);
+  const state = workflow.budgetState(open?.taskId);
+  const { taskUsd, dailyUsd, softWarningRatio } = config.budgets;
+  const taskStatus = open ? budgetStatusFor(state.task, taskUsd, softWarningRatio) : "ok";
+  const dailyStatus = budgetStatusFor(state.daily, dailyUsd, softWarningRatio);
+  const named = (status: string) => [
+    ...(taskStatus === status ? [`task ${open?.name ?? open?.taskId} ${spend(state.task)} of $${taskUsd}`] : []),
+    ...(dailyStatus === status ? [`today ${spend(state.daily)} of $${dailyUsd}`] : []),
+  ];
+  const status = taskStatus === "hard" || dailyStatus === "hard" ? "hard" : taskStatus === "soft" || dailyStatus === "soft" ? "soft" : "ok";
+  return { status, state, text: status === "ok" ? "" : named(status).join(" and ") };
+}
+
+// -- cost, status ------------------------------------------------------------------------------------------------
+
+async function costCommand(args: string[], io: CliIo, options: CliOptions): Promise<number> {
+  const json = args.includes("--json");
+  const opened = await open(options.cwd ?? process.cwd(), options);
+  if ("problem" in opened) {
+    io.err(opened.problem === "no-repo" ? "shepherd cost: not inside a git repository.\n" : `${opened.message}\n`);
+    return 1;
+  }
+  const { workflow, shepherd } = opened.session;
+  await workflow.activeTask();
+  await workflow.sweepAgentLogs({ known: knownSessions(shepherd) });
+  const result = await workflow.cost("");
+  if (!result.ok) {
+    io.err(`${result.text}\n`);
+    return 1;
+  }
+  if (json) {
+    const budget = workflow.budgetState();
+    io.out(`${JSON.stringify({ text: result.text, budget }, null, 2)}\n`);
+  } else io.out(`${result.text}\n`);
+  return 0;
+}
+
+async function statusCommand(io: CliIo, options: CliOptions): Promise<number> {
+  try {
+    const opened = await open(options.cwd ?? process.cwd(), options);
+    if ("problem" in opened) {
+      io.out(opened.problem === "no-repo" ? "shepherd · no repo\n" : "shepherd · config error\n");
+      return 0;
+    }
+    const { session } = opened;
+    const task = openTask(await session.workflow.activeTask());
+    const { state } = budgetOf(session, task);
+    const { taskUsd, dailyUsd } = session.config.budgets;
+    io.out(`shepherd · ${task ? (task.name ?? task.taskId) : "no task"} · task ${spend(state.task)}/$${taskUsd} · today ${spend(state.daily)}/$${dailyUsd}\n`);
+  } catch {
+    io.out("shepherd · status unavailable\n");
+  }
+  return 0;
+}
+
+// -- hooks -------------------------------------------------------------------------------------------------------
+
+interface HookInput {
+  session_id?: string;
+  transcript_path?: string;
+  cwd?: string;
+  hook_event_name?: string;
+  prompt?: string;
+  tool_name?: string;
+  tool_input?: { command?: string };
+}
+
+interface SessionNote {
+  lastTurnEnd: string;
+  contextTokens: number;
+  model: string;
+  /** Recorded so a `shepherd cost` run mid-turn can tell this session's log from outside use. */
+  transcriptPath: string;
+  sessionId: string;
+}
+
+/** The sessions the hooks have seen (`sessions/<id>.json`), for labelling their logs. */
+function knownSessions(shepherd: string): { transcriptPath: string; sessionId: string }[] {
+  try {
+    return readdirSync(path.join(shepherd, "sessions"))
+      .filter((name) => name.endsWith(".json") && !name.endsWith(".pending.json"))
+      .flatMap((name) => {
+        const note = readJson<Partial<SessionNote>>(path.join(shepherd, "sessions", name));
+        return note && typeof note.transcriptPath === "string" && typeof note.sessionId === "string" ? [{ transcriptPath: note.transcriptPath, sessionId: note.sessionId }] : [];
+      });
+  } catch {
+    return [];
+  }
+}
+
+/** The usage of the last assistant message in a transcript, reading only its tail; a half-written last line is skipped. */
+function lastAssistant(file: string): { contextTokens: number; model: string } | undefined {
+  const fd = openSync(file, "r");
+  try {
+    const size = fstatSync(fd).size;
+    for (const window of [256 * 1024, 4 * 1024 * 1024]) {
+      const length = Math.min(size, window);
+      const buffer = Buffer.alloc(length);
+      readSync(fd, buffer, 0, length, size - length);
+      const text = buffer.toString("utf8");
+      const rows = (length < size ? text.slice(text.indexOf("\n") + 1) : text).split("\n");
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        let line: { type?: string; isSidechain?: boolean; message?: { model?: string; usage?: Record<string, number> } };
+        try {
+          line = JSON.parse(rows[i]!);
+        } catch {
+          continue;
+        }
+        const usage = line.message?.usage;
+        if (line.type !== "assistant" || line.isSidechain === true || !usage || !line.message?.model || line.message.model === "<synthetic>") continue;
+        const n = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+        return { contextTokens: n(usage.input_tokens) + n(usage.cache_read_input_tokens) + n(usage.cache_creation_input_tokens), model: line.message.model };
+      }
+      if (length >= size) break;
+    }
+    return undefined;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+const PENDING_MS = 2 * 60_000;
+
+const GUARD_WHY: Record<GuardHit, string> = {
+  "git push": "shepherd never pushes while a build runs",
+  "git branch change": "a build is running on its branch; switching branches would break it",
+  "git worktree": "a build is running in this checkout; worktree changes would break it",
+  "shepherd run": "",
+  "hc run": "",
+};
+
+async function runHook(kind: string, input: HookInput, session: Session): Promise<object | undefined> {
+  const { workflow, config, shepherd, now } = session;
+  const sessionId = input.session_id;
+  const sweep = () => workflow.sweepAgentLogs({ known: knownSessions(shepherd), ...(input.transcript_path ? { transcriptPath: input.transcript_path } : {}), ...(sessionId ? { sessionId } : {}) });
+  const task = await workflow.activeTask();
+
+  if (kind === "stop") {
+    await sweep();
+    if (sessionId && input.transcript_path) {
+      const last = lastAssistant(input.transcript_path);
+      if (last) writeJson(sessionFile(shepherd, sessionId), { lastTurnEnd: now().toISOString(), ...last, transcriptPath: input.transcript_path, sessionId } satisfies SessionNote);
+    }
+    return undefined;
+  }
+
+  if (kind === "prompt") {
+    const prompt = (input.prompt ?? "").trim();
+    // A command always goes through, so /cost works at any budget.
+    if (!prompt || prompt.startsWith("/")) return undefined;
+    await sweep();
+    // A session's first prompt: remember its transcript for `shepherd cost` (the idle check waits for a Stop's note).
+    if (sessionId && input.transcript_path && !existsSync(sessionFile(shepherd, sessionId))) writeJson(sessionFile(shepherd, sessionId), { transcriptPath: input.transcript_path, sessionId });
+    const budget = budgetOf(session, task);
+    if (budget.status === "hard") {
+      return { decision: "block", reason: `Budget exhausted: ${budget.text}. Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.` };
+    }
+    const idle = idleBlock(session, sessionId, prompt);
+    if (idle) return { decision: "block", reason: idle };
+    if (budget.status === "soft") {
+      const open = openTask(task);
+      const mark = path.join(shepherd, "warned.json");
+      const day = now().toISOString().slice(0, 10);
+      const key = open?.taskId ?? "daily";
+      const warned = readJson<{ day?: string; keys?: string[] }>(mark);
+      const keys = warned?.day === day ? (warned.keys ?? []) : [];
+      if (!keys.includes(key)) {
+        writeJson(mark, { day, keys: [...keys, key] });
+        return { systemMessage: `Budget warning: ${budget.text}. Run /cost for details.` };
+      }
+    }
+    return undefined;
+  }
+
+  if (kind === "pretool") {
+    const command = input.tool_input?.command;
+    if (input.tool_name !== "Bash" || typeof command !== "string") return undefined;
+    const hits = guardHits(command);
+    if (hits.length === 0) return undefined;
+    const deny = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
+    const open = openTask(task);
+    const building = open && workflow.store.liveBuildClaim(open.taskId);
+    const blocked = hits.find((hit) => building && GUARD_WHY[hit]);
+    if (blocked) return deny(`Blocked \`${blocked}\`: ${GUARD_WHY[blocked]} (task ${open?.name ?? open?.taskId}).`);
+    const spendHit = hits.find((hit) => hit === "shepherd run" || hit === "hc run");
+    if (spendHit) {
+      const budget = budgetOf(session, task);
+      if (budget.status === "hard") return deny(`Budget exhausted: ${budget.text}. Not starting more agent work (${spendHit === "hc run" ? "hc run" : "shepherd build/review/fix"}). Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.`);
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
+/** The idle-cache warning as a block reason, or undefined to let the prompt through (see AGENTS.md). */
+function idleBlock(session: Session, sessionId: string | undefined, prompt: string): string | undefined {
+  const { config, shepherd, now } = session;
+  const { idleWarnMinutes, idleWarnTokens } = config.budgets;
+  if (!sessionId || idleWarnMinutes <= 0 || idleWarnTokens <= 0) return undefined;
+  const note = readJson<Partial<SessionNote>>(sessionFile(shepherd, sessionId));
+  const ended = note?.lastTurnEnd ? Date.parse(note.lastTurnEnd) : NaN;
+  if (!note || !Number.isFinite(ended) || typeof note.contextTokens !== "number") return undefined;
+  const at = now();
+  const idleMs = at.getTime() - ended;
+  if (idleMs < idleWarnMinutes * 60_000 || note.contextTokens < idleWarnTokens) return undefined;
+  const pendingFile = sessionFile(shepherd, sessionId, ".pending");
+  const hash = createHash("sha256").update(prompt).digest("hex");
+  const pending = readJson<{ hash?: string; at?: string }>(pendingFile);
+  if (pending?.hash === hash && at.getTime() - Date.parse(pending.at ?? "") < PENDING_MS) {
+    removeFile(pendingFile);
+    return undefined;
+  }
+  writeJson(pendingFile, { hash, at: at.toISOString() });
+  const row = note.model ? priceFor(config.pricing, "anthropic", note.model, at) : undefined;
+  const rate = row ? (row.cacheWritePerMillionUsd ?? row.inputPerMillionUsd) : undefined;
+  const cost = rate === undefined ? "" : ` (≈$${((note.contextTokens * rate) / 1_000_000).toFixed(2)} at ${note.model} rates)`;
+  return `This chat holds ${formatTokens(note.contextTokens)} tokens and has been idle ${formatIdle(idleMs)}, so the prompt cache has probably expired: sending re-sends the whole context${cost}. Send the same message again within 2 minutes to send anyway, or run /clear to start fresh; your shepherd task resumes from the branch.`;
+}
+
+async function hookCommand(kind: string | undefined, io: CliIo, options: CliOptions): Promise<number> {
+  try {
+    if (kind !== "stop" && kind !== "prompt" && kind !== "pretool") {
+      io.err(`shepherd hook: unknown hook ${JSON.stringify(kind ?? "")}.\n`);
+      return 0;
+    }
+    let input: HookInput;
+    try {
+      input = JSON.parse(options.stdin ?? "") as HookInput;
+    } catch {
+      return 0;
+    }
+    if (!input || typeof input !== "object") return 0;
+    const opened = await open(input.cwd || options.cwd || process.cwd(), options);
+    if ("problem" in opened) return 0;
+    const output = await runHook(kind, input, opened.session);
+    if (output) io.out(`${JSON.stringify(output)}\n`);
+  } catch (error) {
+    io.err(`shepherd hook ${kind ?? ""}: ${(error instanceof Error ? error.message : String(error)).split("\n")[0]}\n`);
+  }
+  return 0;
+}
+
+/** The workspace is shepherd's state, never the user's code: it ignores itself, so hooks never leave untracked files. */
+function ignoreWorkspace(workspace: string): void {
+  const file = path.join(workspace, ".gitignore");
+  if (existsSync(file)) return;
+  mkdirSync(workspace, { recursive: true });
+  writeFileSync(file, "*\n");
+}
+
+export async function main(argv: string[], io: CliIo = defaultIo, options: CliOptions = {}): Promise<number> {
+  const [command, ...rest] = argv;
+  if (command === "version" && rest.length === 0) {
+    io.out(`${packageVersion()}\n`);
     return 0;
   }
-  process.stderr.write(USAGE);
+  if (command === "cost") return costCommand(rest, io, options);
+  if (command === "status") return statusCommand(io, options);
+  if (command === "hook") return hookCommand(rest[0], io, options);
+  io.err(USAGE);
   return 2;
 }
 
@@ -44,4 +379,20 @@ function isEntry(): boolean {
   }
 }
 
-if (isEntry()) process.exitCode = main(process.argv.slice(2));
+async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+if (isEntry()) {
+  const argv = process.argv.slice(2);
+  readStdinFor(argv)
+    .then((stdin) => main(argv, defaultIo, { stdin }))
+    .then((code) => void (process.exitCode = code), () => void (process.exitCode = argv[0] === "hook" ? 0 : 1));
+}
+
+function readStdinFor(argv: string[]): Promise<string> {
+  return argv[0] === "hook" ? readStdin() : Promise.resolve("");
+}

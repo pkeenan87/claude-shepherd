@@ -79,7 +79,7 @@ function piProgram(ctx: WorkflowContext, model: Extract<TicketModel, { kind: "pi
 function agentProgram(ctx: WorkflowContext, model: Extract<TicketModel, { kind: "agent" }>, input: FixInput): Program {
   // Before the tab opens, so everything the agent writes after is new.
   // Advancing the task's agent-log watermark keeps the sweep from counting this tab again as "outside chef".
-  const meter = createAgentMeter(model.name, { cwd: ctx.git.repoRoot, home: input.home, onConsumed: input.taskId !== SESSION_TASK_ID ? (file, offset) => ctx.store.advanceAgentLog(input.taskId, file, offset) : undefined });
+  const meter = createAgentMeter(model.name, { cwd: ctx.git.repoRoot, home: input.home, onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset).catch(() => undefined) });
   return {
     argv: agentCommand(model, ctx.config),
     collect: () => {

@@ -27,19 +27,19 @@ async function setup() {
   ctx.progress = (text) => void progress.push(text);
   const rows = () => ctx.store.readLedger().filter((entry) => entry.reason === "outside chef");
   const tokens = () => rows().reduce((sum, entry) => sum + (entry.inputTokens ?? 0) + (entry.outputTokens ?? 0), 0);
-  return { app, ctx, task, home, project, file: path.join(project, "s1.jsonl"), progress, rows, tokens, sweep: () => sweepAgentLogs(ctx, task.taskId, home) };
+  return { app, ctx, task, home, project, file: path.join(project, "s1.jsonl"), progress, rows, tokens, sweep: () => sweepAgentLogs(ctx, { home }) };
 }
 
 describe("outside-chef sweep, Claude Code", () => {
   it("initialises on the first sweep without ledgering, then counts new lines once", async () => {
     const t = await setup();
     writeFileSync(t.file, claudeLine("old", use(1000, 1000), BEFORE));
-    expect(t.sweep()).toBeUndefined();
+    expect((await t.sweep()).line).toBeUndefined();
     expect(t.rows()).toHaveLength(0);
-    expect(t.ctx.store.readAgentWatermark(t.task.taskId)?.files[t.file]?.offset).toBeGreaterThan(0);
+    expect(t.ctx.store.readAgentWatermark()?.files[t.file]?.offset).toBeGreaterThan(0);
 
     appendFileSync(t.file, claudeLine("m1", use(100, 10)));
-    const line = t.sweep();
+    const line = (await t.sweep()).line;
     expect(line).toContain("Claude Code");
     expect(line).toContain("outside chef");
     expect(t.progress).toEqual([line]);
@@ -47,65 +47,65 @@ describe("outside-chef sweep, Claude Code", () => {
     expect(t.rows()[0]).toMatchObject({ meter: "agent-log", tier: "agent", provider: "anthropic", model: "claude-sonnet" });
     expect(t.tokens()).toBe(110);
 
-    expect(t.sweep()).toBeUndefined();
+    expect((await t.sweep()).line).toBeUndefined();
     expect(t.tokens()).toBe(110);
   });
 
   it("counts a message id repeated across the boundary once, and a half-written line only when it is whole", async () => {
     const t = await setup();
     writeFileSync(t.file, "");
-    t.sweep();
+    await t.sweep();
     appendFileSync(t.file, claudeLine("m1", use(100, 10)));
-    t.sweep();
+    await t.sweep();
     appendFileSync(t.file, claudeLine("m1", use(100, 10)) + claudeLine("m2", use(5, 5)));
     const whole = claudeLine("m3", use(7, 7));
     appendFileSync(t.file, whole.slice(0, 30));
-    t.sweep();
+    await t.sweep();
     expect(t.tokens()).toBe(110 + 10);
     appendFileSync(t.file, whole.slice(30));
-    t.sweep();
+    await t.sweep();
     expect(t.tokens()).toBe(110 + 10 + 14);
   });
 
   it("counts a file that appears after the first sweep, but only the lines stamped since it began", async () => {
     const t = await setup();
-    t.sweep();
+    await t.sweep();
     const later = path.join(t.project, "s2.jsonl");
     writeFileSync(later, claudeLine("a", use(1000, 1000), BEFORE) + claudeLine("b", use(20, 2)));
-    t.sweep();
+    await t.sweep();
     expect(t.tokens()).toBe(22);
   });
 
   it("does not double count what a ticket meter ledgered", async () => {
     const t = await setup();
     writeFileSync(t.file, claudeLine("old", use(1000, 1000), BEFORE));
-    t.sweep();
-    const meter = createAgentMeter("claude", { cwd: t.ctx.git.repoRoot, home: t.home, onConsumed: (file, offset) => t.ctx.store.advanceAgentLog(t.task.taskId, file, offset) })!;
+    await t.sweep();
+    const meter = createAgentMeter("claude", { cwd: t.ctx.git.repoRoot, home: t.home, onConsumed: (file, offset) => void t.ctx.store.advanceAgentLog(file, offset) })!;
     appendFileSync(t.file, claudeLine("ticket", use(300, 30)));
     expect(meter.collect()).toHaveLength(1);
-    t.sweep();
+    await t.sweep();
     expect(t.rows()).toHaveLength(0);
     appendFileSync(t.file, claudeLine("outside", use(4, 4)));
-    t.sweep();
+    await t.sweep();
     expect(t.tokens()).toBe(8);
   });
 
   it("is skipped while a live build holds the task, and counts the rest afterwards", async () => {
     const t = await setup();
-    t.sweep();
+    await t.sweep();
     appendFileSync(t.file, claudeLine("m1", use(50, 5)));
     expect(t.ctx.store.claimBuild(t.task.taskId, t.ctx.git.repoRoot, BEFORE)).toBeUndefined();
-    expect(t.sweep()).toBeUndefined();
+    expect((await t.sweep()).line).toBeUndefined();
     expect(t.rows()).toHaveLength(0);
     t.ctx.store.releaseBuild(t.task.taskId);
-    t.sweep();
+    await t.sweep();
     expect(t.tokens()).toBe(55);
   });
 
   it("is no usage when the log directory is missing", async () => {
     const t = await setup();
-    expect(sweepAgentLogs(t.ctx, t.task.taskId, path.join(t.home, "nowhere"))).toBeUndefined();
-    expect(sweepAgentLogs(t.ctx, t.task.taskId, path.join(t.home, "nowhere"))).toBeUndefined();
+    expect((await sweepAgentLogs(t.ctx, { home: path.join(t.home, "nowhere") })).line).toBeUndefined();
+    expect((await sweepAgentLogs(t.ctx, { home: path.join(t.home, "nowhere") })).line).toBeUndefined();
   });
 });
 
@@ -118,17 +118,17 @@ describe("outside-chef sweep, Codex", () => {
     const other = path.join(day, "rollout-b.jsonl");
     writeFileSync(mine, codexMeta(t.ctx.git.repoRoot) + model + codexTotal(500, 50, BEFORE));
     writeFileSync(other, codexMeta("/elsewhere") + model + codexTotal(500, 50, BEFORE));
-    t.sweep();
+    await t.sweep();
     appendFileSync(mine, codexTotal(600, 70));
     appendFileSync(other, codexTotal(900, 90));
-    t.sweep();
+    await t.sweep();
     expect(t.rows()).toHaveLength(1);
     expect(t.rows()[0]).toMatchObject({ provider: "openai", model: "gpt-5.4" });
     expect(t.tokens()).toBe(120);
     appendFileSync(mine, codexTotal(650, 75));
-    t.sweep();
+    await t.sweep();
     expect(t.tokens()).toBe(120 + 55);
-    t.sweep();
+    await t.sweep();
     expect(t.tokens()).toBe(175);
   });
 });
@@ -145,7 +145,7 @@ describe("triggers", () => {
     const file = path.join(project, "s1.jsonl");
     writeFileSync(file, claudeLine("old", use(1000, 1000), BEFORE));
     expect((await app.cost()).ok).toBe(true);
-    expect(ctx.store.readAgentWatermark(task.taskId)).toBeDefined();
+    expect(ctx.store.readAgentWatermark()).toBeDefined();
     appendFileSync(file, claudeLine("m1", use(100, 10)));
     const result = await app.cost();
     expect(result.text).toContain("outside chef");

@@ -317,8 +317,8 @@ function processAlive(pid: number): boolean {
 }
 
 /**
- * Where shepherd has read the external agents' logs for a task: usage in a log file before `offset` is already ledgered
- * (by a ticket meter or a sweep), and usage stamped before `since` is not this task's.
+ * Where shepherd has read the external agents' logs in a repo: usage in a log file before `offset` is already ledgered
+ * (by a ticket meter or a sweep), and usage stamped before `since` is not counted.
  */
 export interface AgentWatermark {
   since: string;
@@ -398,10 +398,19 @@ export class TaskStore {
     return held && processAlive(held.pid) ? held : undefined;
   }
 
-  /** The task's agent-log watermark (`agent-logs.json`), or undefined before the first sweep or when unreadable. */
-  readAgentWatermark(taskId: string): AgentWatermark | undefined {
+  private watermarkPath(): string {
+    return path.join(this.root, "agent-logs.json");
+  }
+
+  /** Held while the watermark is read, changed and written back: hooks of several sessions can run at once. */
+  withWatermarkLock<T>(fn: () => Promise<T> | T): Promise<T> {
+    return withLock(path.join(this.root, "agent-logs.lock"), fn);
+  }
+
+  /** The repo's agent-log watermark (`agent-logs.json`), or undefined before the first sweep or when unreadable. */
+  readAgentWatermark(): AgentWatermark | undefined {
     try {
-      const parsed = JSON.parse(readFileSync(path.join(this.taskDir(taskId), "agent-logs.json"), "utf8")) as Partial<AgentWatermark>;
+      const parsed = JSON.parse(readFileSync(this.watermarkPath(), "utf8")) as Partial<AgentWatermark>;
       if (typeof parsed.since !== "string" || !parsed.files || typeof parsed.files !== "object") return undefined;
       const files: AgentWatermark["files"] = {};
       for (const [file, entry] of Object.entries(parsed.files)) if (typeof entry?.offset === "number" && entry.offset >= 0) files[file] = { offset: entry.offset };
@@ -411,16 +420,19 @@ export class TaskStore {
     }
   }
 
-  writeAgentWatermark(taskId: string, mark: AgentWatermark): void {
-    atomicWrite(path.join(this.taskDir(taskId), "agent-logs.json"), JSON.stringify(mark, null, 2));
+  /** Writes the watermark. A caller that read it first holds `withWatermarkLock` around both. */
+  writeAgentWatermark(mark: AgentWatermark): void {
+    atomicWrite(this.watermarkPath(), JSON.stringify(mark, null, 2));
   }
 
-  /** Moves a file's offset forward (a ticket meter has consumed it). Does nothing before the watermark exists. */
-  advanceAgentLog(taskId: string, file: string, offset: number): void {
-    const mark = this.readAgentWatermark(taskId);
-    if (!mark || (mark.files[file]?.offset ?? -1) >= offset) return;
-    mark.files[file] = { offset };
-    this.writeAgentWatermark(taskId, mark);
+  /** Moves a file's offset forward (a ticket meter has consumed it), under the lock. Does nothing before the watermark exists. */
+  advanceAgentLog(file: string, offset: number): Promise<void> {
+    return this.withWatermarkLock(() => {
+      const mark = this.readAgentWatermark();
+      if (!mark || (mark.files[file]?.offset ?? -1) >= offset) return;
+      mark.files[file] = { offset };
+      this.writeAgentWatermark(mark);
+    });
   }
 
   /** No active task (the file stays, with no id). */
