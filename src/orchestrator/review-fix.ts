@@ -12,6 +12,7 @@
 import path from "node:path";
 import { modelText, type TicketModel } from "../agents.js";
 import { registryProblem } from "../providers/usable.js";
+import { NO_PI } from "../runner/pi-path.js";
 import { redact } from "../redact.js";
 import { messageOf, openTab, tabName, type Tab } from "../runner/tab.js";
 import { herdrSpace } from "../runner/ticket.js";
@@ -35,10 +36,14 @@ export interface FixInput {
   home?: string;
 }
 
-function fixPiProgram(ctx: WorkflowContext, model: Extract<TicketModel, { kind: "pi" }>, at: number): Program | { refused: string } {
-  const problem = ctx.registry ? registryProblem(ctx.registry, model.provider, model.id) : `model ${model.id} cannot be checked: this Pi session has no model registry`;
+/**
+ * A Pi model as a `pi` child. Inside Pi the live registry says whether it knows the model and holds a login; outside it
+ * (the CLI) the only check is that a `pi` is on PATH (`ctx.piAvailable`), and the child reports the rest.
+ */
+function fixPiProgram(ctx: WorkflowContext, model: Extract<TicketModel, { kind: "pi" }>, input: FixInput, at: number): Program | { refused: string } {
+  const problem = ctx.registry ? registryProblem(ctx.registry, model.provider, model.id) : ctx.piAvailable && !ctx.piAvailable() ? NO_PI : undefined;
   if (problem) return { refused: `${model.provider}/${model.id}: ${problem}. Change models.medium or sign in` };
-  return piProgram(ctx, model, { sessionDir: path.join(ctx.store.root, "sessions", `review-fix-${at}`), label: "review-fix", job: FIX_REASON, tier: "medium" });
+  return piProgram(ctx, model, { sessionDir: path.join(ctx.store.root, "sessions", `review-fix-${at}`), label: "review-fix", job: FIX_REASON, tier: "medium", phase: "REVIEWING", taskId: input.taskId });
 }
 
 function fixAgentProgram(ctx: WorkflowContext, model: Extract<TicketModel, { kind: "agent" }>, input: FixInput): Program {
@@ -53,10 +58,10 @@ export async function runFixInTab(ctx: WorkflowContext, input: FixInput): Promis
   let tab: Tab | undefined;
   try {
     const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
-    if ("problem" in where) return { ok: false, text: `Fixing in a tab needs herdr: start Pi inside herdr (${where.problem}).` };
-    if (model.kind === "pi" && !ctx.ticketModePath) return { ok: false, text: `Cannot fix on ${label}: this Pi session does not know where the ticket-mode extension is.` };
+    if ("problem" in where) return { ok: false, text: `Fixing in a tab needs herdr: run from a terminal inside herdr (${where.problem}).` };
+    if (model.kind === "pi" && !ctx.ticketModePath) return { ok: false, text: `Cannot fix on ${label}: this install does not know where the ticket-mode extension is.` };
     const at = ctx.now().getTime();
-    const program = model.kind === "agent" ? fixAgentProgram(ctx, model, input) : fixPiProgram(ctx, model, at);
+    const program = model.kind === "agent" ? fixAgentProgram(ctx, model, input) : fixPiProgram(ctx, model, input, at);
     if ("refused" in program) return { ok: false, text: `Cannot fix on ${program.refused}.` };
     const name = tabName(input.taskName, "fix", 1, at);
     const headBefore = await ctx.git.head().catch(() => undefined);

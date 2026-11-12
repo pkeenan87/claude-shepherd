@@ -5,7 +5,7 @@ import { GitWorkspace } from "../git/workspace.js";
 import { TaskStore } from "../storage/store.js";
 import { buildReport, finishChunk, nextChunk, peekNextTicket, startBuild, unstartChunk } from "./build.js";
 import { budgetState, checkBudget, observeUsage, recordAgentUsage, recordPiUsage, recordWebSearch } from "./budget.js";
-import { active, fail, type WorkflowContext } from "./context.js";
+import { active, fail, guard, type WorkflowContext } from "./context.js";
 import { ledgerChildSession, sweepTicketSessions } from "../herdr/session-file.js";
 import { activeTask, displayName, stateText } from "./tasks.js";
 import { isSessionLog, sweepAgentLogs, type SweepOptions } from "./agent-sweep.js";
@@ -16,6 +16,7 @@ import { presentPendingPlan } from "./present-plan.js";
 import { plans, taskNames } from "./plans.js";
 import { approveDraft, showPlan } from "./planning.js";
 import { review } from "./review.js";
+import { fixList, fixLatestInTab, fixModel, latestReview } from "./review-latest.js";
 import { cost } from "./reports.js";
 import type { WorkflowBinding, WorkflowOptions } from "./types.js";
 
@@ -279,6 +280,26 @@ export class Workflow {
     return review(this.ctx, args);
   }
 
+  /** The latest saved review report and where it is on disk; undefined before any review. */
+  latestReview() {
+    return latestReview(this.ctx);
+  }
+
+  /** `models.medium` when "Fix all in a tab" can run here, else why not. */
+  fixModel() {
+    return fixModel(this.ctx);
+  }
+
+  /** `shepherd fix --tab`: the latest report's findings fixed by `models.medium` in a herdr sub-agent. Never commits. */
+  fixInTab(): Promise<CommandResult> {
+    return guard(() => fixLatestInTab(this.ctx));
+  }
+
+  /** `shepherd fix --list`: the findings and rules as text, for fixing in the chat. */
+  fixList(): Promise<CommandResult> {
+    return guard(() => fixList(this.ctx));
+  }
+
 
   cost(format = ""): Promise<CommandResult> {
     return cost(this.ctx, format);
@@ -316,8 +337,8 @@ export class Workflow {
   }
 
   /** A ticket meter has read an agent log to `offset`: the repo's watermark moves there so the sweep skips it (asynchronous: the watermark lock orders it before any later sweep in this process). */
-  advanceAgentLog(file: string, offset: number): void {
-    this.store.advanceAgentLog(file, offset).catch(() => undefined);
+  advanceAgentLog(file: string, offset: number, owner?: string): void {
+    this.store.advanceAgentLog(file, offset, owner).catch(() => undefined);
   }
 
   /** Ledgers the calls Pi made on its own (cache warming, its own compaction and branch summaries) from the session file. */

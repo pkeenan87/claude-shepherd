@@ -405,11 +405,14 @@ describe("ticketModePath", () => {
 
   it("finds src/ticket-mode.ts from the bundle (dist/shepherd.mjs), the compiled build and the source", () => {
     const expected = path.join(root, "src", "ticket-mode.ts");
-    expect(ticketModePath(path.join(root, "dist", "shepherd.mjs"))).toBe(expected);
-    expect(ticketModePath(new URL(`file://${path.join(root, "dist", "shepherd.mjs")}`))).toBe(expected);
-    expect(ticketModePath(path.join(root, "build", "cli", "build-host.js"))).toBe(expected);
-    expect(ticketModePath(path.join(root, "src", "cli", "build-host.ts"))).toBe(expected);
-    expect(ticketModePath()).toBe(expected);
+    // A source checkout has no dist/ticket-mode.mjs here (see the next test); this is the fallback.
+    const bundled = path.join(root, "dist", "ticket-mode.mjs");
+    const want = existsSync(bundled) ? bundled : expected;
+    expect(ticketModePath(path.join(root, "dist", "shepherd.mjs"))).toBe(want);
+    expect(ticketModePath(new URL(`file://${path.join(root, "dist", "shepherd.mjs")}`))).toBe(want);
+    expect(ticketModePath(path.join(root, "build", "cli", "build-host.js"))).toBe(want);
+    expect(ticketModePath(path.join(root, "src", "cli", "build-host.ts"))).toBe(want);
+    expect(ticketModePath()).toBe(want);
     expect(existsSync(expected)).toBe(true);
   });
 
@@ -419,5 +422,19 @@ describe("ticketModePath", () => {
     mkdirSync(path.join(plugin, "dist"));
     writeFileSync(path.join(plugin, "src", "ticket-mode.ts"), "export default () => {};\n");
     expect(ticketModePath(path.join(plugin, "dist", "shepherd.mjs"))).toBe(path.join(plugin, "src", "ticket-mode.ts"));
+  });
+});
+
+describe("ticketModePath prefers the Pi worker bundle", () => {
+  it("returns <plugin>/dist/ticket-mode.mjs when it exists, from the bundle or the compiled build, else src/ticket-mode.ts", () => {
+    const plugin = mkdtempSync(path.join(tmpdir(), "plugin-bundle-"));
+    mkdirSync(path.join(plugin, "src"));
+    mkdirSync(path.join(plugin, "dist"));
+    mkdirSync(path.join(plugin, "build", "cli"), { recursive: true });
+    writeFileSync(path.join(plugin, "src", "ticket-mode.ts"), "export default () => {};\n");
+    writeFileSync(path.join(plugin, "dist", "ticket-mode.mjs"), "export default () => {};\n");
+    const bundle = path.join(plugin, "dist", "ticket-mode.mjs");
+    expect(ticketModePath(path.join(plugin, "dist", "shepherd.mjs"))).toBe(bundle);
+    expect(ticketModePath(path.join(plugin, "build", "cli", "build-host.js"))).toBe(bundle);
   });
 });

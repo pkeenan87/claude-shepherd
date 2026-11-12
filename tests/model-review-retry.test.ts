@@ -234,6 +234,6 @@ describe("/review model pass routing", () => {
     const result = await app.review();
     expect(result.ok).toBe(true);
     expect(models).toEqual([]);
-    expect(reports.join("\n")).toContain("agent:claude/opus reviews in a herdr tab; start Pi inside herdr");
+    expect(reports.join("\n")).toContain("the model pass needs herdr: agent:claude/opus reviews in a herdr sub-agent; run from a terminal inside herdr");
   });
 });

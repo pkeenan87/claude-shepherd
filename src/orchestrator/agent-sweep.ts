@@ -24,7 +24,8 @@ const AGENTS = [
   { reader: "codex", name: "Codex" },
 ] as const;
 
-export type SweepReason = "session" | "session subagent" | "outside chef";
+/** "session", "session subagent", "outside chef", or the job that owns the log (an agent tab's late lines). */
+export type SweepReason = string;
 
 export interface SweepOptions {
   /** Replaces the home directory the logs are looked for under (tests). */
@@ -122,9 +123,10 @@ export async function sweepAgentLogs(ctx: WorkflowContext, options: SweepOptions
           if (known && size <= known.offset) continue;
           const read = readAgentLog(reader, file, { offset: known?.offset ?? 0, since: mark.since, repos });
           if (!read) continue;
-          const reason = reasonOf(file);
+          const labelled = reasonOf(file);
+          const reason = labelled === "outside chef" && known?.owner ? known.owner : labelled;
           byReason.set(reason, [...(byReason.get(reason) ?? []), ...meteredEntries(reader, read.calls)]);
-          mark.files[file] = { offset: read.end };
+          mark.files[file] = { offset: read.end, ...(known?.owner ? { owner: known.owner } : {}) };
         }
         for (const [reason, entries] of byReason) {
           if (entries.length === 0) continue;

@@ -28,7 +28,7 @@ export const BUILD_USAGE = "Usage: shepherd build [--once] [--json]";
 export type OpenSession = (extras: Partial<WorkflowOptions>) => Promise<{ workflow: Workflow; root: string; config: WorkflowConfig } | { problem: string }>;
 
 /** Wraps a client to remember which tabs this build opened and has not closed, so a signal can close them. */
-function tracked(inner: HerdrClient): { client: HerdrClient; open: Set<string> } {
+export function tracked(inner: HerdrClient): { client: HerdrClient; open: Set<string> } {
   const open = new Set<string>();
   const client: HerdrClient = {
     ...inner,
@@ -50,13 +50,13 @@ function tracked(inner: HerdrClient): { client: HerdrClient; open: Set<string> }
 }
 
 /** The result's text in the CLI's words (`/build` is `/shepherd:build`, `/review` is `/shepherd:review`). */
-function words(text: string): string {
+export function words(text: string): string {
   return cliText(text)
     .replace(/start Pi inside herdr and run \/shepherd:build again/g, "run shepherd from a terminal inside herdr (HC_TERMINAL_ID set, `hc` working) and run /shepherd:build again")
     .replace(/Another Pi session/g, "Another shepherd build")
     .replace(/or answer yes when \/shepherd:build asks, so they don't land in ticket 01's commit\./g, "so they don't land in ticket 01's commit.")
     .replace(/Run \/review/g, "Run /shepherd:review")
-    .replace(/\/review/g, "/shepherd:review");
+    .replace(/(?<![\w.])\/review\b/g, "/shepherd:review");
 }
 
 export async function buildCommand(rest: string[], io: CliIo, options: CliOptions, open: OpenSession): Promise<number> {
