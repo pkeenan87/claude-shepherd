@@ -39,7 +39,7 @@
 ## replaces the built-in command, flags included (docs/configuration.md lists the defaults).
 
 # agents:
-#   claude: { run: [claude, --permission-mode, acceptEdits], modelFlag: --model }   # the built-in default, written out
+#   claude: { run: [claude, --permission-mode, auto], modelFlag: --model }   # the built-in default, written out
 
 ## ---------------------------------------------------------------------------------------------------------------
 ## Budgets: hard stops on spend, in USD. A prompt, ticket or review call does not start at the limit.

@@ -19,6 +19,7 @@
  *
  * Never throws: any failure is a `{ stopped }`, which `runBuild` handles like the Pi runner's.
  */
+import { TRUST_PROMPTS } from "../agents.js";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import type { ChunkSession } from "../orchestrator/build.js";
@@ -91,6 +92,7 @@ export async function runAgentTicket(input: AgentTicketInput, run: (session: Chu
         ...input,
         name,
         labels: { "shepherd.ticket": ticketId },
+        ...(TRUST_PROMPTS[input.agent.name] ? { trust: TRUST_PROMPTS[input.agent.name] } : {}),
         progress: host.progress,
         blockedNotice: `Ticket ${ticketId} is waiting for you in herdr sub-agent ${name} (agents list)`,
       });

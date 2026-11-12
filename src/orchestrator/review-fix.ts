@@ -69,6 +69,7 @@ export async function runFixInTab(ctx: WorkflowContext, input: FixInput): Promis
       ...(where.space ? { space: where.space } : {}),
       cwd: ctx.git.repoRoot,
       argv: program.argv,
+      ...(program.trust ? { trust: program.trust } : {}),
       name,
       labels: { "shepherd.review-fix": name },
       progress,

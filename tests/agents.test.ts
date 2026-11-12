@@ -59,18 +59,18 @@ describe("parseTicketModel", () => {
 
 describe("agentCommand", () => {
   it("is the run argv with the model flag and model appended", () => {
-    expect(agentCommand({ kind: "agent", name: "claude" })).toEqual(["claude", "--permission-mode", "acceptEdits"]);
-    expect(agentCommand({ kind: "agent", name: "claude", model: "opus" })).toEqual(["claude", "--permission-mode", "acceptEdits", "--model", "opus"]);
-    expect(agentCommand({ kind: "agent", name: "codex", model: "gpt-5" })).toEqual(["codex", "--no-daemon", "-s", "workspace-write", "-a", "on-request", "-m", "gpt-5"]);
-    expect(agentCommand({ kind: "agent", name: "cursor-agent", model: "auto" })).toEqual(["cursor-agent", "--auto-review", "--model", "auto"]);
-    expect(agentCommand({ kind: "agent", name: "grok", model: "g" })).toEqual(["grok", "--permission-mode", "acceptEdits", "-m", "g"]);
-    expect(agentCommand({ kind: "agent", name: "agy", model: "g" })).toEqual(["agy", "--mode", "accept-edits", "--model", "g"]);
+    expect(agentCommand({ kind: "agent", name: "claude" })).toEqual(["claude", "--permission-mode", "auto"]);
+    expect(agentCommand({ kind: "agent", name: "claude", model: "opus" })).toEqual(["claude", "--permission-mode", "auto", "--model", "opus"]);
+    expect(agentCommand({ kind: "agent", name: "codex", model: "gpt-5" })).toEqual(["codex", "--no-daemon", "--approve-for-me", "-m", "gpt-5"]);
+    expect(agentCommand({ kind: "agent", name: "cursor-agent", model: "auto" })).toEqual(["cursor-agent", "--auto-review", "--trust", "--model", "auto"]);
+    expect(agentCommand({ kind: "agent", name: "grok", model: "g" })).toEqual(["grok", "--permission-mode", "auto", "-m", "g"]);
+    expect(agentCommand({ kind: "agent", name: "agy", model: "g" })).toEqual(["agy", "--mode", "auto", "--model", "g"]);
     expect(agentCommand({ kind: "agent", name: "gemini", model: "g" })).toEqual(["gemini", "--approval-mode", "auto_edit", "-m", "g"]);
     expect(agentCommand({ kind: "agent", name: "opencode", model: "p/m" })).toEqual(["opencode", "--model", "p/m"]);
   });
 
-  it("never defaults to a flag that skips every permission check", () => {
-    const skipAll = /yolo|dangerously|bypass|--force|always-approve|^--auto$|approve-for-me|full-access/i;
+  it("never defaults to a flag that skips every permission check (auto modes route approvals to a classifier instead)", () => {
+    const skipAll = /yolo|dangerously|bypass|--force|always-approve|^--auto$|full-access/i;
     for (const [name, def] of Object.entries(BUILTIN_AGENTS)) {
       expect(def.run.filter((arg) => skipAll.test(arg)), name).toEqual([]);
     }
@@ -85,7 +85,7 @@ describe("agentCommand", () => {
 
   it("does not change the built-ins when overridden, and rejects unknown agents and flagless models", () => {
     agentTable({ agents: { claude: { run: ["x"] } } });
-    expect(BUILTIN_AGENTS.claude).toEqual({ run: ["claude", "--permission-mode", "acceptEdits"], modelFlag: "--model" });
+    expect(BUILTIN_AGENTS.claude).toEqual({ run: ["claude", "--permission-mode", "auto"], modelFlag: "--model" });
     expect(() => agentCommand({ kind: "agent", name: "nope" })).toThrow(/Unknown agent/);
     expect(() => agentCommand({ kind: "agent", name: "mine", model: "x" }, { agents: { mine: { run: ["m"] } } })).toThrow(/no modelFlag/);
   });
@@ -117,7 +117,7 @@ describe("a model with a bracket suffix (Cursor's router)", () => {
 
   it("is passed to the agent as one argv element, not split or shell-quoted", () => {
     const argv = agentCommand({ kind: "agent", name: "cursor-agent", model: smart });
-    expect(argv).toEqual(["cursor-agent", "--auto-review", "--model", smart]);
-    expect(agentCommand({ kind: "agent", name: "cursor-agent", model: "auto" })).toEqual(["cursor-agent", "--auto-review", "--model", "auto"]);
+    expect(argv).toEqual(["cursor-agent", "--auto-review", "--trust", "--model", smart]);
+    expect(agentCommand({ kind: "agent", name: "cursor-agent", model: "auto" })).toEqual(["cursor-agent", "--auto-review", "--trust", "--model", "auto"]);
   });
 });
