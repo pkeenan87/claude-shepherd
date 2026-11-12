@@ -1,0 +1,18 @@
+# Project config for the shepherd workflow: what is true of this repo, shared with everyone who works on it.
+# Your own settings (models, a local server, pricing, budgets) go in ~/.claude/shepherd.yaml; see
+# templates/shepherd.yaml. A section set here replaces your whole section; local, agents, pricing and workspaceDir
+# are read from your user file only. No secrets belong in this file.
+
+# The commands that verify work: run by /review, and by /build for a ticket with no checks of its own.
+# One command per entry, no shell. Examples:
+# checks:
+#   - { name: typecheck, command: npm, args: [run, typecheck] }
+#   - { name: test, command: npm, args: [test] }
+checks: []
+
+# Runs once per build before the first checks, and before every /review's checks (an install, for example).
+# setup:
+#   - { name: install, command: npm, args: [ci] }
+setup: []
+
+branchPrefix: shepherd

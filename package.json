@@ -1,0 +1,55 @@
+{
+  "name": "claude-shepherd",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code plugin: plan, build and review with a model per ticket, herdr sub-agents and cost controls",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pkeenan87/claude-shepherd.git"
+  },
+  "homepage": "https://github.com/pkeenan87/claude-shepherd",
+  "bugs": {
+    "url": "https://github.com/pkeenan87/claude-shepherd/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "shepherd": "./bin/shepherd",
+    "chef-config": "./bin/chef-config.mjs"
+  },
+  "files": [
+    "dist/shepherd.mjs",
+    "src",
+    "bin",
+    "templates",
+    "docs"
+  ],
+  "main": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "import": "./build/index.js"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "build": "tsc -p tsconfig.json",
+    "herdr:install": "npm run build && node scripts/herdr-install.mjs",
+    "bundle": "esbuild src/cli/shepherd.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/shepherd.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\""
+  },
+  "dependencies": {
+    "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.2.0",
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@types/node": "^24.3.0",
+    "esbuild": "0.25.12",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
+  }
+}
