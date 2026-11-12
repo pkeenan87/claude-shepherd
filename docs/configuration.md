@@ -58,7 +58,7 @@ Names are letters, digits, `-` and `_`, starting with a letter. Built in (from `
 
 | Agent | Default `run` | `modelFlag` |
 |---|---|---|
-| `claude` | `claude --permission-mode acceptEdits` | `--model` |
+| `claude` | `claude --permission-mode auto` | `--model` |
 | `codex` | `codex --no-daemon -s workspace-write -a on-request` | `-m` |
 | `cursor-agent` | `cursor-agent --auto-review` | `--model` |
 | `grok` | `grok --permission-mode acceptEdits` | `-m` |
@@ -66,7 +66,7 @@ Names are letters, digits, `-` and `_`, starting with a letter. Built in (from `
 | `gemini` | `gemini --approval-mode auto_edit` | `-m` |
 | `opencode` | `opencode` | `--model` |
 
-The defaults let the agent edit files but still ask for risky actions (a shell command can wait for you: the build prints which sub-agent is waiting); none uses a "skip all permissions" flag. opencode has no such mode and follows its own permission config.
+Claude Code runs in auto mode: a classifier runs safe tool calls (the ticket's checks, tests, builds) and blocks risky ones, so a ticket does not stop at its first shell command. An account without auto mode sets `agents.claude.run: [claude, --permission-mode, acceptEdits]`. The others edit files but still ask for risky actions (a shell command can wait for you: the build prints which sub-agent is waiting). None uses a "skip all permissions" flag. opencode has no such mode and follows its own permission config.
 
 **Cursor.** `agent:cursor-agent/auto` uses Cursor's `auto` model. When `cursor-agent --list-models` lists `auto-smart`, it also takes `agent:cursor-agent/auto-smart[optimize_for=cost]`, `[optimize_for=balanced]` and `[optimize_for=intelligence]`; the herdr panel offers these. Cursor is **not metered**: its runs count $0 and show as "not metered". The `auto-smart` router needs a Teams or Enterprise plan.
 

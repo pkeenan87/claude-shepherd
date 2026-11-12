@@ -7399,7 +7399,7 @@ var WorkflowError = class extends Error {
 
 // src/agents.ts
 var BUILTIN_AGENTS = {
-  claude: { run: ["claude", "--permission-mode", "acceptEdits"], modelFlag: "--model" },
+  claude: { run: ["claude", "--permission-mode", "auto"], modelFlag: "--model" },
   codex: { run: ["codex", "--no-daemon", "-s", "workspace-write", "-a", "on-request"], modelFlag: "-m" },
   "cursor-agent": { run: ["cursor-agent", "--auto-review"], modelFlag: "--model" },
   grok: { run: ["grok", "--permission-mode", "acceptEdits"], modelFlag: "-m" },

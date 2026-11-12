@@ -59,8 +59,8 @@ describe("parseTicketModel", () => {
 
 describe("agentCommand", () => {
   it("is the run argv with the model flag and model appended", () => {
-    expect(agentCommand({ kind: "agent", name: "claude" })).toEqual(["claude", "--permission-mode", "acceptEdits"]);
-    expect(agentCommand({ kind: "agent", name: "claude", model: "opus" })).toEqual(["claude", "--permission-mode", "acceptEdits", "--model", "opus"]);
+    expect(agentCommand({ kind: "agent", name: "claude" })).toEqual(["claude", "--permission-mode", "auto"]);
+    expect(agentCommand({ kind: "agent", name: "claude", model: "opus" })).toEqual(["claude", "--permission-mode", "auto", "--model", "opus"]);
     expect(agentCommand({ kind: "agent", name: "codex", model: "gpt-5" })).toEqual(["codex", "--no-daemon", "-s", "workspace-write", "-a", "on-request", "-m", "gpt-5"]);
     expect(agentCommand({ kind: "agent", name: "cursor-agent", model: "auto" })).toEqual(["cursor-agent", "--auto-review", "--model", "auto"]);
     expect(agentCommand({ kind: "agent", name: "grok", model: "g" })).toEqual(["grok", "--permission-mode", "acceptEdits", "-m", "g"]);
@@ -85,7 +85,7 @@ describe("agentCommand", () => {
 
   it("does not change the built-ins when overridden, and rejects unknown agents and flagless models", () => {
     agentTable({ agents: { claude: { run: ["x"] } } });
-    expect(BUILTIN_AGENTS.claude).toEqual({ run: ["claude", "--permission-mode", "acceptEdits"], modelFlag: "--model" });
+    expect(BUILTIN_AGENTS.claude).toEqual({ run: ["claude", "--permission-mode", "auto"], modelFlag: "--model" });
     expect(() => agentCommand({ kind: "agent", name: "nope" })).toThrow(/Unknown agent/);
     expect(() => agentCommand({ kind: "agent", name: "mine", model: "x" }, { agents: { mine: { run: ["m"] } } })).toThrow(/no modelFlag/);
   });

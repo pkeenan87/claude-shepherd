@@ -9,16 +9,18 @@ export interface AgentDef {
 /**
  * The agents shepherd knows. `agents:` in the user config overrides an entry key by key, or adds one; an override's `run`
  * replaces the whole argv, flags below included. Each default lets the agent edit files unattended but still asks for risky
- * things (shell commands, the network): the CLI's own "accept edits" mode where it has one, never a "skip all permissions"
- * flag. Chosen from each CLI's `--help` on 2026-11-08 (docs/configuration.md lists the evidence):
- * - claude `--permission-mode acceptEdits`, grok `--permission-mode acceptEdits`, agy `--mode accept-edits`,
+ * things: a classifier mode where the CLI has one, else its "accept edits" mode, never a "skip all permissions" flag.
+ * Chosen from each CLI's `--help` on 2026-11-08 (docs/configuration.md lists the evidence):
+ * - claude `--permission-mode auto` (a classifier runs safe tool calls, ticket checks included, and blocks the rest; plain
+ *   `acceptEdits` stopped every ticket at its first shell command), live-checked 2026-11-12;
+ * - grok `--permission-mode acceptEdits`, agy `--mode accept-edits`,
  *   gemini `--approval-mode auto_edit`;
  * - codex `-s workspace-write -a on-request` (its "Auto" preset: edits inside the workspace, asks to go outside it);
  * - cursor-agent `--auto-review` (a classifier auto-runs safe tool calls and prompts for the rest; `--force`/`--yolo` is not used);
  * - opencode has no such mode (`--auto` approves everything not denied), so it runs as it is and follows its own permission config.
  */
 export const BUILTIN_AGENTS: Readonly<Record<string, AgentDef>> = {
-  claude: { run: ["claude", "--permission-mode", "acceptEdits"], modelFlag: "--model" },
+  claude: { run: ["claude", "--permission-mode", "auto"], modelFlag: "--model" },
   codex: { run: ["codex", "--no-daemon", "-s", "workspace-write", "-a", "on-request"], modelFlag: "-m" },
   "cursor-agent": { run: ["cursor-agent", "--auto-review"], modelFlag: "--model" },
   grok: { run: ["grok", "--permission-mode", "acceptEdits"], modelFlag: "-m" },
