@@ -76,7 +76,7 @@ describe("the active task follows the git branch", () => {
     const t = await twoTasks();
     await git(t.cwd, "switch", "shepherd/alpha");
     expect((await activeTask(t.ctx))?.taskId).toBe(t.a.taskId);
-    const started = await workflow(t.cwd, { git: t.spy, startTurn: () => undefined }).startPlan("Wire the cache layer");
+    const started = await workflow(t.cwd, { git: t.spy }).startPlan("Wire the cache layer");
     expect(started.ok, started.text).toBe(true);
     const fresh = t.app.activeTaskId()!;
     expect(fresh).not.toBe(t.a.taskId);

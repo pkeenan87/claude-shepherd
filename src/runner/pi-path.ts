@@ -1,5 +1,5 @@
 /**
- * Pi outside Pi: a Pi-model ticket (or review) runs as `pi` in a herdr tab, so outside a Pi session the only check shepherd
+ * A Pi-model ticket (or review, or fix) runs as `pi` in a herdr sub-agent, so the only check shepherd
  * can make is that a `pi` program is on PATH. Whether Pi knows the model or holds a login for it is for the Pi child to say.
  */
 import { accessSync, constants, statSync } from "node:fs";

@@ -7,8 +7,7 @@
  * dedupe as the one-shot pass, so the findings are alike. The pass is advisory: a missing or unreadable file is an
  * unavailable model stage with a note, and the checks and static review still report.
  *
- * One turn, no chunking: the reviewer runs `git diff <sha>` itself and reads what it needs, so `review.maxChunks` and
- * `review.maxDiffChars` (which cut a diff sent through a chat call) do not apply. Metered like a ticket: an agent's log is
+ * One turn, no chunking: the reviewer runs `git diff <sha>` itself and reads what it needs. Metered like a ticket: an agent's log is
  * snapshotted before the tab opens (a Pi child's session files are read after) and its usage ledgered as "model review".
  * The tab is closed when the findings were read; a failed review leaves it open to read.
  */

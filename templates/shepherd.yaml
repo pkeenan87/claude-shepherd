@@ -10,9 +10,10 @@
 
 ## ---------------------------------------------------------------------------------------------------------------
 ## Models: which model builds the tickets of each difficulty, and which reviews. The model you chat with and that
-## plans (/plan) is whatever you pick with Pi's /model.
-## A value is provider/id (a Pi model; add :high, :low ... to set its thinking level), or agent:<name> or
-## agent:<name>/<model> for an external coding agent (claude, codex, cursor-agent, grok, agy, gemini, opencode).
+## plans (/shepherd:plan) is whatever Claude Code runs.
+## A value is agent:<name> or agent:<name>/<model> for an external coding agent (claude, codex, cursor-agent, grok,
+## agy, gemini, opencode), or provider/id for a model run by a `pi` worker (add :high, :low ... to set its thinking
+## level). Cursor's model may carry a bracket suffix; quote it: "agent:cursor-agent/auto-smart[optimize_for=balanced]".
 ## A failed ticket climbs low, then medium, then high, then stops.
 
 # models:
@@ -22,7 +23,7 @@
 #   review: anthropic/claude-opus-5-5
 
 ## ---------------------------------------------------------------------------------------------------------------
-## A local model server (llama.cpp's llama-server, Ollama), registered with Pi as provider "local". Use its models
+## A local model server (llama.cpp's llama-server, Ollama), run by a `pi` worker as provider "local". Use its models
 ## as local/<id> above. contextWindow must match what the server runs (--ctx-size, OLLAMA_CONTEXT_LENGTH): the
 ## planner keeps tickets for it to half that size. Setup: docs/providers.md.
 
@@ -64,9 +65,7 @@
 # review:
 #   tickets: true           # false: no per-ticket review in /build at all
 #   model: true             # false: /review runs the checks and the static scan only
-#   maxDiffChars: 120000    # one call's diff; a bigger diff is split by file (/review) or clipped (per ticket)
-#   maxChunks: 6            # at most this many calls of /review's model pass
-#   timeoutMs: 300000       # per call (the model pass and the per-ticket review)
+#   timeoutMs: 300000       # one per-ticket review turn (never less than 15 minutes; /review has no limit of its own)
 
 ## ---------------------------------------------------------------------------------------------------------------
 ## Pricing: USD per million tokens. A model with no row has an unknown cost (a local model is $0).

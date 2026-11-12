@@ -4,11 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import type { PlanReviewRequest } from "../src/orchestrator/types.js";
 import { claudeProjectSlug } from "../src/runner/agent-usage.js";
 import { sweepAgentLogs } from "../src/orchestrator/agent-sweep.js";
 import { fakeHerdrClient, type FakeHerdrClientOptions, type FakeTab } from "./herdr-fake.js";
-import { addTask, contextOf, permissiveRegistry, tempRepo, tieredConfig, workflow } from "./helpers.js";
+import { addTask, contextOf, tempRepo, tieredConfig, workflow } from "./helpers.js";
 
 const gitIn = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
@@ -20,51 +19,49 @@ function child(dir: string, provider: string, model: string, text = "Fixed 1 of 
   sm.appendMessage({ role: "assistant", content: [{ type: "text", text }], api: "x", provider, model, usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 1100, cost }, stopReason: "stop", timestamp: Date.now() } as never);
 }
 
-/** A repo with an eval in an uncommitted file (a static finding, so the picker opens), and a picker that answers `choice`. */
-async function fixing(options: { medium?: string; choice?: string; herdr?: boolean; self?: { problem: string }; fake?: FakeHerdrClientOptions; ticketModePath?: string } = {}) {
+/** A repo with an eval in an uncommitted file (a static finding), a `review` that saves the report, and `fix` that runs `shepherd fix --tab` on it. */
+async function fixing(options: { medium?: string; herdr?: boolean; self?: { problem: string }; fake?: FakeHerdrClientOptions; ticketModePath?: string } = {}) {
   // The model pass would open a review tab first; these tests are about the fix tab.
   const config = tieredConfig(`review: { model: false }\n${options.medium ? `models: { medium: '${options.medium}' }\n` : ""}`);
   const progress: string[] = [];
-  const turns: string[] = [];
-  const dialogs: PlanReviewRequest[] = [];
   const fake = fakeHerdrClient({ ...(options.self ? { self: options.self as never } : {}), ...options.fake });
   const cwd = await tempRepo();
-  const app = workflow(cwd, { config, herdr: options.herdr === false ? undefined : fake.client, herdrTimings: { sleep: async () => undefined }, ticketModePath: "ticketModePath" in options ? options.ticketModePath : "/shepherd/src/ticket-mode.ts", progress: (line) => void progress.push(line), report: () => undefined, startTurn: (text) => void turns.push(text) });
-  app.bind({ registry: permissiveRegistry() as never, review: async (request) => (dialogs.push(request), { value: options.choice ?? "fix-tab" }) });
+  const app = workflow(cwd, { config, herdr: options.herdr === false ? undefined : fake.client, herdrTimings: { sleep: async () => undefined }, ticketModePath: "ticketModePath" in options ? options.ticketModePath : "/shepherd/src/ticket-mode.ts", progress: (line) => void progress.push(line), report: () => undefined });
   mkdirSync(path.join(cwd, "src"), { recursive: true });
   writeFileSync(path.join(cwd, "src", "run.ts"), "export const run = (s: string) => eval(s);\n");
-  return { app, cwd, fake, progress, turns, dialogs };
+  const fix = async () => {
+    await app.review();
+    return app.fixInTab();
+  };
+  return { app, cwd, fake, progress, fix };
 }
 
 const fixRows = (t: Awaited<ReturnType<typeof fixing>>) => t.app.store.readLedger().filter((row) => row.reason.startsWith("review fix"));
 
-describe("the /review picker", () => {
-  it("offers Fix all in a tab first, on models.medium, only inside herdr", async () => {
-    const inside = await fixing({ choice: "close" });
-    await inside.app.review();
-    expect(inside.dialogs[0]!.actions.map((action) => action.label)).toEqual(["Fix all in a tab (anthropic/claude-sonnet-5-5)", "Fix all", "Fix…", "Close"]);
-    expect(inside.dialogs[0]!.actions[0]!.value).toBe("fix-tab");
+describe("where `shepherd fix --tab` can run", () => {
+  it("is available on models.medium only inside herdr", async () => {
+    const inside = await fixing();
+    expect(await inside.app.fixModel()).toMatchObject({ model: { kind: "pi", provider: "anthropic", id: "claude-sonnet-5-5" } });
     for (const options of [{ herdr: false }, { self: { problem: "not inside herdr" } }]) {
-      const outside = await fixing({ choice: "close", ...options });
-      await outside.app.review();
-      expect(outside.dialogs[0]!.actions.map((action) => action.value)).toEqual(["fix-all", "fix-some", "close"]);
+      const outside = await fixing(options);
+      expect(await outside.app.fixModel()).toMatchObject({ problem: expect.stringContaining("needs herdr") });
+      const result = await outside.fix();
+      expect(result).toMatchObject({ ok: false, code: "NEEDS_HERDR" });
     }
   });
 
-  it("does not offer it for a Pi model when Pi cannot start a child, but does for an agent", async () => {
-    const pi = await fixing({ choice: "close", ticketModePath: undefined });
-    await pi.app.review();
-    expect(pi.dialogs[0]!.actions.map((action) => action.value)).not.toContain("fix-tab");
-    const agent = await fixing({ choice: "close", ticketModePath: undefined, medium: "agent:gemini" });
-    await agent.app.review();
-    expect(agent.dialogs[0]!.actions[0]!.label).toBe("Fix all in a tab (agent:gemini)");
+  it("is not available for a Pi model when this install does not know the worker extension, but is for an agent", async () => {
+    const pi = await fixing({ ticketModePath: undefined });
+    expect(await pi.app.fixModel()).toMatchObject({ problem: expect.stringContaining("ticket-mode") });
+    const agent = await fixing({ ticketModePath: undefined, medium: "agent:gemini" });
+    expect(await agent.app.fixModel()).toMatchObject({ model: { kind: "agent", name: "gemini" } });
   });
 });
 
 describe("Fix all in a tab with an agent", () => {
   it("runs the fix in its own tab, ledgers one 'not metered' review fix row, closes the tab and sends nothing to the session", async () => {
     const t = await fixing({ medium: "agent:gemini", fake: { read: () => "Addressed 1. Left none." } });
-    const result = await t.app.review();
+    const result = await t.fix();
     expect(result.ok, result.text).toBe(true);
     expect(t.fake.tabs).toHaveLength(1);
     const tab = t.fake.tabs[0]!;
@@ -76,7 +73,6 @@ describe("Fix all in a tab with an agent", () => {
     expect(prompt).toContain("Do not commit, push, or switch branches.");
     expect(prompt).toContain("one line per finding addressed");
     expect(prompt).not.toContain("Run /review again");
-    expect(t.turns).toEqual([]);
     expect(result.text).toContain("Addressed 1. Left none.");
     expect(result.text).toContain("Run /review to check.");
     expect(t.progress.join("\n")).toContain(`herdr tab ${tab.options.name}`);
@@ -99,7 +95,7 @@ describe("Fix all in a tab with an agent", () => {
           },
         },
       });
-      expect((await t.app.review()).ok).toBe(true);
+      expect((await t.fix()).ok).toBe(true);
       expect(fixRows(t)).toHaveLength(1);
       expect(fixRows(t)[0]).toMatchObject({ provider: "anthropic", model: "claude-sonnet-5-5", meter: "agent-log", inputTokens: 1000, outputTokens: 100, tier: "medium", phase: "REVIEWING" });
       expect(fixRows(t)[0]!.actualUsd).toBeCloseTo(0.0045, 6);
@@ -120,7 +116,7 @@ describe("Fix all in a tab with an agent", () => {
       },
     });
     const head = gitIn(t.cwd, "rev-parse", "HEAD");
-    const result = await t.app.review();
+    const result = await t.fix();
     expect(result.ok, result.text).toBe(true);
     expect(gitIn(t.cwd, "rev-parse", "HEAD")).toBe(head);
     expect(gitIn(t.cwd, "status", "--porcelain")).toContain("src/run.ts");
@@ -141,7 +137,7 @@ describe("Fix all in a tab with an agent", () => {
       },
     });
     const before = gitIn(t.cwd, "rev-parse", "--abbrev-ref", "HEAD");
-    const result = await t.app.review();
+    const result = await t.fix();
     expect(gitIn(t.cwd, "rev-parse", "--abbrev-ref", "HEAD")).toBe("elsewhere");
     expect(gitIn(t.cwd, "log", "-1", "--format=%s")).toBe("elsewhere");
     expect(result.text).toContain(`left ${before} and is on elsewhere`);
@@ -150,7 +146,7 @@ describe("Fix all in a tab with an agent", () => {
 
   it("leaves the tab open and returns the reason when the tab dies; the spend is still ledgered", async () => {
     const t = await fixing({ medium: "agent:gemini", fake: { turn: () => [{ status: "ended", exitCode: 1 }] } });
-    const result = await t.app.review();
+    const result = await t.fix();
     expect(result).toMatchObject({ ok: false, code: "REVIEW_FIX_FAILED" });
     expect(result.text).toContain("did not finish");
     expect(result.text).toContain("ended");
@@ -161,7 +157,7 @@ describe("Fix all in a tab with an agent", () => {
 
   it("reports a tab that could not open without throwing", async () => {
     const t = await fixing({ medium: "agent:gemini", fake: { failRun: () => "no such program" } });
-    const result = await t.app.review();
+    const result = await t.fix();
     expect(result).toMatchObject({ ok: false, code: "REVIEW_FIX_FAILED" });
     expect(result.text).toContain("no such program");
     expect(t.fake.tabs).toHaveLength(0);
@@ -173,7 +169,7 @@ describe("Fix all in a tab with a Pi model", () => {
     const t = await fixing({
       fake: { onSend: (tab) => child(tab.sessionDir, "anthropic", "claude-sonnet-5-5") },
     });
-    const result = await t.app.review();
+    const result = await t.fix();
     expect(result.ok, result.text).toBe(true);
     const tab: FakeTab = t.fake.tabs[0]!;
     expect(tab.options.argv[0]).toBe("env");
@@ -185,15 +181,14 @@ describe("Fix all in a tab with a Pi model", () => {
     expect(result.text).toContain("Fixed 1 of 1.");
     expect(fixRows(t)).toHaveLength(1);
     expect(fixRows(t)[0]).toMatchObject({ taskId: "session", provider: "anthropic", model: "claude-sonnet-5-5", inputTokens: 1000, outputTokens: 100, phase: "REVIEWING", tier: "medium", reason: "review fix" });
-    expect(t.turns).toEqual([]);
   });
 
-  it("stops without a tab when Pi cannot use the model", async () => {
+  it("stops without a tab when `pi` is not on PATH", async () => {
     const t = await fixing({ fake: {} });
-    t.app.bind({ registry: { find: () => undefined } as never, review: async () => ({ value: "fix-tab" }) });
-    const result = await t.app.review();
+    contextOf(t.app).piAvailable = () => false;
+    const result = await t.fix();
     expect(result).toMatchObject({ ok: false, code: "REVIEW_FIX_FAILED" });
-    expect(result.text).toContain("anthropic/claude-sonnet-5-5");
+    expect(result.text).toContain("`pi` is not on PATH");
     expect(t.fake.tabs).toHaveLength(0);
   });
 });
@@ -219,7 +214,7 @@ describe("Fix all in a tab and the outside-chef sweep", () => {
       mkdirSync(path.join(home, ".claude", "projects", claudeProjectSlug(ctx.git.repoRoot)), { recursive: true });
       await sweepAgentLogs(ctx, { home }); // the first sweep only sets the watermark
       expect(ctx.store.readAgentWatermark()).toBeDefined();
-      await t.app.review();
+      await t.fix();
       expect(fixRows(t)).toHaveLength(1);
       expect(fixRows(t)[0]).toMatchObject({ taskId: task.taskId, meter: "agent-log", inputTokens: 1000 });
       const before = ctx.store.readLedger().length;

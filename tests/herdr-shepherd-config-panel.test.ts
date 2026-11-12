@@ -2,7 +2,7 @@ import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
-// The panel's pure helpers (herdr/chef-config/lib.js); main.js needs herdr's runtime and is checked with `herdr-app check`.
+// The panel's pure helpers (herdr/shepherd-config/lib.js); main.js needs herdr's runtime and is checked with `herdr-app check`.
 type Helpers = {
   looksSecret(text: string): boolean;
   modelValue(kind: string, parts: Record<string, string>): { value?: string; error?: string };
@@ -18,7 +18,7 @@ type Helpers = {
 };
 let h: Helpers;
 beforeAll(async () => {
-  h = (await import(pathToFileURL(path.join(__dirname, "..", "herdr", "chef-config", "lib.js")).href)) as Helpers;
+  h = (await import(pathToFileURL(path.join(__dirname, "..", "herdr", "shepherd-config", "lib.js")).href)) as Helpers;
 });
 
 describe("panel helpers", () => {
@@ -72,5 +72,15 @@ describe("panel helpers", () => {
     expect(h.setArgv("/p", "budgets.taskUsd", "7")).toEqual(["set", "--cwd", "/p", "--key", "budgets.taskUsd", "--value", "7"]);
     expect([h.positive("7.5"), h.positive(" 3 "), h.positive("0"), h.positive("-1"), h.positive("x"), h.positive("")]).toEqual([7.5, 3, null, null, null, null]);
     expect([h.numberText(20), h.numberText(0.30000000000000004), h.numberText(undefined)]).toEqual(["20", "0.3", ""]);
+  });
+});
+
+describe("panel model picker with a Cursor model", () => {
+  it("builds agent:cursor-agent/auto and the auto-smart settings, brackets and equals sign intact, and does not call them secrets", () => {
+    expect(h.modelValue("agent", { agent: "cursor-agent", agentModel: "auto" })).toEqual({ value: "agent:cursor-agent/auto" });
+    for (const setting of ["cost", "balanced", "intelligence"]) {
+      expect(h.modelValue("agent", { agent: "cursor-agent", agentModel: `auto-smart[optimize_for=${setting}]` })).toEqual({ value: `agent:cursor-agent/auto-smart[optimize_for=${setting}]` });
+    }
+    expect(h.modelValue("agent", { agent: "cursor-agent", agentModel: "auto-smart [optimize_for=cost]" }).error).toMatch(/no spaces/);
   });
 });

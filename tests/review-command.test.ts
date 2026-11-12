@@ -6,11 +6,9 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import type { ReviewReport } from "../src/domain.js";
 import { runBuild } from "../src/orchestrator/build.js";
-import { presentForDecision } from "../src/tools/plan-review.js";
-import type { PlanReviewRequest } from "../src/orchestrator/types.js";
 import type { Workflow } from "../src/orchestrator/service.js";
-import type { ChatFn } from "../src/providers/pi-chat.js";
-import { checkRunner, sampleTicket, tempRepo, tieredConfig, ticketWorkflow, workflow, writingDriver } from "./helpers.js";
+import { fakeHerdrClient } from "./herdr-fake.js";
+import { checkRunner, contextOf, sampleTicket, tempRepo, tieredConfig, ticketWorkflow, workflow, writingDriver } from "./helpers.js";
 
 const exec = promisify(execFile);
 const git = async (cwd: string, ...args: string[]) => (await exec("git", args, { cwd })).stdout.trim();
@@ -27,25 +25,30 @@ async function repoWithOrigin(base = "main") {
   return { cwd, remote };
 }
 
-type Choice = { value: string; text?: string } | undefined;
+/** A herdr whose `agent:gemini` reviewer writes `findings` (model-pass findings, as the agent reviewer's JSON list) to the file it is told. */
+function reviewer(findings: unknown[]) {
+  return fakeHerdrClient({
+    onSend: (_tab, text) => {
+      const out = /findings to (\S+) \(no prose/.exec(text)?.[1];
+      if (out) writeFileSync(out, JSON.stringify(findings));
+    },
+  });
+}
 
-async function setup(options: { base?: string; checks?: { code: number }; chat?: ChatFn; ui?: boolean; choice?: Choice; yaml?: string } = {}) {
+async function setup(options: { base?: string; checks?: { code: number }; findings?: unknown[]; yaml?: string } = {}) {
   const { cwd, remote } = await repoWithOrigin(options.base);
   const progress: string[] = [];
   const reports: string[] = [];
-  const turns: string[] = [];
-  const dialogs: PlanReviewRequest[] = [];
   const code = options.checks?.code ?? 0;
+  const fake = reviewer(options.findings ?? []);
   const app = workflow(cwd, {
-    config: tieredConfig(options.yaml),
-    chat: options.chat,
+    config: tieredConfig(`models: { review: 'agent:gemini' }\n${options.yaml ?? ""}`),
+    ...(options.findings ? { herdr: fake.client, herdrTimings: { sleep: async () => undefined } } : {}),
     runner: checkRunner(async () => (code === 0 ? { code: 0, stdout: "ok", stderr: "" } : { code, stdout: "", stderr: "FAIL injected" })),
     progress: (line) => void progress.push(line),
     report: (markdown) => void reports.push(markdown),
-    startTurn: (text) => void turns.push(text),
   });
-  if (options.ui !== false) app.bind({ review: async (request: PlanReviewRequest) => (dialogs.push(request), options.choice ?? { value: "close" }) });
-  return { cwd, remote, progress, reports, turns, dialogs, app };
+  return { cwd, remote, progress, reports, app, fake };
 }
 
 function write(cwd: string, name: string, body: string) {
@@ -66,13 +69,6 @@ function sessionReport(app: Workflow): ReviewReport {
   return JSON.parse(readFileSync(path.join(dir, file), "utf8")) as ReviewReport;
 }
 
-const modelChat = (findings: unknown[]): ChatFn => async (candidate) => ({
-  text: JSON.stringify(findings),
-  usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, requests: 1 },
-  provider: candidate.provider,
-  model: candidate.model,
-});
-
 describe("/review with no task", () => {
   it("reviews an ad-hoc branch against the default branch and saves a session report", async () => {
     const t = await setup();
@@ -88,7 +84,6 @@ describe("/review with no task", () => {
     expect(t.reports.at(-1)).toContain(".shepherd/reports/review-");
     expect(t.progress.some((line) => /^Review: started · fix\/retry against main/.test(line))).toBe(true);
     expect(t.progress.some((line) => /^Review: unit: passed in 0\.0s$/.test(line))).toBe(true);
-    expect(t.dialogs).toEqual([]);
   });
 
   it("blocks a branch that adds a secret, and keeps the secret out of the report", async () => {
@@ -159,17 +154,16 @@ describe("/review with no task", () => {
     const head = await git(t.cwd, "rev-parse", "HEAD");
     const result = await t.app.review();
     expect(result).toMatchObject({ ok: false, code: "REVIEW_BLOCKING" });
-    expect(result.text).toContain("/review again");
+    expect(result.text).toContain("/shepherd:review again");
     expect(sessionReport(t.app).passed).toBe(false);
     expect(t.reports.at(-1)).toContain("## Review did not pass");
-    expect(t.dialogs).toHaveLength(1);
-    expect(t.dialogs[0]!.markdown).toContain("| 1 | BLOCKING | npm test | unit failed with exit 1: FAIL injected |");
+    expect(t.reports.at(-1)).toContain("| 1 | BLOCKING | npm test | unit failed with exit 1: FAIL injected |");
     expect(await git(t.cwd, "rev-parse", "HEAD")).toBe(head);
     expect(await git(t.cwd, "status", "--porcelain")).toContain("src/wip.ts");
   });
 
   it("lists the model review's findings but never lets them change the verdict", async () => {
-    const t = await setup({ chat: modelChat([{ likelihood: 8, severity: 8, category: "correctness", file: "src/retry.ts", message: "retry never backs off.", evidence: "const retry = 3" }]) });
+    const t = await setup({ findings: [{ likelihood: 8, severity: 8, category: "correctness", file: "src/retry.ts", message: "retry never backs off.", evidence: "const retry = 3" }] });
     await branchWithCommit(t.cwd);
     const result = await t.app.review();
     expect(result.ok, result.text).toBe(true);
@@ -178,123 +172,52 @@ describe("/review with no task", () => {
     expect(report.findings.filter((finding) => finding.severity === "blocking")).toEqual([]);
     expect(report.modelReview?.findings).toHaveLength(1);
     expect(t.reports.at(-1)).toMatch(/\| 1 \| L8×S8=64 \| src\/retry\.ts \| retry never backs off\. \|/);
-    expect(t.dialogs[0]!.markdown).toMatch(/\| 1 \| L8×S8=64 \| src\/retry\.ts \| retry never backs off\. \|/);
     expect(t.app.store.readLedger().find((entry) => entry.reason === "model review")).toMatchObject({ taskId: "session", phase: "REVIEWING" });
   });
 });
 
-describe("/review findings dialog", () => {
+describe("/review findings", () => {
   const findings = [{ likelihood: 5, severity: 6, category: "correctness", file: "src/retry.ts", message: "no jitter." }];
 
-  async function failing(choice: Choice, extra: { ui?: boolean } = {}) {
-    // An eval in the diff (static), a failing check, and a model finding: numbered in that order.
-    const t = await setup({ checks: { code: 1 }, chat: modelChat(findings), choice, ...extra });
+  it("numbers every finding in the report: static first, then checks, then the model's", async () => {
+    // An eval in the diff (static), a failing check, and a model finding.
+    const t = await setup({ checks: { code: 1 }, findings });
     await branchWithCommit(t.cwd);
     write(t.cwd, "src/run.ts", "export const run = (s: string) => eval(s);\n");
-    return t;
-  }
-
-  it("posts the report once, then picks inline: Fix all sends the kept findings; Close and Esc send nothing", async () => {
-    for (const [label, sends] of [["Fix all", true], ["Close", false], [undefined, false]] as const) {
-      const t = await failing({ value: "close" });
-      const picks: { title: string; labels: string[] }[] = [];
-      const extra: string[] = [];
-      const ui = { select: async (title: string, labels: string[]) => (picks.push({ title, labels }), label), editor: async () => undefined, custom: () => { throw new Error("no popups"); } };
-      t.app.bind({ review: (request) => presentForDecision({ ui } as never, request, (text) => void extra.push(text)) });
-      await t.app.review();
-      expect(t.reports.filter((report) => report.startsWith("## Review"))).toHaveLength(1);
-      expect(extra).toEqual([]);
-      expect(picks).toEqual([{ title: "Review · 3 finding(s)", labels: ["Fix all", "Fix…", "Close"] }]);
-      expect(t.turns).toHaveLength(sends ? 1 : 0);
-      if (sends) expect(t.turns[0]).toContain("Fix all 3 finding(s)");
-    }
-  });
-
-  it("shows every finding numbered, static first, then checks, then model, with three actions", async () => {
-    const t = await failing({ value: "close" });
     const result = await t.app.review();
-    expect(result.ok).toBe(false);
-    expect(t.dialogs).toHaveLength(1);
-    const [dialog] = t.dialogs;
-    expect(dialog!.title).toBe("Review · 3 finding(s)");
-    expect(dialog!.actions).toEqual([
-      { value: "fix-all", label: "Fix all" },
-      { value: "fix-some", label: "Fix…", input: "What should be fixed? (finding numbers like 1, 3, and/or your own instructions)" },
-      { value: "close", label: "Close" },
-    ]);
-    const lines = dialog!.markdown.split("\n").filter((line) => /^\| \d+ \|/.test(line));
+    expect(result).toMatchObject({ ok: false, code: "REVIEW_BLOCKING" });
+    const lines = t.reports.at(-1)!.split("\n").filter((line) => /^\| \d+ \|/.test(line));
     expect(lines).toHaveLength(3);
     expect(lines[0]).toMatch(/^\| 1 \| BLOCKING \| security \|/);
     expect(lines[1]).toMatch(/^\| 2 \| BLOCKING \| npm test \|/);
     expect(lines[2]).toMatch(/^\| 3 \| L5×S6=30 \| src\/retry\.ts \| no jitter\./);
   });
 
-  it("Fix all starts a turn with every finding, the check commands, and the rules; nothing is committed", async () => {
-    const t = await failing({ value: "fix-all" });
+  it("opens no menu and sends nothing to a session: the result is the report, and nothing is committed", async () => {
+    const t = await setup({ checks: { code: 1 }, findings });
+    await branchWithCommit(t.cwd);
     const head = await git(t.cwd, "rev-parse", "HEAD");
     const result = await t.app.review();
-    expect(result.ok, result.text).toBe(true);
-    expect(result.text).toBe("Sent 3 finding(s) to the model to fix.");
-    expect(t.turns).toHaveLength(1);
-    const message = t.turns[0]!;
-    expect(message).toContain("Fix all 3 finding(s)");
-    expect(message).toMatch(/1\. BLOCKING security:/);
-    expect(message).toContain("2. Check failed: unit");
-    expect(message).toContain("3. L5×S6 src/retry.ts: no jitter.");
-    expect(message).toContain("- `npm test`");
-    expect(message).toContain("Do not commit, push, or switch branches.");
-    expect(message).toContain("one line per finding addressed");
-    expect(message).toContain("Run /review again when done.");
+    expect(result).toMatchObject({ ok: false, code: "REVIEW_BLOCKING" });
+    expect(t.reports.at(-1)).toContain("## Review did not pass");
     expect(await git(t.cwd, "rev-parse", "HEAD")).toBe(head);
   });
 
-  it("Fix… sends the typed text plus the full numbered list as reference", async () => {
-    const t = await failing({ value: "fix-some", text: "1 and rename foo" });
-    const result = await t.app.review();
-    expect(result.ok, result.text).toBe(true);
-    expect(t.turns).toHaveLength(1);
-    const message = t.turns[0]!;
-    expect(message).toContain("1 and rename foo");
-    expect(message).toContain("for reference");
-    expect(message).toMatch(/1\. BLOCKING security:/);
-    expect(message).toContain("3. L5×S6 src/retry.ts: no jitter.");
-    expect(message).toContain("- `npm test`");
-    expect(message).toContain("Run /review again when done.");
-  });
-
-  it("redacts secrets in the message", async () => {
-    const t = await failing({ value: "fix-some", text: "use key sk-abcdefghijklmnopqrstuvwxyz" });
-    await t.app.review();
-    expect(t.turns[0]).not.toContain("sk-abcdefghijklmnopqrstuvwxyz");
-  });
-
-  it("Close, a dismissed dialog, or an empty Fix… start no turn", async () => {
-    for (const choice of [{ value: "close" }, undefined, { value: "fix-some", text: "  " }] as Choice[]) {
-      const t = await failing(choice);
-      const result = await t.app.review();
-      expect(result).toMatchObject({ ok: false, code: "REVIEW_BLOCKING" });
-      expect(t.turns).toEqual([]);
-    }
-  });
-
-  it("shows only the report and its text without a UI", async () => {
-    const t = await failing({ value: "fix-all" }, { ui: false });
-    const result = await t.app.review();
-    expect(result).toMatchObject({ ok: false, code: "REVIEW_BLOCKING" });
-    expect(t.dialogs).toEqual([]);
-    expect(t.turns).toEqual([]);
-    expect(t.reports.at(-1)).toContain("## Review did not pass");
-  });
-
-  it("opens no dialog when there are no findings and the review passed", async () => {
-    const t = await setup({ choice: { value: "fix-all" } });
+  it("returns the one-line result when there are no findings and the review passed", async () => {
+    const t = await setup();
     await branchWithCommit(t.cwd);
     const result = await t.app.review();
     expect(result.text).toBe("Review passed: 1 check(s), no findings.");
-    expect(t.dialogs).toEqual([]);
-    expect(t.turns).toEqual([]);
   });
 });
+
+/** Gives a built workflow an `agent:gemini` reviewer that writes `findings`. */
+function withReviewer(app: Workflow, findings: unknown[]): void {
+  const ctx = contextOf(app);
+  ctx.herdr = reviewer(findings).client;
+  ctx.herdrTimings = { sleep: async () => undefined };
+  ctx.config = tieredConfig("models: { review: 'agent:gemini' }\n");
+}
 
 describe("/review after /build", () => {
   async function built(options: { base?: string; mutate?: (config: ReturnType<typeof tieredConfig>) => void; tickets?: ReturnType<typeof sampleTicket>[] } = {}) {
@@ -333,7 +256,7 @@ describe("/review after /build", () => {
       run.reviews = [{ ...record, findings: [{ likelihood: 3, severity: 5, file: "src/retry.ts", issue: "no test for the empty case" }, { likelihood: 4, severity: 4, file: "src/retry.ts", issue: "retry never backs off." }] }];
       return task;
     });
-    t.app.bind({ chat: modelChat([{ likelihood: 8, severity: 8, category: "correctness", file: "src/retry.ts", message: "Retry never backs off" }]) } as never);
+    withReviewer(t.app, [{ likelihood: 8, severity: 8, category: "correctness", file: "src/retry.ts", message: "Retry never backs off" }]);
     const result = await t.app.review();
     expect(result.ok, result.text).toBe(true);
     const report = t.app.store.load(t.taskId)!.review!;
@@ -352,7 +275,7 @@ describe("/review after /build", () => {
       task.ticketRuns!["01"]!.reviews = [{ ...record, findings: [finding("no test for the empty case")] }];
       return task;
     });
-    t.app.bind({ chat: modelChat([]) } as never);
+    withReviewer(t.app, []);
     expect((await t.app.review()).ok).toBe(true);
     expect(t.app.store.load(t.taskId)!.review!.carried).toHaveLength(1);
     // The same findings are not listed again.

@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { CostRecord } from "../src/domain.js";
-import { COMMANDS } from "../src/commands.js";
 import { sampleTicket, tempRepo, ticketWorkflow, tieredConfig, workflow } from "./helpers.js";
 
 const row = (taskId: string, provider: string, model: string, reason: string, actualUsd: number | null): CostRecord => ({
@@ -66,12 +65,6 @@ describe("/cost with agents that are not metered", () => {
     expect(markdown).toContain("| anthropic/claude-sonnet-5-5 | 1 | $0.2500 | - | - | $0.2500 |");
     expect(markdown).not.toContain("No pricing row");
     // The budget sees $0.25 and nothing for the subscription rows: no flat estimate.
-    expect(app.statusLine()).toContain("$0.25");
-  });
-});
-
-describe("the command table", () => {
-  it("has no /route: the planner picks no model", () => {
-    expect(COMMANDS.map((command) => command.name)).not.toContain("route");
+    expect(app.budgetState().task.knownUsd).toBeCloseTo(0.25, 6);
   });
 });

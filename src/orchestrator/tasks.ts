@@ -98,6 +98,7 @@ export function unfinishedTasks(tasks: TaskState[]): TaskState[] {
 /** Closes a task: COMPLETE with a time and a reason. Files and branches stay. Never touches git. */
 export function closeTask(ctx: WorkflowContext, taskId: string, reason: string): Promise<TaskState> {
   const at = iso(ctx);
+  ctx.store.clearBuilding(taskId);
   return ctx.store.update(taskId, reason, (task) => ({ ...move(task, "COMPLETE", at, reason), closedAt: at, closedReason: reason }));
 }
 
@@ -162,7 +163,7 @@ export function stateText(state: TaskState | undefined): string {
     case "PLANNING":
       return `planning (${state.planning?.stage === "tickets" ? "writing tickets" : "interview"})`;
     case "AWAITING_PLAN_APPROVAL":
-      return state.approvedVersion && state.approvedVersion === state.plan?.version ? "plan approved, run /build" : "plan draft, /show-plan";
+      return state.approvedVersion && state.approvedVersion === state.plan?.version ? "plan approved, run /build" : "plan draft, awaiting approval";
     case "COMPLETE":
       return "complete";
     case "BLOCKED":

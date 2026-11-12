@@ -3,15 +3,12 @@ import type { WorkflowConfig } from "../config.js";
 import type { GitWorkspace } from "../git/workspace.js";
 import type { HerdrClient } from "../herdr/client.js";
 import type { TabTimings } from "../runner/tab.js";
-import type { ChatFn } from "../providers/pi-chat.js";
-import type { UsableRegistry } from "../providers/usable.js";
 import type { CheckRunner } from "../review/review.js";
 import { redact } from "../redact.js";
 import type { TaskStore } from "../storage/store.js";
 import { move } from "./machine.js";
-import type { PlanReviewFn } from "./types.js";
 
-/** Everything the orchestrator modules share. The UI hooks are mutable: `Workflow.bind` swaps them per command. */
+/** Everything the orchestrator modules share. */
 export interface WorkflowContext {
   readonly cwd: string;
   /** Swapped by `Workflow.reconfigure` when a config file changes. */
@@ -22,8 +19,6 @@ export interface WorkflowContext {
   readonly id: () => string;
   /** Check runner that skips a check already passed on an identical clean tree. */
   readonly checkRunner: CheckRunner;
-  /** Aborted by `Workflow.dispose`; the model review passes its signal so a running call is stopped. */
-  shutdown: AbortController;
   /** Keys of warnings already shown, so each appears once. */
   readonly warned: Set<string>;
   /** Replaces the home directory the agent logs are looked for under (tests, the CLI). */
@@ -32,36 +27,22 @@ export interface WorkflowContext {
   knownSessions?: () => { transcriptPath: string; sessionId: string }[];
   /** Today's budget counts these records (every registered repo's ledger) instead of this repo's own. Absent: the repo ledger. */
   dailyRecords?: () => CostRecord[];
-  /** Ledger ids of Pi's own calls already recorded (`recordPiUsage`), loaded from the ledger on first use. */
+  /** Ledger ids of a Pi ticket child's calls already recorded (`recordPiUsage`), loaded from the ledger on first use. */
   piLedgered?: Set<string>;
   confirm: (title: string, message: string) => Promise<boolean>;
   notify: (message: string) => void;
-  /** Progress lines for the chat while /build runs. Absent without a UI. */
+  /** Progress lines while /build runs. Absent without a listener. */
   progress?: (message: string) => void;
-  /** Multi-line markdown blocks kept in the chat transcript. Absent without a UI. */
+  /** Multi-line markdown blocks (the build table, a review). Absent without a listener. */
   report?: (markdown: string) => void;
-  chat?: ChatFn;
-  /** The herdr client: agent reviews open a tab through it. Absent outside Pi; a test binds a fake. */
+  /** The herdr client: ticket, review and fix runs open a tab through it. Absent without herdr; a test sets a fake. */
   herdr?: HerdrClient;
   /** Timings and sleeps of the herdr tab waits; a test seam (the defaults are right for a person). */
   herdrTimings?: TabTimings;
-  /** Absolute path of this install's `src/ticket-mode.ts`: a Pi model fix in a tab (`review-fix.ts`) needs it. Absent outside Pi; a test sets it. */
+  /** Absolute path of this install's `src/ticket-mode.ts`: a Pi model fix in a tab (`review-fix.ts`) needs it. A test sets it. */
   ticketModePath?: string;
-  /** Pi's model registry for the live session. When bound, routing skips candidates it does not know or holds no credentials for. */
-  registry?: UsableRegistry;
-  /** Outside Pi: whether a `pi` program can be started for a Pi model's ticket or review. Unset, no such check is made. */
+  /** Whether a `pi` program can be started for a Pi model's ticket or review. Unset, no such check is made. */
   piAvailable?: () => boolean;
-  status?: (text: string | undefined) => void;
-  /** Plan-interview progress line (separate from the routing status so a routed turn does not overwrite it). */
-  planStatus?: (text: string | undefined) => void;
-  /** Starts a model turn in the Pi session with this user message. Absent outside Pi. */
-  startTurn?: (text: string) => void;
-  /** Full-plan review dialog. Absent without a UI; approval then proceeds as before. */
-  review?: PlanReviewFn;
-  /** Opens Pi's editor with this prompt and text; undefined when cancelled. Absent without a UI. */
-  edit?: (title: string, prefill: string) => Promise<string | undefined>;
-  /** Posts a plan as a displayed chat message. */
-  show?: (markdown: string) => void;
 }
 
 export function fail(code: string, text: string): CommandResult {

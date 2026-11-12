@@ -11,12 +11,10 @@
  */
 import path from "node:path";
 import { modelText, type TicketModel } from "../agents.js";
-import { registryProblem } from "../providers/usable.js";
 import { NO_PI } from "../runner/pi-path.js";
 import { redact } from "../redact.js";
 import { messageOf, openTab, tabName, type Tab } from "../runner/tab.js";
 import { herdrSpace } from "../runner/ticket.js";
-import { SESSION_TASK_ID } from "./budget.js";
 import type { WorkflowContext } from "./context.js";
 import { agentProgram, piProgram, type Program } from "./tab-program.js";
 
@@ -36,12 +34,9 @@ export interface FixInput {
   home?: string;
 }
 
-/**
- * A Pi model as a `pi` child. Inside Pi the live registry says whether it knows the model and holds a login; outside it
- * (the CLI) the only check is that a `pi` is on PATH (`ctx.piAvailable`), and the child reports the rest.
- */
+/** A Pi model as a `pi` child. The only check here is that a `pi` is on PATH (`ctx.piAvailable`); the child reports the rest. */
 function fixPiProgram(ctx: WorkflowContext, model: Extract<TicketModel, { kind: "pi" }>, input: FixInput, at: number): Program | { refused: string } {
-  const problem = ctx.registry ? registryProblem(ctx.registry, model.provider, model.id) : ctx.piAvailable && !ctx.piAvailable() ? NO_PI : undefined;
+  const problem = ctx.piAvailable && !ctx.piAvailable() ? NO_PI : undefined;
   if (problem) return { refused: `${model.provider}/${model.id}: ${problem}. Change models.medium or sign in` };
   return piProgram(ctx, model, { sessionDir: path.join(ctx.store.root, "sessions", `review-fix-${at}`), label: "review-fix", job: FIX_REASON, tier: "medium", phase: "REVIEWING", taskId: input.taskId });
 }

@@ -25,6 +25,8 @@ import type { TabTimings } from "../runner/tab.js";
 import type { WorkflowOptions } from "../orchestrator/types.js";
 import { buildCommand, BUILD_USAGE, type OpenSession } from "./build.js";
 import { fixCommand, FIX_USAGE, reviewCommand, REVIEW_USAGE } from "./review.js";
+import { herdrInstall, HERDR_INSTALL_USAGE } from "./herdr-install.js";
+import { migrateConfig, MIGRATE_USAGE } from "./migrate-config.js";
 import { approvalReason, PLAN_USAGE, planCommand, plansCommand, taskCommand } from "./plan.js";
 
 const run = promisify(execFile);
@@ -40,6 +42,8 @@ const USAGE = `Usage:
   shepherd plan <start|spec|tickets|show|revise|approve> ...   (shepherd plan --help)
   shepherd plans [<name> | close <name> | --all]
   shepherd task <list|use <name>|close [<name>]>
+  shepherd herdr-install [--layout <name>] [--no-dock]   (installs the herdr panel into the herdr app; re-run after a plugin update)
+  shepherd migrate-config [--force] [--json]   (copies ~/.pi/agent/chef.yaml to ~/.claude/shepherd.yaml, never over an existing one)
 `;
 
 export interface CliIo {
@@ -217,7 +221,7 @@ function knownSessions(shepherd: string): { transcriptPath: string; sessionId: s
 }
 
 /** The usage of the last assistant message in a transcript, reading only its tail; a half-written last line is skipped. */
-function lastAssistant(file: string): { contextTokens: number; model: string } | undefined {
+function lastAssistant(file: string): { contextTokens: number; model: string; at?: string } | undefined {
   const fd = openSync(file, "r");
   try {
     const size = fstatSync(fd).size;
@@ -228,7 +232,7 @@ function lastAssistant(file: string): { contextTokens: number; model: string } |
       const text = buffer.toString("utf8");
       const rows = (length < size ? text.slice(text.indexOf("\n") + 1) : text).split("\n");
       for (let i = rows.length - 1; i >= 0; i -= 1) {
-        let line: { type?: string; isSidechain?: boolean; message?: { model?: string; usage?: Record<string, number> } };
+        let line: { type?: string; isSidechain?: boolean; timestamp?: string; message?: { model?: string; usage?: Record<string, number> } };
         try {
           line = JSON.parse(rows[i]!);
         } catch {
@@ -237,7 +241,7 @@ function lastAssistant(file: string): { contextTokens: number; model: string } |
         const usage = line.message?.usage;
         if (line.type !== "assistant" || line.isSidechain === true || !usage || !line.message?.model || line.message.model === "<synthetic>") continue;
         const n = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
-        return { contextTokens: n(usage.input_tokens) + n(usage.cache_read_input_tokens) + n(usage.cache_creation_input_tokens), model: line.message.model };
+        return { contextTokens: n(usage.input_tokens) + n(usage.cache_read_input_tokens) + n(usage.cache_creation_input_tokens), model: line.message.model, ...(typeof line.timestamp === "string" ? { at: line.timestamp } : {}) };
       }
       if (length >= size) break;
     }
@@ -268,7 +272,7 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
     await sweep();
     if (sessionId && input.transcript_path) {
       const last = lastAssistant(input.transcript_path);
-      if (last) writeJson(sessionFile(shepherd, sessionId), { lastTurnEnd: now().toISOString(), ...last, transcriptPath: input.transcript_path, sessionId } satisfies SessionNote);
+      if (last) writeJson(sessionFile(shepherd, sessionId), { lastTurnEnd: now().toISOString(), contextTokens: last.contextTokens, model: last.model, transcriptPath: input.transcript_path, sessionId } satisfies SessionNote);
     }
     return undefined;
   }
@@ -284,7 +288,7 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
     if (budget.status === "hard") {
       return { decision: "block", reason: `Budget exhausted: ${budget.text}. Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.` };
     }
-    const idle = idleBlock(session, sessionId, prompt);
+    const idle = idleBlock(session, sessionId, prompt, input.transcript_path);
     if (idle) return { decision: "block", reason: idle };
     if (budget.status === "soft") {
       const open = openTask(task);
@@ -308,7 +312,8 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
     if (hits.length === 0) return undefined;
     const deny = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
     const open = openTask(task);
-    const building = open && workflow.store.liveBuildClaim(open.taskId);
+    // A live claim (a ticket is running) or the marker (a build has more tickets to go, between `build --once` runs).
+    const building = open && (workflow.store.liveBuildClaim(open.taskId) || workflow.store.buildInProgress(open.taskId));
     const blocked = hits.find((hit) => building && GUARD_WHY[hit]);
     if (blocked) return deny(`Blocked \`${blocked}\`: ${GUARD_WHY[blocked]} (task ${open?.name ?? open?.taskId}).`);
     const spendHit = hits.find((hit) => hit === "shepherd run" || hit === "hc run");
@@ -324,13 +329,25 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
 }
 
 /** The idle-cache warning as a block reason, or undefined to let the prompt through (see AGENTS.md). */
-function idleBlock(session: Session, sessionId: string | undefined, prompt: string): string | undefined {
+/**
+ * The idle-cache warning. The last reply is read from the transcript now, when it is complete: at Stop, Claude Code may
+ * not have written it yet, so the Stop note is only the fallback.
+ */
+function idleBlock(session: Session, sessionId: string | undefined, prompt: string, transcriptPath?: string): string | undefined {
   const { config, shepherd, now } = session;
   const { idleWarnMinutes, idleWarnTokens } = config.budgets;
   if (!sessionId || idleWarnMinutes <= 0 || idleWarnTokens <= 0) return undefined;
-  const note = readJson<Partial<SessionNote>>(sessionFile(shepherd, sessionId));
-  const ended = note?.lastTurnEnd ? Date.parse(note.lastTurnEnd) : NaN;
-  if (!note || !Number.isFinite(ended) || typeof note.contextTokens !== "number") return undefined;
+  const saved = readJson<Partial<SessionNote>>(sessionFile(shepherd, sessionId));
+  let fresh: ReturnType<typeof lastAssistant>;
+  try {
+    fresh = transcriptPath ? lastAssistant(transcriptPath) : undefined;
+  } catch {
+    fresh = undefined;
+  }
+  const times = [saved?.lastTurnEnd, fresh?.at].map((value) => (value ? Date.parse(value) : NaN)).filter(Number.isFinite);
+  const ended = times.length > 0 ? Math.max(...times) : NaN;
+  const note = { contextTokens: fresh?.contextTokens ?? saved?.contextTokens, model: fresh?.model ?? saved?.model };
+  if (!Number.isFinite(ended) || typeof note.contextTokens !== "number") return undefined;
   const at = now();
   const idleMs = at.getTime() - ended;
   if (idleMs < idleWarnMinutes * 60_000 || note.contextTokens < idleWarnTokens) return undefined;
@@ -435,6 +452,20 @@ export async function main(argv: string[], io: CliIo = defaultIo, options: CliOp
   if (command === "status") return statusCommand(io, options);
   if (command === "hook") return hookCommand(rest[0], io, options);
   if (command === "build" || command === "review" || command === "fix") return buildFamily(command, rest, io, options);
+  if (command === "herdr-install") {
+    if (rest.includes("--help") || rest.includes("-h")) {
+      io.out(`${HERDR_INSTALL_USAGE}\n`);
+      return 0;
+    }
+    return herdrInstall(rest, io.out, io.err);
+  }
+  if (command === "migrate-config") {
+    const json = rest.includes("--json");
+    if (rest.includes("--help") || rest.includes("-h")) return emit(done(MIGRATE_USAGE), json, io);
+    const unknown = rest.filter((word) => word !== "--json" && word !== "--force");
+    if (unknown.length > 0) return emit(fail("USAGE", MIGRATE_USAGE), json, io);
+    return emit(migrateConfig({ home: options.home, ...(options.cwd ? { cwd: options.cwd } : {}), force: rest.includes("--force") }), json, io);
+  }
   if (command === "plan" || command === "plans" || command === "task") return planFamily(command, rest, io, options);
   io.err(USAGE);
   return 2;

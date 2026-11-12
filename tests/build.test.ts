@@ -831,17 +831,17 @@ describe("/build with a local model, an agent, and a model Pi does not know", ()
     const t = await buildTask({ tickets: [ticket("01", { difficulty: "low" })] });
     const branch = await git(t.cwd, "rev-parse", "--abbrev-ref", "HEAD");
     const d = fakeDriver(t.cwd, () => d.write("f.txt"));
-    const result = await t.run({ ...d.driver, preflight: async () => "/build runs each ticket in a herdr tab; start Pi inside herdr and run /build again." });
+    const result = await t.run({ ...d.driver, preflight: async () => "/build runs each ticket in a herdr tab; run shepherd from a terminal inside herdr and run /build again." });
     expect(result).toMatchObject({ ok: false, code: "NEEDS_HERDR" });
-    expect(result.text).toContain("start Pi inside herdr");
+    expect(result.text).toContain("run shepherd from a terminal inside herdr");
     expect(d.sends).toEqual([]);
     expect(t.load().build).toBeUndefined();
     expect(await git(t.cwd, "rev-parse", "--abbrev-ref", "HEAD")).toBe(branch);
   });
 
-  it("stops with Pi's reason when it does not know the model, without starting the ticket", async () => {
+  it("stops with the NO_PI reason when a Pi model's ticket cannot start because `pi` is missing, without starting the ticket", async () => {
     const t = await buildTask({ tickets: [ticket("01", { difficulty: "low" })] });
-    contextOf(t.app).registry = { find: () => undefined };
+    contextOf(t.app).piAvailable = () => false;
     const d = fakeDriver(t.cwd, () => d.write("f.txt"));
     const result = await t.run(d.driver);
     expect(d.sends).toEqual([]);

@@ -30,7 +30,7 @@ describe("defaults", () => {
     expect(config.routing).toEqual({ maxEscalations: 2, maxTicketTurns: 100 });
     expect(config.local).toBeUndefined();
     expect(config.agents).toEqual({});
-    expect(config.review).toEqual({ model: true, tickets: true, maxDiffChars: 120000, maxChunks: 6, timeoutMs: 300000 });
+    expect(config.review).toEqual({ model: true, tickets: true, timeoutMs: 300000 });
     expect(config.budgets).toEqual({ taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: 0.05, idleWarnMinutes: 60, idleWarnTokens: 100000 });
     expect(config.branchPrefix).toBe("shepherd");
     expect(config.build).toEqual({ visibleTabs: false });
@@ -170,7 +170,7 @@ describe("the sample files", () => {
     const config = parseConfig(uncommented);
     expect(config.budgets).toEqual({ taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: 0.05, idleWarnMinutes: 60, idleWarnTokens: 100000 });
     expect(config.routing).toEqual({ maxEscalations: 2, maxTicketTurns: 100 });
-    expect(config.review).toEqual({ model: true, tickets: true, maxDiffChars: 120000, maxChunks: 6, timeoutMs: 300000 });
+    expect(config.review).toEqual({ model: true, tickets: true, timeoutMs: 300000 });
     expect(config.models).toEqual(DEFAULT_MODELS);
     expect(config.warnings ?? []).toEqual([]);
   });

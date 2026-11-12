@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PLAN_FILE, renderPlanReview } from "../src/orchestrator/plan.js";
 import { renderTicket } from "../src/orchestrator/tickets.js";
-import { createPlanSpecTool, createPlanTicketsTool } from "../src/tools/plan-flow.js";
 import { sampleSpec, sampleTicket, ticketWorkflow, tieredConfig, tempRepo, workflow } from "./helpers.js";
-
-type Exec = (id: string, params: never, signal: undefined, onUpdate: undefined, ctx: never) => Promise<{ content: { type: string; text: string }[] }>;
-const call = (tool: { execute: unknown }, params: unknown, ctx: unknown) => (tool.execute as Exec)("1", params as never, undefined, undefined, ctx as never);
-const headless = { hasUI: false, ui: {} };
 
 const tickets = [
   sampleTicket("01", { difficulty: "low", title: "Scaffold the project" }),
@@ -34,15 +29,14 @@ describe("difficulty in the plan", () => {
     expect(markdown.indexOf("| # |")).toBeLessThan(markdown.indexOf("### 01"));
   });
 
-  it("puts the table in the plan_tickets result the model sees", async () => {
-    const app = workflow(await tempRepo(), { config: tieredConfig(), startTurn: () => undefined });
+  it("puts the table in the result of writing the tickets", async () => {
+    const app = workflow(await tempRepo(), { config: tieredConfig() });
     await app.startPlan("Add retry to the ingest parser");
-    await call(createPlanSpecTool(() => app), sampleSpec, headless);
+    await app.savePlanSpec(sampleSpec);
     const params = tickets.map((item) => ({ ...item, implementation: "Do it in src/ingest.ts." }));
-    const result = await call(createPlanTicketsTool(() => app), { tickets: params }, headless);
-    const text = result.content[0]!.text;
-    expect(text).toContain("| 03 | Harden auth | high | openai/gpt-6.1-sol | 02 |");
-    expect(text).toContain("| # | Ticket | Difficulty | Implementer | Blocked by |");
+    const { table } = await app.commitTickets(params);
+    expect(table).toContain("| 03 | Harden auth | high | openai/gpt-6.1-sol | 02 |");
+    expect(table).toContain("| # | Ticket | Difficulty | Implementer | Blocked by |");
   });
 
   it("renders the difficulty in a ticket file and omits the table without a config", async () => {

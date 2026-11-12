@@ -1,11 +1,11 @@
 /**
- * `shepherd build [--once] [--json]`: a thin adapter from argv to `runBuild` (`orchestrator/build.ts`) with the Pi-free driver
+ * `shepherd build [--once] [--json]`: a thin adapter from argv to `runBuild` (`orchestrator/build.ts`) with the build driver
  * (`build-host.ts`). Every rule stays in the orchestrator. Without `--once` it builds every ticket, streaming the progress
  * lines to stdout; with `--once` it builds exactly one ticket to its end and reports `{ticket, outcome, done, stopped?, next?, report?}`,
  * so a Claude Code skill can run it in the background, relay the result and loop (a foreground Bash call is limited to 10 minutes).
  *
  * With `--json` stdout is exactly one JSON document whose `text` carries the progress lines and the result line; the lines
- * are not streamed. The build claim is released on every exit path; SIGINT and SIGTERM release it, kill the open tabs and exit 130.
+ * are not streamed. The build claim is released on every exit path; SIGINT and SIGTERM release it, clear the build-in-progress marker, kill the open tabs and exit 130.
  */
 import type { CommandResult } from "../domain.js";
 import { createHerdrClient, type HerdrClient } from "../herdr/client.js";
@@ -52,8 +52,6 @@ export function tracked(inner: HerdrClient): { client: HerdrClient; open: Set<st
 /** The result's text in the CLI's words (`/build` is `/shepherd:build`, `/review` is `/shepherd:review`). */
 export function words(text: string): string {
   return cliText(text)
-    .replace(/start Pi inside herdr and run \/shepherd:build again/g, "run shepherd from a terminal inside herdr (HC_TERMINAL_ID set, `hc` working) and run /shepherd:build again")
-    .replace(/Another Pi session/g, "Another shepherd build")
     .replace(/or answer yes when \/shepherd:build asks, so they don't land in ticket 01's commit\./g, "so they don't land in ticket 01's commit.")
     .replace(/Run \/review/g, "Run /shepherd:review")
     .replace(/(?<![\w.])\/review\b/g, "/shepherd:review");
@@ -102,6 +100,7 @@ export async function buildCommand(rest: string[], io: CliIo, options: CliOption
       await Promise.allSettled([...openTabs].map((address) => inner.kill(address)));
       try {
         workflow.releaseBuild();
+        workflow.endBuild();
       } catch {
         /* a claim whose process ended is taken over by the next build */
       }

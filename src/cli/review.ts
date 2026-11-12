@@ -1,7 +1,7 @@
 /**
  * `shepherd review [--with <model>] [--json]` and `shepherd fix --tab|--list [--json]`: thin adapters over `Workflow.review`
- * and the fix methods (`orchestrator/review.ts`, `review-latest.ts`). Without a UI binding (no `report`, `review` picker or
- * `startTurn`), a review returns its whole markdown report as the result text, and its model pass and every fix run in a herdr
+ * and the fix methods (`orchestrator/review.ts`, `review-latest.ts`). With no `report` listener a review returns its whole
+ * markdown report as the result text, and its model pass and every fix run in a herdr
  * sub-agent (a Pi model as a `pi` child). Without herdr the checks and the static scan still run and the report says the
  * model pass needs herdr.
  *

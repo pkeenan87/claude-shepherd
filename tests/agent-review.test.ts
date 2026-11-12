@@ -3,10 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ReviewReport } from "../src/domain.js";
-import { COMMANDS } from "../src/commands.js";
 import { SCORE_RULES } from "../src/review/risk.js";
 import { claudeProjectSlug } from "../src/runner/agent-usage.js";
-import type { ChatFn } from "../src/providers/pi-chat.js";
 import { fakeHerdrClient, type FakeHerdrClientOptions, type FakeTab } from "./herdr-fake.js";
 import { sampleTicket, tempRepo, tieredConfig, ticketWorkflow, workflow } from "./helpers.js";
 
@@ -19,7 +17,7 @@ const FINDINGS = [
 const outFileOf = (prompt: string) => /findings to (\S+) \(no prose/.exec(prompt)![1]!;
 
 /** A repo with an uncommitted change, a workflow with `models.review` set, and a fake herdr whose agent writes `answer` to the findings file. */
-async function agentReview(options: { review?: string; answer?: string | undefined; fake?: FakeHerdrClientOptions; herdr?: boolean; withTask?: boolean; chat?: ChatFn } = {}) {
+async function agentReview(options: { review?: string; answer?: string | undefined; fake?: FakeHerdrClientOptions; herdr?: boolean; withTask?: boolean } = {}) {
   const config = tieredConfig(`models: { review: '${options.review ?? "agent:gemini"}' }\n`);
   const reports: string[] = [];
   const progress: string[] = [];
@@ -30,7 +28,7 @@ async function agentReview(options: { review?: string; answer?: string | undefin
     },
     ...options.fake,
   });
-  const extras = { config, herdrTimings: { sleep: async () => undefined }, herdr: options.herdr === false ? undefined : fake.client, report: (markdown: string) => void reports.push(markdown), progress: (text: string) => void progress.push(text), ...(options.chat ? { chat: options.chat } : {}) };
+  const extras = { config, herdrTimings: { sleep: async () => undefined }, herdr: options.herdr === false ? undefined : fake.client, report: (markdown: string) => void reports.push(markdown), progress: (text: string) => void progress.push(text), ticketModePath: "/shepherd/dist/ticket-mode.mjs" };
   const made = options.withTask ? await ticketWorkflow([sampleTicket("01")], extras) : { app: workflow(await tempRepo(), extras), cwd: "" };
   const app = made.app;
   mkdirSync(path.join(app.cwd, "src"), { recursive: true });
@@ -177,45 +175,41 @@ describe("/review with an agent", () => {
 });
 
 describe("/review --with", () => {
-  const chatLog = () => {
-    const models: string[] = [];
-    const chat: ChatFn = async (candidate) => {
-      models.push(`${candidate.provider}/${candidate.model}`);
-      return { text: "[]", usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, requests: 1 }, provider: candidate.provider, model: candidate.model };
-    };
-    return { models, chat };
-  };
-
-  it("runs a Pi model for one review instead of models.review", async () => {
-    const { models, chat } = chatLog();
-    const t = await agentReview({ review: "anthropic/claude-opus-5-5", chat });
+  it("runs a Pi model for one review, as a Pi child in a tab, instead of models.review", async () => {
+    const t = await agentReview({ review: "anthropic/claude-opus-5-5" });
     expect((await t.run("--with openai/gpt-6.1-sol:high")).ok).toBe(true);
-    expect(models).toEqual(["openai/gpt-6.1-sol"]);
-    expect(t.fake.tabs).toEqual([]);
+    expect(t.fake.tabs).toHaveLength(1);
+    expect(t.fake.tabs[0]!.options.argv).toContain("/shepherd/dist/ticket-mode.mjs");
+    expect(t.fake.tabs[0]!.model).toMatch(/^openai\/gpt-6\.1-sol/);
     // models.review itself is untouched.
     expect(t.app.config.models.review).toBe("anthropic/claude-opus-5-5");
     await t.run();
-    expect(models.at(-1)).toBe("anthropic/claude-opus-5-5");
+    expect(t.fake.tabs.at(-1)!.model).toMatch(/^anthropic\/claude-opus-5-5/);
   });
 
-  it("runs an agent for one review when models.review is a Pi model, with no one-shot call", async () => {
-    const { models, chat } = chatLog();
-    const t = await agentReview({ review: "anthropic/claude-opus-5-5", chat });
+  it("runs an agent for one review when models.review is a Pi model", async () => {
+    const t = await agentReview({ review: "anthropic/claude-opus-5-5" });
     expect((await t.run("--with agent:gemini/gemini-3")).ok).toBe(true);
-    expect(models).toEqual([]);
     expect(t.fake.tabs[0]!.options.argv).toEqual(["env", `PATH=${process.env.PATH}`, "gemini", "--approval-mode", "auto_edit", "-m", "gemini-3"]);
   });
 
   it("forces the model pass with --with when review.model is false, and stays off without it", async () => {
-    const { models, chat } = chatLog();
-    const t = await agentReview({ review: "anthropic/claude-opus-5-5", chat });
+    const t = await agentReview({ review: "anthropic/claude-opus-5-5" });
     (t.app.config.review as { model: boolean }).model = false;
     expect((await t.run()).ok).toBe(true);
-    expect(models).toEqual([]);
+    expect(t.fake.tabs).toEqual([]);
     expect((await t.run("--with openai/gpt-6.1-sol")).ok).toBe(true);
-    expect(models).toEqual(["openai/gpt-6.1-sol"]);
-    expect((await t.run("--with agent:gemini")).ok).toBe(true);
     expect(t.fake.tabs).toHaveLength(1);
+    expect((await t.run("--with agent:gemini")).ok).toBe(true);
+    expect(t.fake.tabs).toHaveLength(2);
+  });
+
+  it("a Pi model with no `pi` on PATH is an unavailable model pass, naming the problem", async () => {
+    const t = await agentReview({ review: "anthropic/claude-opus-5-5" });
+    (t.app as unknown as { ctx: { piAvailable: () => boolean } }).ctx.piAvailable = () => false;
+    expect((await t.run()).ok).toBe(true);
+    expect(t.fake.tabs).toEqual([]);
+    expect(t.report().modelReview!.error).toContain("`pi` is not on PATH");
   });
 
   it("refuses a bad ref, an unknown agent and other arguments", async () => {
@@ -226,16 +220,5 @@ describe("/review --with", () => {
     expect(await t.run("--with a/b c/d")).toMatchObject({ ok: false, code: "USAGE" });
     expect(await t.run("please")).toMatchObject({ ok: false, code: "USAGE" });
     expect(t.fake.tabs).toEqual([]);
-  });
-
-  it("completes --with, then the configured models and the built-in agents", async () => {
-    const t = await agentReview();
-    const spec = COMMANDS.find((item) => item.name === "review")!;
-    expect(spec.complete("", t.app)).toEqual([{ label: "--with", value: "--with" }]);
-    expect(spec.complete("--wi", t.app).map((item) => item.value)).toEqual(["--with"]);
-    const all = spec.complete("--with ", t.app).map((item) => item.value);
-    expect(all).toEqual(expect.arrayContaining(["anthropic/claude-sonnet-5-5", "openai/gpt-6.1-sol", "agent:claude", "agent:cursor-agent", "agent:opencode"]));
-    expect(spec.complete("--with agent:c", t.app).map((item) => item.value)).toEqual(["agent:claude", "agent:codex", "agent:cursor-agent"]);
-    expect(spec.complete("--with anthropic/claude-sonnet-5-5 x", t.app)).toEqual([]);
   });
 });

@@ -38,7 +38,7 @@ describe("task names", () => {
   });
 
   it("names new tasks uniquely, and a task without a name shows one from its request or its id", async () => {
-    const app = workflow(await tempRepo(), { startTurn: () => undefined });
+    const app = workflow(await tempRepo());
     await app.startPlan("Wire the cache layer");
     const first = app.store.load(app.activeTaskId()!)!;
     await app.startPlan("Wire the cache layer!");

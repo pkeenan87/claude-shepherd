@@ -200,8 +200,8 @@ describe("hook prompt: budgets", () => {
     expect(first.json?.systemMessage).toContain("Budget warning: today $8.50 of $10");
     expect(first.json?.decision).toBeUndefined();
     expect((await t.prompt("go again")).out).toBe("");
-    t.clock.at += 24 * 60 * MIN; // the next day: the spend no longer counts, so no warning either
-    expect((await t.prompt("go")).out).toBe("");
+    t.clock.at += 24 * 60 * MIN; // the next day: the spend no longer counts, so no budget warning (a day idle is the idle warning's)
+    expect((await t.prompt("go")).json?.systemMessage).toBeUndefined();
   });
 
   it("counts the daily budget across every registered repo", async () => {
@@ -220,11 +220,20 @@ describe("hook prompt: idle warning", () => {
   async function idle(config = CONFIG()) {
     const t = await setup(config);
     await t.begin();
-    appendFileSync(t.transcript, line("m1", usage(10, 10, 250_000)));
+    appendFileSync(t.transcript, line("m1", usage(10, 10, 250_000), new Date(t.clock.at).toISOString()));
     await t.stop();
     t.clock.at += 125 * MIN;
     return t;
   }
+
+  it("warns when Stop ran before the reply reached the transcript: the prompt reads the reply then", async () => {
+    const t = await setup();
+    await t.begin();
+    await t.stop(); // Claude Code has not written the reply yet
+    appendFileSync(t.transcript, line("late", usage(10, 10, 250_000), new Date(t.clock.at).toISOString()));
+    t.clock.at += 125 * MIN;
+    expect((await t.prompt("hello")).json?.decision).toBe("block");
+  });
 
   it("blocks over both thresholds, with tokens, idle time and the cache-write price", async () => {
     const t = await idle();
@@ -296,6 +305,29 @@ describe("hook pretool", () => {
       expect(denied(result), command).toMatchObject({ hookEventName: "PreToolUse", permissionDecision: "deny" });
       expect(denied(result).permissionDecisionReason, command).toContain("fix");
     }
+  });
+
+  it("denies the same while the build-in-progress marker is set, with no live claim, and stops denying when it is cleared", async () => {
+    const t = await setup();
+    const task = await addTask(workflow(t.repo), "fix");
+    expect(t.store.liveBuildClaim(task.taskId)).toBeUndefined();
+    expect((await t.pretool("git push")).out).toBe("");
+    t.store.markBuilding(task.taskId, BEFORE);
+    expect(t.store.buildInProgress(task.taskId)).toBe(true);
+    for (const command of ["git push origin main", "git checkout main", "git switch -c other", "git worktree add ../x"]) {
+      expect(denied(await t.pretool(command)), command).toMatchObject({ permissionDecision: "deny" });
+    }
+    expect((await t.pretool("git status")).out).toBe("");
+    t.store.clearBuilding(task.taskId);
+    expect(t.store.buildInProgress(task.taskId)).toBe(false);
+    expect((await t.pretool("git push")).out).toBe("");
+  });
+
+  it("does not apply a marker left on a closed task", async () => {
+    const t = await setup();
+    const task = await addTask(workflow(t.repo), "fix", { phase: "COMPLETE" });
+    t.store.markBuilding(task.taskId, BEFORE);
+    expect((await t.pretool("git push")).out).toBe("");
   });
 
   it("allows everything else during a build", async () => {

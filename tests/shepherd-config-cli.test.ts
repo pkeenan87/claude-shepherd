@@ -1,23 +1,23 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { localAdd, localDetect, localRemove, main, planActivate, planClose, setKey, show } from "../src/cli/chef-config.js";
+import { cursorModels, listsAutoSmart, localAdd, localDetect, localRemove, main, planActivate, planClose, setKey, show } from "../src/cli/shepherd-config.js";
 import { loadConfig } from "../src/config.js";
 import type { CostRecord, TaskState } from "../src/domain.js";
 import { TaskStore } from "../src/storage/store.js";
 
 type Doc = Record<string, any>;
 
-describe("chef-config CLI", () => {
+describe("shepherd-config CLI", () => {
   let home: string;
   let project: string;
   let priorHome: string | undefined;
   beforeEach(() => {
     priorHome = process.env.HOME;
-    home = mkdtempSync(path.join(tmpdir(), "chef-cli-home-"));
-    project = mkdtempSync(path.join(tmpdir(), "chef-cli-proj-"));
+    home = mkdtempSync(path.join(tmpdir(), "shepherd-cli-home-"));
+    project = mkdtempSync(path.join(tmpdir(), "shepherd-cli-proj-"));
     process.env.HOME = home;
     mkdirSync(path.join(home, ".claude"), { recursive: true });
     mkdirSync(path.join(project, ".shepherd"), { recursive: true });
@@ -106,7 +106,7 @@ describe("chef-config CLI", () => {
       user("models:\nbudgets:\n");
       expect((setKey(project, "models.review", "openai/gpt-6.1-sol") as Doc).ok).toBe(true);
       expect(loadConfig(project).models.review).toBe("openai/gpt-6.1-sol");
-      const fresh = mkdtempSync(path.join(tmpdir(), "chef-cli-home2-"));
+      const fresh = mkdtempSync(path.join(tmpdir(), "shepherd-cli-home2-"));
       process.env.HOME = fresh;
       expect((setKey(project, "budgets.taskUsd", "3") as Doc).ok).toBe(true);
       expect(readFileSync(path.join(fresh, ".claude", "shepherd.yaml"), "utf8")).toBe("budgets:\n  taskUsd: 3\n");
@@ -374,6 +374,91 @@ describe("chef-config CLI", () => {
       expect(r.code).toBe(0);
       expect(JSON.parse(r.stdout)).toMatchObject({ ok: false });
       expect(existsSync(userFile())).toBe(false);
+    });
+  });
+
+  describe("Cursor models", () => {
+    // The shape `cursor-agent --list-models` prints (checked on a real install): a heading, a blank line, then "<id> - <label>".
+    const listing = (ids: string[]) => async () => `Available models\n\n${ids.map((id) => `${id} - ${id === "auto" ? "Auto (default)" : `Label of ${id}`}`).join("\n")}\n`;
+    const at = () => path.join(home, "shepherd-home");
+
+    it("offers agent:cursor-agent/auto, and the three auto-smart settings only when cursor-agent lists auto-smart", async () => {
+      const without = (await cursorModels({ run: listing(["auto", "gpt-5", "sonnet-4.5"]), home: at() })) as Doc;
+      expect(without).toMatchObject({ ok: true, smart: false, source: "cursor-agent" });
+      expect(without.models).toEqual([{ model: "auto", value: "agent:cursor-agent/auto" }]);
+      rmSync(at(), { recursive: true, force: true });
+      const withSmart = (await cursorModels({ run: listing(["auto", "auto-smart", "gpt-5"]), home: at() })) as Doc;
+      expect(withSmart.smart).toBe(true);
+      expect(withSmart.models.map((m: Doc) => m.value)).toEqual([
+        "agent:cursor-agent/auto",
+        "agent:cursor-agent/auto-smart[optimize_for=cost]",
+        "agent:cursor-agent/auto-smart[optimize_for=balanced]",
+        "agent:cursor-agent/auto-smart[optimize_for=intelligence]",
+      ]);
+      expect(listsAutoSmart("auto - Auto (default)\ngpt-5.2 - GPT-5.2\n")).toBe(false);
+      expect(listsAutoSmart("\u001b[1mauto-smart\u001b[0m - Auto Smart")).toBe(true);
+      expect(listsAutoSmart("auto-smart-pro")).toBe(false);
+      expect(listsAutoSmart("xauto-smart")).toBe(false);
+      expect(listsAutoSmart("- auto-smart (Auto smart)")).toBe(true);
+    });
+
+    it("caches the answer for an hour and asks again after that, and a missing cursor-agent is cached as no router", async () => {
+      let asked = 0;
+      let clock = 1_000_000;
+      const run = async () => {
+        asked += 1;
+        return "auto-smart";
+      };
+      const options = { run, home: at(), now: () => clock };
+      expect(((await cursorModels(options)) as Doc).source).toBe("cursor-agent");
+      expect(((await cursorModels(options)) as Doc)).toMatchObject({ source: "cache", smart: true });
+      expect(asked).toBe(1);
+      clock += 61 * 60_000;
+      expect(((await cursorModels(options)) as Doc).source).toBe("cursor-agent");
+      expect(asked).toBe(2);
+      rmSync(at(), { recursive: true, force: true });
+      const missing = { run: async () => { throw new Error("spawn cursor-agent ENOENT"); }, home: at(), now: () => clock };
+      expect(await cursorModels(missing)).toMatchObject({ ok: true, smart: false, source: "unavailable", models: [{ model: "auto" }] });
+      expect(await cursorModels(missing)).toMatchObject({ source: "cache", smart: false });
+    });
+
+    it("runs cursor-agent --list-models with a short timeout", async () => {
+      const seen: { file: string; args: string[]; timeoutMs: number }[] = [];
+      await cursorModels({ run: async (file, args, timeoutMs) => (seen.push({ file, args, timeoutMs }), ""), home: at() });
+      expect(seen).toEqual([{ file: "cursor-agent", args: ["--list-models"], timeoutMs: 4000 }]);
+    });
+
+    it("saves a bracketed model to the user file and shows it as an agent row with its model", () => {
+      user("models:\n  low: xai/grok-4.7\n");
+      const r = setKey(project, "models.medium", "agent:cursor-agent/auto-smart[optimize_for=balanced]") as Doc;
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      expect(loadConfig(project).models.medium).toBe("agent:cursor-agent/auto-smart[optimize_for=balanced]");
+      expect(r.models.medium).toMatchObject({ kind: "agent", agent: "cursor-agent", agentModel: "auto-smart[optimize_for=balanced]" });
+      expect(r.agentsWithModelFlag).toContain("cursor-agent");
+    });
+
+    it("quotes the bracketed value when the file is flow style, where [ and ] would end the scalar", () => {
+      user("models: { low: xai/grok-4.7, medium: anthropic/claude-sonnet-5-5 }\nbudgets: { taskUsd: 5 }\n");
+      const r = setKey(project, "models.medium", "agent:cursor-agent/auto-smart[optimize_for=cost]") as Doc;
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      expect(readUser()).toContain("medium: \"agent:cursor-agent/auto-smart[optimize_for=cost]\"");
+      expect(loadConfig(project).models).toMatchObject({ low: "xai/grok-4.7", medium: "agent:cursor-agent/auto-smart[optimize_for=cost]" });
+      // And back to a plain value again.
+      expect((setKey(project, "models.medium", "agent:cursor-agent/auto") as Doc).ok).toBe(true);
+      expect(loadConfig(project).models.medium).toBe("agent:cursor-agent/auto");
+    });
+
+    it("is a command of the CLI, needs no --cwd, and still answers (auto) when cursor-agent is not installed", async () => {
+      const prior = process.env.PATH;
+      process.env.PATH = mkdtempSync(path.join(tmpdir(), "empty-path-"));
+      try {
+        let stdout = "";
+        const code = await main(["cursor-models"], (t) => (stdout += t), () => undefined);
+        expect(code).toBe(0);
+        expect(JSON.parse(stdout)).toMatchObject({ ok: true, smart: false, models: [{ model: "auto", value: "agent:cursor-agent/auto" }] });
+      } finally {
+        process.env.PATH = prior;
+      }
     });
   });
 });

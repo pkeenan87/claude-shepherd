@@ -11,7 +11,7 @@ import { runAgentTicket, type AgentTicketHost } from "./agent-ticket.js";
 import { runPiTicket, type HerdrTicketHost } from "./pi-ticket.js";
 
 /** The stop message when /build is not running inside herdr (or `hc` is missing). No ticket is started. */
-export const NEEDS_HERDR = "/build runs each ticket in a herdr tab; start Pi inside herdr and run /build again.";
+export const NEEDS_HERDR = "/build runs each ticket in a herdr tab; run shepherd from a terminal inside herdr (HC_TERMINAL_ID set, `hc` working) and run /build again.";
 
 /**
  * Why this process cannot start sub-agents, or where to put them. Needs only HC_TERMINAL_ID and a working `hc`; a `space` comes

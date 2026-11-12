@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { buildCostRecord, summarize } from "../src/cost/ledger.js";
-import { createRegistryChat } from "../src/providers/pi-chat.js";
-import { failedUsage, ProviderCallError } from "../src/providers/clients.js";
 import { Workflow } from "../src/orchestrator/service.js";
 import { sampleTicket, ticketWorkflow, tieredConfig } from "./helpers.js";
 
 const at = new Date("2026-10-14T12:00:00.000Z");
 const usage = (input: number, output: number, total?: number) => ({ input, output, cacheRead: 0, cacheWrite: 0, totalTokens: input + output, ...(total !== undefined ? { cost: { total } } : {}) });
 
-describe("Pi's own calls are ledgered from the session file", () => {
+describe("a Pi ticket child's own calls are ledgered from the session file", () => {
   const entries = [
     { type: "message", id: "m1", timestamp: "2026-10-14T12:01:00.000Z", message: {} },
     { type: "usage", id: "u1", timestamp: "2026-10-14T12:02:00.000Z", kind: "cache_warm", provider: "anthropic", model: "claude-opus-5-5", usage: usage(0, 1, 0.01) },
@@ -33,27 +31,6 @@ describe("Pi's own calls are ledgered from the session file", () => {
     expect(sweep(restarted, "01")).toEqual([]);
     expect(app.store.readLedger().filter((row) => row.id.startsWith("pi-"))).toHaveLength(3);
   });
-});
-
-describe("a failed call keeps what the provider billed", () => {
-  const registry = (result: { stopReason: string; usage: ReturnType<typeof usage> }) => ({
-    find: () => ({}),
-    isUsingOAuth: () => true,
-    complete: async () => ({ content: [], errorMessage: "stream timed out", ...result }),
-  });
-
-  it("carries the reported usage on the error of an aborted call, and Pi's price on a good one", async () => {
-    const aborted = createRegistryChat(registry({ stopReason: "aborted", usage: usage(30_000, 1_200, 0.2) }));
-    const error = await aborted({ provider: "anthropic", model: "claude-opus-5-5" }, { messages: [{ role: "user", content: "x" }] }).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(ProviderCallError);
-    expect(failedUsage(error)).toMatchObject({ input: 30_000, output: 1_200, listPriceUsd: 0.2 });
-    // A call that failed before any token is unknown, never zero.
-    const empty = createRegistryChat(registry({ stopReason: "error", usage: usage(0, 0) }));
-    expect(failedUsage(await empty({ provider: "anthropic", model: "m" }, { messages: [{ role: "user", content: "x" }] }).catch((caught: unknown) => caught))).toMatchObject({ input: null, output: null });
-    const good = createRegistryChat(registry({ stopReason: "stop", usage: usage(100, 10, 0.001) }));
-    expect((await good({ provider: "anthropic", model: "m" }, { messages: [{ role: "user", content: "x" }] })).usage).toMatchObject({ input: 100, output: 10, listPriceUsd: 0.001 });
-  });
-
 });
 
 describe("unknown cost estimates", () => {

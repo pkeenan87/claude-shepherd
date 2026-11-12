@@ -72,8 +72,7 @@ function specGuide(): string {
 
 function ticketsGuide(config: WorkflowConfig): string {
   const limits = localLimits(config);
-  // TICKET_RULES ends with Pi's review-screen paragraph; the CLI replaces it.
-  const rules = TICKET_RULES(CLOUD_TICKET_TOKENS).split("\n").slice(0, -1).join("\n");
+  const rules = TICKET_RULES(CLOUD_TICKET_TOKENS);
   return rephrase(`Next: write the tickets as JSON to a file and run \`shepherd plan tickets <file>\`. Every problem is listed; fix them all and resend.\n${rules}${limits.length ? `\n\n${LOCAL_SIZE_RULES(limits)}` : ""}\n\nTickets JSON:\n${TICKETS_SCHEMA}`);
 }
 
@@ -157,7 +156,7 @@ export async function planCommand({ workflow, config, args, stdin, cwd }: PlanIn
     switch (sub) {
       case "start": {
         const request = rest.length === 1 && rest[0] === "-" ? stdin.trim() : rest.join(" ").trim();
-        const started = await workflow.startPlan(request, { headless: true });
+        const started = await workflow.startPlan(request);
         if (!started.ok) return fail(started.code ?? "ERROR", cliText(started.text));
         const task = workflow.activeTaskId() ? workflow.store.load(workflow.activeTaskId()!) : undefined;
         const name = task ? displayName(task) : "";

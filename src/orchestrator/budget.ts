@@ -3,7 +3,7 @@ import { budgetStatusFor, buildCostRecord, recordsForDay, summarize, type SpendS
 import type { AgentLedgerEntry } from "../runner/agent-usage.js";
 import { active, fail, type WorkflowContext } from "./context.js";
 
-/** Pseudo task id for interactive turns that happen with no active task. */
+/** Pseudo task id for model calls made with no active task (the main session's turns, a review outside a task). */
 export const SESSION_TASK_ID = "session";
 
 export type BudgetStatus = "ok" | "soft" | "hard";
@@ -39,13 +39,6 @@ export function gateBudget(ctx: WorkflowContext, taskId: string): CommandResult 
   if (status === "hard") return fail("BUDGET", "Task or daily budget is exhausted. Unknown charges were not treated as zero.");
   if (status === "soft") warnSoft(ctx, taskId);
   return undefined;
-}
-
-/** Budget state for callers outside the workflow (for example web_search). Warns once on "soft". */
-export function checkBudget(ctx: WorkflowContext, taskId?: string): BudgetStatus {
-  const { status } = budgetState(ctx, taskId);
-  if (status === "soft") warnSoft(ctx, taskId ?? "daily");
-  return status;
 }
 
 export function record(
@@ -109,13 +102,6 @@ interface PiEntry {
 }
 
 /**
- * Ledgers the model calls Pi makes on its own, which never reach `message_end`: cache-warming refreshes (`usage`
- * entries), and the compaction and branch summaries Pi wrote itself (a hook's own summary is ledgered where it ran).
- * Each entry is recorded once, under the id `pi-<session>-<entry>`, at the entry's time, on the active task; entries
- * older than `since` (when this extension began watching the session) are left alone.
- * `model` is the session's model, the one Pi summarizes with; a usage entry names its own.
- */
-/**
  * The ledger ids of Pi's calls that are already recorded. The set is loaded once per context, so a second Workflow on the
  * same workspace (or a process that wrote since) could have recorded an id this one does not know; call this right
  * before recording an id that looks new, and it adds what the ledger file holds now.
@@ -126,6 +112,11 @@ export function refreshPiLedgered(ctx: WorkflowContext): Set<string> {
   return seen;
 }
 
+/**
+ * Ledgers the model calls a Pi ticket child makes on its own (cache-warming refreshes, the compaction and branch summaries
+ * Pi wrote itself; a hook's own summary is ledgered where it ran). Each entry is recorded once, under the id
+ * `pi-<session>-<entry>`, at the entry's time, on the active task. `model` is the one the child ran; a usage entry names its own.
+ */
 export function recordPiUsage(ctx: WorkflowContext, input: { sessionId: string; entries: readonly unknown[]; model?: { provider: string; id: string }; since?: Date; ticketId?: string }): CostRecord[] {
   const seen = (ctx.piLedgered ??= new Set(ctx.store.readLedger().map((entry) => entry.id).filter((id) => id.startsWith("pi-"))));
   const state = active(ctx);
@@ -158,16 +149,6 @@ export function recordPiUsage(ctx: WorkflowContext, input: { sessionId: string; 
     out.push(record(ctx, state?.taskId ?? SESSION_TASK_ID, state?.phase ?? "IDLE", "pi", provider, model, usage, "success", 0, input.ticketId ? `${job} · ticket ${input.ticketId}` : job, { id, at }));
   }
   return out;
-}
-
-/**
- * Ledgers one web_search call (Anthropic subscription, Haiku). The query text is deliberately not stored.
- * Per-search fees are not priced: only token cost from `pricing` rows is computed.
- */
-export function recordWebSearch(ctx: WorkflowContext, input: { provider: string; model: string; inputTokens: number; outputTokens: number; webSearchRequests: number; taskId?: string }): CostRecord {
-  const state = input.taskId ? ctx.store.load(input.taskId) : active(ctx);
-  const usage: TokenUsage = { input: input.inputTokens, output: input.outputTokens, cacheRead: 0, cacheWrite: 0, requests: 1 };
-  return record(ctx, state?.taskId ?? "web_search", state?.phase ?? "IDLE", "web_search", input.provider, input.model, usage, "success", 0, `web_search (${input.webSearchRequests} search request(s))`);
 }
 
 /**

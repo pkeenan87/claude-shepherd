@@ -1,8 +1,6 @@
-/** System-prompt text injected while /plan is running. Kept short: it is paid for on every planning turn. */
+/** Planning guidance the CLI hands to Claude Code (`shepherd plan start|spec`), and the prompt of a /build ticket. */
 
-export const MAX_INTERVIEW_QUESTIONS = 7;
-
-/** What a plan must contain. Shared by the interview, no-questions, and revision rules. */
+/** What a plan must contain. */
 export const TECHNICAL_PLAN = `The spec is a technical implementation plan, like an engineer's plan mode, not a product brief. Read the code that will change first. In plan_spec:
 - context: what the code does today in that area, naming the files and functions you read.
 - approach: the design. Components, data flow, new types and function signatures, error handling, config.
@@ -10,24 +8,6 @@ export const TECHNICAL_PLAN = `The spec is a technical implementation plan, like
 - reuse: existing functions and utilities to build on, with their paths.
 - verification: the tests to add and the commands to run to prove it works end to end.
 - complexity, risk (low, medium or high), securitySensitive (true when it touches authentication, authorization, secrets, credentials, permissions or production deployment) and classificationReason (one short sentence): you rate the task. They are shown with the plan.`;
-
-export const INTERVIEW_RULES = `[PLAN INTERVIEW]
-You are planning, not building. Edit and write tools are off; use read, grep, find, ls, safe bash, web_search and web_fetch.
-1. Look up FACTS yourself with tools. Ask the user only DECISIONS (scope, trade-offs, preferences) that tools cannot answer.
-2. Ask in rounds with plan_questions. A round holds every question whose prerequisites are settled. A question that depends on another answer sets dependsOn and waits for the next round.
-3. Ask 3-${MAX_INTERVIEW_QUESTIONS} questions in TOTAL across all rounds. Fewer for small tasks. Never more than ${MAX_INTERVIEW_QUESTIONS}; the tool rejects a round that would exceed it.
-4. Every question has 2-4 options, exactly one recommended option, and a one-line reason. Word each question so accepting the recommendation is the easy path.
-5. Stop when no open decision remains or the cap is reached. Then call plan_spec once.
-6. After plan_spec, draft the tickets and call plan_tickets. Do not write code or edit files.
-${TECHNICAL_PLAN}`;
-
-export const NO_QUESTIONS_RULES = `[PLAN WITHOUT QUESTIONS]
-The user chose --no-questions. Do not call plan_questions. Explore with read-only tools, then call plan_spec. Record each decision you would have asked about as an assumption (the choice you recommend and why). Then draft the tickets and call plan_tickets.
-${TECHNICAL_PLAN}`;
-
-export const REVISION_RULES = `[PLAN REVISION]
-The user reviewed the drafted plan and asked for changes (below). Do not call plan_questions. Re-read code where the changes need it, then call plan_spec with the full revised spec (not a diff), then plan_tickets with the full revised ticket list. Keep what the user did not ask to change.
-${TECHNICAL_PLAN}`;
 
 export const TICKET_RULES = (target: number) => `[PLAN TICKETS]
 The spec is saved. Break the work into tickets, then call plan_tickets.
@@ -38,8 +18,7 @@ The spec is saved. Break the work into tickets, then call plan_tickets.
 - List "files" for every file the ticket will touch (ownership hints; overlapping tickets are serialized).
 - id is a two-digit ordinal ("01"). blockedBy lists ids of tickets that must finish first. No cycles. Every ticket needs at least one acceptance criterion.
 - difficulty (low, medium or high) picks the model that builds the ticket: low = mechanical or small and well specified; medium = typical feature work; high = cross-cutting, tricky logic, concurrency, or a large blast radius. Rate a ticket high when it touches auth, secrets, untrusted input, or egress; the difficulty picks the implementer. Set it on every ticket. A failed ticket is retried on the next stronger model.
-- checks is optional: command lines /build runs in the repo root after the ticket, one command per entry with plain space-separated arguments. There is no shell: no &&, |, ;, redirects, quotes, $VARS or globs (use two entries instead of &&). Destructive commands are refused. Verification steps that are not a command belong in implementation.
-plan_tickets shows the user the full plan (spec and tickets) for review. If they request changes, revise and call plan_tickets again. Once saved, end your turn with a short summary; the user approves on the review screen (or later with /show-plan) and then runs /build. Do not implement anything.`;
+- checks is optional: command lines /build runs in the repo root after the ticket, one command per entry with plain space-separated arguments. There is no shell: no &&, |, ;, redirects, quotes, $VARS or globs (use two entries instead of &&). Destructive commands are refused. Verification steps that are not a command belong in implementation.`;
 
 /** One difficulty whose model is a local model with a known context window (`routing.localLimits`). */
 export interface LocalLimit {

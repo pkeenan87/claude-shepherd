@@ -79,7 +79,7 @@ export async function fixLatestInTab(ctx: WorkflowContext): Promise<CommandResul
   return fixed.ok ? done(fixed.text, { report: latest.file, findings: items.length }) : fail("REVIEW_FIX_FAILED", fixed.text);
 }
 
-/** `shepherd fix --list`: the message pi-chef sent to the session for "Fix all": the numbered findings and the rules. */
+/** `shepherd fix --list`: the message "Fix all" sends to a model: the numbered findings and the rules. */
 export async function fixList(ctx: WorkflowContext): Promise<CommandResult> {
   const latest = await latestReview(ctx);
   if (!latest) return nothing();

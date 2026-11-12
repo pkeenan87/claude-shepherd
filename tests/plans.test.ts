@@ -4,7 +4,6 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import type { TaskState } from "../src/domain.js";
-import type { PlanReviewRequest } from "../src/orchestrator/service.js";
 import { activeTask } from "../src/orchestrator/tasks.js";
 import { addTask, contextOf, sampleSpec, sampleTicket, SpyGit, tempRepo, tieredConfig, workflow } from "./helpers.js";
 
@@ -15,7 +14,7 @@ async function setup(extras: Parameters<typeof workflow>[1] = {}) {
   const cwd = await tempRepo();
   const spy = new SpyGit(cwd);
   const reports: string[] = [];
-  const app = workflow(cwd, { git: spy, report: (markdown) => void reports.push(markdown), startTurn: () => undefined, ...extras });
+  const app = workflow(cwd, { git: spy, report: (markdown) => void reports.push(markdown), ...extras });
   const main = await git(cwd, "branch", "--show-current");
   await git(cwd, "branch", "shepherd/alpha");
   const a = await addTask(app, "alpha", { branch: "shepherd/alpha", phase: "IMPLEMENTING", at: "2026-10-01T09:00:00.000Z" });
@@ -101,46 +100,40 @@ describe("/plans", () => {
     expect(t.app.activeTaskId()).toBe(t.a.taskId);
   });
 
-  it("posts the plan of a draft with the approve picker", async () => {
-    const seen: PlanReviewRequest[] = [];
+  it("switches to a draft, names its plan header, and does not approve it", async () => {
     const cwd = await tempRepo();
-    const app = workflow(cwd, { config: tieredConfig(), startTurn: () => undefined });
+    const app = workflow(cwd, { config: tieredConfig() });
     await app.startPlan("Add retry to the ingest parser");
     await app.savePlanSpec(sampleSpec);
     await app.commitTickets([sampleTicket("01")]);
     const draft = app.activeTaskId()!;
     await app.startPlan("Something else entirely");
     expect(app.activeTaskId()).not.toBe(draft);
-    // bind() resets the hooks it is given; review is set per bind, as the extension does for each command.
-    app.bind({ review: async (request: PlanReviewRequest) => (seen.push(request), { value: "approve" }) });
     const result = await app.plans("retry-ingest-parser");
     expect(result.ok, result.text).toBe(true);
     expect(app.activeTaskId()).toBe(draft);
-    expect(seen).toHaveLength(1);
-    expect(seen[0]!.title).toBe("retry-ingest-parser · Plan v1 (draft)");
-    expect(seen[0]!.markdown.startsWith("**Task retry-ingest-parser** · plan draft")).toBe(true);
-    expect(seen[0]!.actions.map((action) => action.value)).toEqual(["approve", "revise", "close"]);
-    expect(app.store.load(draft)!.approvedVersion).toBe(1);
-    expect(result.text).toContain("Approved plan v1");
+    expect(result.text).toContain("Switched to retry-ingest-parser");
+    expect(result.text).toContain("**Task retry-ingest-parser** · plan draft");
+    expect(app.store.load(draft)!.approvedVersion).toBeUndefined();
   });
 });
 
 describe("/plans close", () => {
   it("asks first when the task has unfinished tickets, and keeps it open when declined", async () => {
     const asked: string[] = [];
+    let answer = false;
     const cwd = await tempRepo();
-    const app = workflow(cwd, { config: tieredConfig(), startTurn: () => undefined });
+    const app = workflow(cwd, { config: tieredConfig(), confirm: async (title, message) => (asked.push(`${title}: ${message}`), answer) });
     await app.startPlan("Add retry to the ingest parser");
     await app.savePlanSpec(sampleSpec);
     await app.commitTickets([sampleTicket("01"), sampleTicket("02")]);
     const id = app.activeTaskId()!;
-    app.bind({ confirm: async (title, message) => (asked.push(`${title}: ${message}`), false) });
     const declined = await app.plans("close retry-ingest-parser");
     expect(declined.code).toBe("DECLINED");
     expect(asked).toHaveLength(1);
     expect(asked[0]).toContain("2 ticket(s) not built");
     expect(app.store.load(id)!.phase).not.toBe("COMPLETE");
-    app.bind({ confirm: async () => true });
+    answer = true;
     const closed = await app.plans("close retry-ingest-parser");
     expect(closed.ok, closed.text).toBe(true);
     expect(app.store.load(id)!.phase).toBe("COMPLETE");

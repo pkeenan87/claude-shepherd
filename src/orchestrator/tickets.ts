@@ -11,7 +11,6 @@ const ID = /^\d{2,3}$/;
 /** Lines that would be read back as ticket structure: a title or section heading, or the ticket separator. */
 const STRUCTURAL_LINE = /^[ \t]*(#{1,2}[ \t]|<!--[ \t]*ticket)/m;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const TICKET_BREAK = "<!-- ticket -->";
 
 export function groupId(ticket: Pick<Ticket, "id" | "slug">): string {
   return `${ticket.id}-${ticket.slug}`;
@@ -227,59 +226,6 @@ export function renderTicket(ticket: Ticket): string {
     "## Status: ready-for-agent",
     "",
   ].join("\n");
-}
-
-export function renderTicketsMarkdown(tickets: Ticket[]): string {
-  return tickets.map(renderTicket).join(`\n${TICKET_BREAK}\n\n`);
-}
-
-function section(body: string, heading: string): string {
-  const match = body.match(new RegExp(`^## ${heading}[^\\n]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "m"));
-  return match?.[1]?.trim() ?? "";
-}
-
-function jsonList(value: string | undefined): string[] {
-  if (!value) return [];
-  try {
-    return strings(JSON.parse(value));
-  } catch {
-    return [];
-  }
-}
-
-/** Parses the output of `renderTicketsMarkdown` (after a person edits it). Unparseable input yields no tickets. */
-export function parseTicketsMarkdown(markdown: string): unknown[] {
-  return markdown
-    .split(TICKET_BREAK)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const front = part.match(/^---\n([\s\S]*?)\n---\n?/);
-      const meta = new Map<string, string>();
-      for (const line of (front?.[1] ?? "").split("\n")) {
-        const at = line.indexOf(":");
-        if (at > 0) meta.set(line.slice(0, at).trim(), line.slice(at + 1).trim());
-      }
-      const body = front ? part.slice(front[0].length) : part;
-      const heading = body.match(/^# (\S+?):\s*(.*)$/m);
-      const blocked = section(body, "Blocked by");
-      return {
-        id: meta.get("id") ?? heading?.[1] ?? "",
-        slug: meta.get("slug") ?? "",
-        title: heading?.[2]?.trim() ?? "",
-        whatToBuild: section(body, "What to build"),
-        implementation: section(body, "Implementation") || undefined,
-        acceptanceCriteria: section(body, "Acceptance criteria")
-          .split("\n")
-          .map((line) => line.replace(/^\s*-\s*\[[ xX]\]\s*/, "").trim())
-          .filter(Boolean),
-        blockedBy: /^none$/i.test(blocked) ? [] : blocked.split("\n").map((line) => line.replace(/^\s*-\s*/, "").trim()).filter(Boolean),
-        difficulty: meta.get("difficulty"),
-        estimatedContextTokens: Number(meta.get("estimatedContextTokens")),
-        files: jsonList(meta.get("files")),
-        checks: jsonList(meta.get("checks")),
-      };
-    });
 }
 
 export type TicketStatus = "ready-for-agent" | "in-progress" | "done" | "failed";

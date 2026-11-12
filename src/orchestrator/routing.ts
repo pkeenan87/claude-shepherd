@@ -1,7 +1,6 @@
 import { modelText, parseTicketModel, type TicketModel } from "../agents.js";
-import { DEFAULT_MODELS, type WorkflowConfig } from "../config.js";
+import type { WorkflowConfig } from "../config.js";
 import type { Difficulty } from "../domain.js";
-import { registryProblem } from "../providers/usable.js";
 import { NO_PI } from "../runner/pi-path.js";
 import { iso, type WorkflowContext } from "./context.js";
 import type { LocalLimit } from "./prompts.js";
@@ -44,18 +43,6 @@ export function reviewModel(config: WorkflowConfig): TicketModel {
   return parseTicketModel(config.models.review, config);
 }
 
-/**
- * The Pi model that reviews a ticket during /build: `models.review` when it is a Pi model, else `models.high` when that
- * is one, else the default review model. A ticket review is one background call on the diff, so an agent cannot do it.
- */
-export function ticketReviewModel(config: WorkflowConfig): Extract<TicketModel, { kind: "pi" }> {
-  for (const text of [config.models.review, config.models.high, DEFAULT_MODELS.review]) {
-    const model = parseTicketModel(text, config);
-    if (model.kind === "pi") return model;
-  }
-  throw new Error("unreachable: the default review model is a Pi model");
-}
-
 /** A model chosen for a job. `blocked` is why it cannot be used right now (Pi does not know it, or holds no credentials). */
 export interface Route {
   /** The rung the job runs on; `review` for the review model. */
@@ -66,19 +53,17 @@ export interface Route {
 }
 
 /**
- * Checks a Pi model against the live session's registry (known, and holding credentials) when one is bound. An agent is
- * not checked here: it is a program in a herdr tab, not a Pi model.
+ * Checks that a Pi model can be run: there is a `pi` on PATH, when the host binds that check. An agent is not checked
+ * here (a program in a herdr tab); whether Pi knows a model or holds a login is the Pi child's to say.
  */
 export function routeFor(ctx: WorkflowContext, rung: Route["rung"], model: TicketModel): Route {
   const label = modelText(model);
-  // Without a Pi registry (outside Pi) a Pi model can only be checked for a `pi` to run it, when the host binds that check.
-  const problem = model.kind !== "pi" ? undefined : ctx.registry ? registryProblem(ctx.registry, model.provider, model.id) : ctx.piAvailable && !ctx.piAvailable() ? NO_PI : undefined;
+  const problem = model.kind === "pi" && ctx.piAvailable && !ctx.piAvailable() ? NO_PI : undefined;
   return { rung, model, label, ...(problem ? { blocked: `${label}: ${problem}` } : {}) };
 }
 
-/** Records a `route` event in the task log and tells the host's status callback (which redraws the status line from the task). */
+/** Records a `route` event in the task log. */
 export async function announce(ctx: WorkflowContext, taskId: string | undefined, purpose: string, route: Route): Promise<void> {
-  ctx.status?.(`${route.rung} → ${route.blocked ? "blocked" : route.label}`);
   if (!taskId) return;
   const [provider, model] = route.model.kind === "pi" ? [route.model.provider, route.model.id] : ["agent", route.label.slice("agent:".length)];
   await ctx.store.appendRoute(taskId, { purpose, tier: route.rung, provider, model, reason: route.blocked ?? "", considered: [] }, iso(ctx));

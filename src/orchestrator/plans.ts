@@ -18,11 +18,6 @@ export function plans(ctx: WorkflowContext, arg = ""): Promise<CommandResult> {
   });
 }
 
-/** Names of open tasks (and closed ones with `all`), newest first, for completion. */
-export function taskNames(ctx: WorkflowContext, all = false): string[] {
-  return listTasks(ctx).filter((task) => all || !isClosed(task)).map(displayName);
-}
-
 /** "14:32" for a time today, else "2026-10-12" (local time). */
 function updated(ctx: WorkflowContext, iso: string): string {
   const at = new Date(iso);

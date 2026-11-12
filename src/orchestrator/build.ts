@@ -133,7 +133,7 @@ export function startBuild(ctx: WorkflowContext): Promise<CommandResult> {
   return guard(async () => {
     let state = await requireActiveTask(ctx);
     if (!state.plan || !state.approvedVersion || state.approvedVersion !== state.plan.version) {
-      return fail("APPROVAL_REQUIRED", "/build refused: the plan is not approved. Approve it on the /plan review screen or with /show-plan.");
+      return fail("APPROVAL_REQUIRED", "/build refused: the plan is not approved. Approve it with `shepherd plan approve` (/shepherd:plan asks you).");
     }
     if (!state.plan.tickets?.length) return fail("NO_TICKETS", "Re-plan: this plan has no tickets, so /build has nothing to run. Run /plan again.");
     const gitProblem = await ctx.git.preflight();
@@ -150,7 +150,7 @@ export function startBuild(ctx: WorkflowContext): Promise<CommandResult> {
     // Released by runBuild when the build ends; a claim left by a process that died is taken over.
     const holder = ctx.store.claimBuild(state.taskId, ctx.git.repoRoot, iso(ctx));
     if (holder) {
-      return fail("BUILD_RUNNING", `Another Pi session (pid ${holder.pid}${holder.checkout ? `, in ${holder.checkout}` : ""}) is building ${displayName(state)}. Let it finish or stop it, then /build again.`);
+      return fail("BUILD_RUNNING", `Another shepherd build (pid ${holder.pid}${holder.checkout ? `, in ${holder.checkout}` : ""}) is building ${displayName(state)}. Let it finish or stop it, then /build again.`);
     }
 
     // A fresh build in this checkout commits the whole tree per ticket, so changes made before it would land in ticket
@@ -208,6 +208,8 @@ export function startBuild(ctx: WorkflowContext): Promise<CommandResult> {
       if (next.phase !== "IMPLEMENTING") next = move(next, "IMPLEMENTING", iso(ctx));
       return next;
     });
+    // Kept until the build is done or stopped (`runBuild`), also between `--once` runs: the pretool guard honours it.
+    ctx.store.markBuilding(state.taskId, iso(ctx));
     return done(`Building ${state.plan!.tickets!.length} ticket(s) on ${build.branch} (base ${build.base}).`, state);
   });
 }
@@ -768,6 +770,8 @@ export interface BuildWorkflow {
   startBuild(): Promise<CommandResult>;
   /** Drops this process's claim on the active task's build. */
   releaseBuild(): void;
+  /** Clears the active task's build-in-progress marker: the build is done or stopped. */
+  endBuild?(): void;
   nextChunk(): Promise<NextChunk>;
   finishChunk(ticketId: string, result: ChunkReply, options?: { final?: boolean }): Promise<ChunkFinish>;
   /** Rolls a ticket back to not started when its session never took a turn. */
@@ -783,9 +787,22 @@ export interface BuildWorkflow {
 /** Runs the approved tickets one chunk at a time, each in a fresh session on its routed model. Pure over its two arguments. */
 export async function runBuild(getWorkflow: () => BuildWorkflow, driver: BuildDriver, options: BuildRunOptions = {}): Promise<CommandResult> {
   // Taken by startBuild; released here however the build ends, from the workflow of the session the build ended in.
+  let result: CommandResult | undefined;
+  let started = false;
   try {
-    return await buildLoop(getWorkflow, driver, options);
+    result = await buildLoop(getWorkflow, driver, options, () => (started = true));
+    return result;
   } finally {
+    // The marker outlives a `--once` run that built a ticket and has more to go; any other end of a run that started clears it.
+    // A run that never started (no herdr, another build holds the claim, a refused start such as a dirty tree or a spent
+    // budget) changes nothing: the marker an earlier run set stays until a run ends the build, a signal arrives, or the task closes.
+    if (started && !(result?.ok && options.once && (result.data as BuildOnceData | undefined)?.done === false)) {
+      try {
+        getWorkflow().endBuild?.();
+      } catch {
+        /* nothing to clear */
+      }
+    }
     try {
       getWorkflow().releaseBuild();
     } catch {
@@ -794,11 +811,12 @@ export async function runBuild(getWorkflow: () => BuildWorkflow, driver: BuildDr
   }
 }
 
-async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver, options: BuildRunOptions): Promise<CommandResult> {
+async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver, options: BuildRunOptions, onStarted: () => void): Promise<CommandResult> {
   const unfit = await Promise.resolve(driver.preflight?.()).catch((error: unknown) => redact((error as Error)?.message || "The ticket runner is not available."));
   if (unfit) return fail("NEEDS_HERDR", unfit);
   const started = await getWorkflow().startBuild();
   if (!started.ok) return started;
+  onStarted();
   let stopped: string | undefined;
   let code = "BUILD_STOPPED";
   let built = 0;
