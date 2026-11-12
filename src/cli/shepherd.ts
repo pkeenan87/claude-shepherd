@@ -12,11 +12,14 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { ConfigFileError, fromMicroUsd, loadConfig, priceFor, toMicroUsd, type WorkflowConfig } from "../config.js";
 import { budgetStatusFor } from "../cost/ledger.js";
-import type { TaskState } from "../domain.js";
+import type { CommandResult, TaskState } from "../domain.js";
+import { done, fail } from "../orchestrator/context.js";
+import { redact } from "../redact.js";
 import { formatIdle, formatTokens } from "../orchestrator/format.js";
 import { Workflow } from "../orchestrator/service.js";
 import { dailyRecordsOf, readJson, registerRepo, registeredRepos, removeFile, sessionFile, shepherdHome, writeJson } from "../shepherd-home.js";
 import { guardHits, type GuardHit } from "./bash-guard.js";
+import { approvalReason, PLAN_USAGE, planCommand, plansCommand, taskCommand } from "./plan.js";
 
 const run = promisify(execFile);
 
@@ -25,6 +28,9 @@ const USAGE = `Usage:
   shepherd cost [--json]
   shepherd status
   shepherd hook <stop|prompt|pretool>   (reads the hook JSON on stdin)
+  shepherd plan <start|spec|tickets|show|revise|approve> ...   (shepherd plan --help)
+  shepherd plans [<name> | close <name> | --all]
+  shepherd task <list|use <name>|close [<name>]>
 `;
 
 export interface CliIo {
@@ -69,7 +75,7 @@ interface Session {
 type Opened = { session: Session } | { problem: "no-repo" } | { problem: "config"; message: string };
 
 /** The repo around `cwd`, its config, and a Workflow whose daily budget spans every registered repo. No UI. */
-async function open(cwd: string, options: CliOptions): Promise<Opened> {
+async function open(cwd: string, options: CliOptions, confirm?: () => Promise<boolean>): Promise<Opened> {
   let root: string;
   try {
     root = (await run("git", ["rev-parse", "--show-toplevel"], { cwd })).stdout.trim();
@@ -90,7 +96,7 @@ async function open(cwd: string, options: CliOptions): Promise<Opened> {
   const workspace = path.join(root, config.workspaceDir);
   ignoreWorkspace(workspace);
   await registerRepo(shepherd, workspace);
-  const workflow = new Workflow({ cwd: root, config, now, agentLogHome: home, dailyRecords: () => dailyRecordsOf([...registeredRepos(shepherd), workspace], now()) });
+  const workflow = new Workflow({ cwd: root, config, now, ...(confirm ? { confirm } : {}), agentLogHome: home, dailyRecords: () => dailyRecordsOf([...registeredRepos(shepherd), workspace], now()) });
   return { session: { root, workflow, config, shepherd, now } };
 }
 
@@ -233,6 +239,7 @@ const GUARD_WHY: Record<GuardHit, string> = {
   "git worktree": "a build is running in this checkout; worktree changes would break it",
   "shepherd run": "",
   "hc run": "",
+  "plan approve": "",
 };
 
 async function runHook(kind: string, input: HookInput, session: Session): Promise<object | undefined> {
@@ -293,6 +300,8 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
       const budget = budgetOf(session, task);
       if (budget.status === "hard") return deny(`Budget exhausted: ${budget.text}. Not starting more agent work (${spendHit === "hc run" ? "hc run" : "shepherd build/review/fix"}). Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.`);
     }
+    // Approval is the user's: Claude Code asks them, whatever the skill's allowed-tools say.
+    if (hits.includes("plan approve")) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: await approvalReason(workflow, config) } };
     return undefined;
   }
   return undefined;
@@ -346,6 +355,34 @@ async function hookCommand(kind: string | undefined, io: CliIo, options: CliOpti
   return 0;
 }
 
+// -- plan, plans, task -------------------------------------------------------------------------------------------
+
+/** Prints a command result: `{ok, code?, text, data?}` with --json, else the text (a failure on stderr). Returns the exit code. */
+function emit(result: CommandResult, json: boolean, io: CliIo): number {
+  if (json) io.out(`${JSON.stringify({ ok: result.ok, ...(result.code ? { code: result.code } : {}), text: result.text, ...(result.data !== undefined ? { data: result.data } : {}) }, null, 2)}\n`);
+  else (result.ok ? io.out : io.err)(`${result.text}\n`);
+  return result.ok ? 0 : 1;
+}
+
+async function planFamily(command: "plan" | "plans" | "task", rest: string[], io: CliIo, options: CliOptions): Promise<number> {
+  const json = rest.includes("--json");
+  const force = rest.includes("--force");
+  // "--help" is the only other flag; "-" (stdin) stays a word.
+  const args = rest.filter((word) => word !== "--json" && word !== "--force");
+  try {
+    if (args.includes("--help") || args.includes("-h")) return emit(done(PLAN_USAGE), json, io);
+    const cwd = options.cwd ?? process.cwd();
+    const opened = await open(cwd, options, force ? async () => true : undefined);
+    if ("problem" in opened) return emit(fail(opened.problem === "no-repo" ? "NO_REPO" : "CONFIG", opened.problem === "no-repo" ? "shepherd: not inside a git repository." : opened.message), json, io);
+    const { workflow, config } = opened.session;
+    const result =
+      command === "plan" ? await planCommand({ workflow, config, args, stdin: options.stdin ?? "", cwd }) : command === "plans" ? await plansCommand(workflow, args) : await taskCommand(workflow, args);
+    return emit(result, json, io);
+  } catch (error) {
+    return emit(fail("ERROR", redact((error instanceof Error ? error.message : String(error)).split("\n")[0]!)), json, io);
+  }
+}
+
 /** The workspace is shepherd's state, never the user's code: it ignores itself, so hooks never leave untracked files. */
 function ignoreWorkspace(workspace: string): void {
   const file = path.join(workspace, ".gitignore");
@@ -363,6 +400,7 @@ export async function main(argv: string[], io: CliIo = defaultIo, options: CliOp
   if (command === "cost") return costCommand(rest, io, options);
   if (command === "status") return statusCommand(io, options);
   if (command === "hook") return hookCommand(rest[0], io, options);
+  if (command === "plan" || command === "plans" || command === "task") return planFamily(command, rest, io, options);
   io.err(USAGE);
   return 2;
 }
@@ -394,5 +432,5 @@ if (isEntry()) {
 }
 
 function readStdinFor(argv: string[]): Promise<string> {
-  return argv[0] === "hook" ? readStdin() : Promise.resolve("");
+  return argv[0] === "hook" || argv.includes("-") ? readStdin() : Promise.resolve("");
 }

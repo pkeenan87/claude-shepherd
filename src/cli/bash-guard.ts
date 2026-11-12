@@ -4,7 +4,7 @@
  * `sh -c "..."`, which is what a model writes; it is a guard rail, not a sandbox.
  */
 
-export type GuardHit = "git push" | "git branch change" | "git worktree" | "shepherd run" | "hc run";
+export type GuardHit = "git push" | "git branch change" | "git worktree" | "shepherd run" | "hc run" | "plan approve";
 
 /** The commands of a line, each as its words with quotes removed. */
 export function commandsOf(line: string): string[][] {
@@ -90,9 +90,12 @@ function hitsOf(words: string[], depth: number): GuardHit[] {
     return [];
   }
   if (name === "hc" && command[1] === "run") return ["hc run"];
-  if ((name === "shepherd" || name === "shepherd.mjs") && ["build", "review", "fix"].includes(command[1] ?? "")) return ["shepherd run"];
+  // The subcommand words after the program, flags skipped (`shepherd --json plan approve`).
+  const verbs = (from: number) => command.slice(from).filter((word) => !word.startsWith("-"));
+  const shepherdHits = (verb: string[]): GuardHit[] => (["build", "review", "fix"].includes(verb[0] ?? "") ? ["shepherd run"] : verb[0] === "plan" && verb[1] === "approve" ? ["plan approve"] : []);
+  if (name === "shepherd" || name === "shepherd.mjs") return shepherdHits(verbs(1));
   // `node dist/shepherd.mjs build` and `npx shepherd build`
-  if ((name === "node" || name === "npx") && command[1] && base(command[1]).startsWith("shepherd") && ["build", "review", "fix"].includes(command[2] ?? "")) return ["shepherd run"];
+  if ((name === "node" || name === "npx") && command[1] && base(command[1]).startsWith("shepherd")) return shepherdHits(verbs(2));
   return [];
 }
 
