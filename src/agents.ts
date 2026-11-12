@@ -16,11 +16,12 @@ export interface TrustPrompt {
  * The trust prompts shepherd answers for the folder it builds in, for agents with no flag to skip one. Each was seen live
  * on 2026-11-12 in an untrusted folder; the match includes the selected "yes" option, so nothing is pressed on a prompt that
  * changed shape. Claude Code is left out on purpose: its prompt's default is "No, exit", and its tickets run in the repo the
- * main Claude Code session already trusts. cursor-agent takes `--trust`. Codex was not signed in, so its prompt is unseen.
+ * main Claude Code session already trusts. cursor-agent takes `--trust`.
  */
 export const TRUST_PROMPTS: Readonly<Record<string, TrustPrompt>> = {
   agy: { screen: /Do you trust the contents of this project\?[\s\S]*> Yes, I trust this folder/, keys: ["enter"] },
   grok: { screen: /Do you trust the contents of this directory\?[\s\S]*Yes, proceed\s+y\b/, keys: ["y"] },
+  codex: { screen: /Trust this folder\?[\s\S]*› 1\. Trust and continue/, keys: ["enter"] },
 };
 
 /**
@@ -31,8 +32,10 @@ export const TRUST_PROMPTS: Readonly<Record<string, TrustPrompt>> = {
  * as herdr sub-agents (a safe command ran unasked, `rm -rf .git` was stopped) unless marked:
  * - claude `--permission-mode auto`; grok `--permission-mode auto` (auto-review); agy `--mode auto` (its sandbox);
  * - cursor-agent `--auto-review --trust` (a server classifier; `--trust` skips the workspace prompt; `--force`/`--yolo` is not used);
- * - codex `--approve-for-me` (approvals go to its automatic review, in the workspace-write sandbox): not live-checked,
- *   codex was not signed in;
+ * - codex `--approve-for-me`: commands run in its workspace-write sandbox, and a request to leave it goes to Codex's
+ *   automatic review instead of the person. Live: `git status` and `rm -rf .git` (inside the sandbox) ran unasked, as
+ *   they did with the old `-s workspace-write -a on-request`; `touch ~/x` (outside) was approved by the review, where the
+ *   old flags asked;
  * - gemini `--approval-mode auto_edit` and opencode (no flag) have no classifier mode, only approve-everything
  *   (`yolo`, `--auto`), so they still ask for shell commands.
  */

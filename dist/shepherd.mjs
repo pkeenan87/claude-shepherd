@@ -7400,7 +7400,8 @@ var WorkflowError = class extends Error {
 // src/agents.ts
 var TRUST_PROMPTS = {
   agy: { screen: /Do you trust the contents of this project\?[\s\S]*> Yes, I trust this folder/, keys: ["enter"] },
-  grok: { screen: /Do you trust the contents of this directory\?[\s\S]*Yes, proceed\s+y\b/, keys: ["y"] }
+  grok: { screen: /Do you trust the contents of this directory\?[\s\S]*Yes, proceed\s+y\b/, keys: ["y"] },
+  codex: { screen: /Trust this folder\?[\s\S]*› 1\. Trust and continue/, keys: ["enter"] }
 };
 var BUILTIN_AGENTS = {
   claude: { run: ["claude", "--permission-mode", "auto"], modelFlag: "--model" },

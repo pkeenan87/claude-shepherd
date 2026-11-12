@@ -20,7 +20,7 @@ Run on 2026-11-12 with Opus 5.5 as the main session, from a `/plugin install` of
 
 - Two builds on a scratch repo with Pi-model tickets: `xai/grok-4.7` (low) and `anthropic/claude-sonnet-5-5` (medium, blocked by the first) as `pi -ne -e dist/ticket-mode.mjs` herdr sub-agents, each reviewed by `anthropic/claude-opus-5-5` through Pi; checks, reviews, commits and the ledger rows (unpriced: shown as estimates).
 - `shepherd migrate-config` writing the real `~/.claude/shepherd.yaml`, `shepherd herdr-install`, and the panel docked in the `shepherd` layout of a live herdr app.
-- Agent permission modes as herdr sub-agents (no shepherd build, the same `hc run` and screen): `claude --permission-mode auto` ran `npm test` unasked; `grok --permission-mode auto` and `agy --mode auto` ran `git status` unasked and stopped `rm -rf .git` (grok's auto-review asked; agy's sandbox refused). agy's and grok's trust prompts as the trust matchers expect them; `cursor-agent --trust` opened with no prompt.
+- Agent permission modes as herdr sub-agents (no shepherd build, the same `hc run` and screen): `claude --permission-mode auto` ran `npm test` unasked; `grok --permission-mode auto` and `agy --mode auto` ran `git status` unasked and stopped `rm -rf .git` (grok's auto-review asked; agy's sandbox refused). `codex --approve-for-me` ran `git status` and `rm -rf .git` (inside its sandbox) unasked and had `touch ~/x` approved by its automatic review (the old `-a on-request` asked). agy's, grok's and codex's trust prompts answered through `openTab` with the real `hc`; `cursor-agent --trust` opened with no prompt.
 
 The earlier live runs used Claude Code on Haiku for the main session and the agents; the skills are written for Opus 5.5.
 
@@ -31,8 +31,8 @@ Unit tests cover the code around these with fakes; none ran against a live servi
 - The other `PreToolUse` denies in a live session (`git push` and `git worktree` during a build; `shepherd build|review|fix` and `hc run` over budget).
 - macOS: the hooks and `bin/shepherd` run `node`; a Claude Code tab started by a launchd herdr server may not have `node` on PATH. Check `which node` in a herdr Claude tab first.
 - Pi-model tickets: the turn limit and the steer at it, and the `local` registration (Qwen 3.8 27B preset) against a live llama-server.
-- A whole `shepherd build` answering agy's or grok's trust prompt (the matchers and keys were checked live by hand, not through a build), and agy or grok as ticket builders.
-- Codex as a ticket builder or reviewer: its default command (`--approve-for-me`) and its trust prompt (codex was not signed in), the rollout files as the meter reads them, and that they are flushed when the agent reports idle.
+- A whole `shepherd build` answering a trust prompt (checked through `openTab` live, not a full build), and agy or grok as ticket builders.
+- Codex as a ticket builder or reviewer: the rollout files as the meter reads them, and that they are flushed when the agent reports idle.
 - Cursor: `cursor-agent --auto-review --trust` as a ticket builder (its status bar read "Run Everything" with and without `--auto-review` on the machine checked, so the label may come from the account's Cursor settings; not investigated further) or reviewer, `--model 'auto-smart[optimize_for=balanced]'` accepted by a real `cursor-agent` and passed through `hc run` as one argument, and `auto-smart` appearing in `--list-models` (the router needs a Teams or Enterprise plan; the machine this was written on does not list it). Not metered either way.
 
 Also not yet run live: the build-in-progress marker held between real `shepherd build --once` runs, and the panel's Cursor buttons.

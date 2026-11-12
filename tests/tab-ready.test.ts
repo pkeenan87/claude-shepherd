@@ -46,10 +46,20 @@ posing security risks.
 Yes, proceed                 y
 No, quit                     n`;
 
+const CODEX_SCREEN = `  Folder access
+  /tmp/x/cx-test
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings.
+  trust these files. Your trust decision will be saved.
+› 1. Trust and continue
+  2. Back to Agent Command Center
+  enter continue · esc back`;
+
 describe("trust prompts", () => {
   it("match each agent's live prompt, and not one where 'yes' is not the selected option", () => {
     expect(TRUST_PROMPTS.agy!.screen.test(AGY_SCREEN)).toBe(true);
     expect(TRUST_PROMPTS.grok!.screen.test(GROK_SCREEN)).toBe(true);
+    expect(TRUST_PROMPTS.codex!.screen.test(CODEX_SCREEN)).toBe(true);
+    expect(TRUST_PROMPTS.codex!.screen.test(CODEX_SCREEN.replace("› 1.", "  1.").replace("  2. Back", "› 2. Back"))).toBe(false);
     expect(TRUST_PROMPTS.agy!.screen.test(AGY_SCREEN.replace("> Yes", "  Yes").replace("  No, exit", "> No, exit"))).toBe(false);
     expect(TRUST_PROMPTS.agy!.screen.test(GROK_SCREEN)).toBe(false);
     expect(TRUST_PROMPTS).not.toHaveProperty("claude"); // its default is "No, exit"; the main session already trusts the repo
