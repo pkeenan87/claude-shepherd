@@ -39,6 +39,8 @@ describe("/cost", () => {
     expect(markdown).toMatch(/\| batch summary \| 1 \| \$0\.0000 \| 1 \| - \| ≈ \$\d+\.\d{4} \|/);
     expect(markdown).toMatch(new RegExp(`\\| ${app.store.load(taskId)!.name} \\| 8 \\| \\$1\\.7000 \\| 1 \\| - \\| ≈ \\$1\\.70\\d\\d \\|`));
     expect(markdown).not.toMatch(/By phase|Last route|\{"/);
+    // The budget line counts the unknown row at its estimate, as the budget check does.
+    expect(markdown).toMatch(/Budget: task ≈ \$1\.7\d? \/ \$\d+ \(ok\) · daily ≈ \$1\.7\d? \/ \$\d+ \(ok\)/);
 
     const csv = await app.cost("csv");
     const file = (csv.data as { file: string }).file;

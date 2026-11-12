@@ -127,7 +127,7 @@ export async function runAgentReview(ctx: WorkflowContext, input: AgentPassInput
       progress(`could not ledger the review's usage: ${messageOf(error)}`);
     }
     const notMetered = rows.length > 0 && rows.every((entry) => entry.meter === "not-metered");
-    const left = (why: string) => `${why} (the herdr tab ${opened.name} is left open to read)`;
+    const left = (why: string) => `${why} (the herdr sub-agent ${opened.name} is left open to read)`;
     failure ??= program.failed?.();
     if (failure) return { ...unavailable(model, left(`${text} did not finish: ${failure}`)), ...(notMetered ? { notMetered } : {}) };
     if (!existsSync(outFile)) return { ...unavailable(model, left(`${text} did not write the findings file ${outFile}`)), ...(notMetered ? { notMetered } : {}) };
@@ -152,6 +152,6 @@ export async function runAgentReview(ctx: WorkflowContext, input: AgentPassInput
       ...(changed ? { error: `the working tree changed while ${text} reviewed it (it was told not to edit files); the findings may not match the diff above` } : { error: undefined }),
     };
   } catch (error) {
-    return unavailable(model, `${text} could not review: ${messageOf(error)}${tab ? ` (the herdr tab ${tab.name} is left open)` : ""}`);
+    return unavailable(model, `${text} could not review: ${messageOf(error)}${tab ? ` (the herdr sub-agent ${tab.name} is left open)` : ""}`);
   }
 }

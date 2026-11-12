@@ -10388,8 +10388,8 @@ function tabName(task, ticketId, attempt2, at = Date.now(), prefix = "shep") {
 var messageOf = (error) => redact(error instanceof Error && error.message ? error.message : String(error));
 var defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function waitProblem(waited, tab, minutes) {
-  if (waited.status === "ended") return `the herdr tab ${tab} ended${waited.exitCode !== null ? ` (exit ${waited.exitCode})` : ""}`;
-  if (waited.timedOut) return `the herdr tab ${tab} was still working after ${minutes} minutes`;
+  if (waited.status === "ended") return `the herdr sub-agent ${tab} ended${waited.exitCode !== null ? ` (exit ${waited.exitCode})` : ""}`;
+  if (waited.timedOut) return `the herdr sub-agent ${tab} was still working after ${minutes} minutes`;
   if (waited.status === "error") return `the program in tab ${tab} reported an error; look at the tab`;
   return void 0;
 }
@@ -10489,7 +10489,7 @@ async function runAgentTicket(input, run3) {
       return { stopped: `Ticket ${ticketId} cannot start: ${messageOf(error)}. /build again.` };
     }
     const opened = tab;
-    host.progress(`Ticket ${ticketId} \xB7 running in herdr tab ${opened.name} (${label})`);
+    host.progress(`Ticket ${ticketId} \xB7 running in herdr sub-agent ${opened.name} (${label})`);
     let sends = 0;
     let metered = false;
     let unmeteredLogged = false;
@@ -10549,7 +10549,7 @@ ${summaryRule(summaryFile)}` : prompt);
     await run3(session);
     return void 0;
   } catch (error) {
-    return { stopped: `Ticket ${ticketId} stopped: ${messageOf(error)}${tab ? ` (herdr tab ${tab.name} is left open)` : ""}. /build resumes it.` };
+    return { stopped: `Ticket ${ticketId} stopped: ${messageOf(error)}${tab ? ` (herdr sub-agent ${tab.name} is left open)` : ""}. /build resumes it.` };
   }
 }
 function readSummary(file) {
@@ -10748,7 +10748,7 @@ async function runPiTicket(input, run3) {
       return { stopped: `Ticket ${ticketId} cannot start: ${early2 ? `${redact(early2)}. The tab is left open` : messageOf(error)}. /build again.` };
     }
     const opened = tab;
-    host.progress(`Ticket ${ticketId} \xB7 running in herdr tab ${opened.name} (${modelLabel})`);
+    host.progress(`Ticket ${ticketId} \xB7 running in herdr sub-agent ${opened.name} (${modelLabel})`);
     const early = readStatus(statusFile).error;
     if (early) return { stopped: `Ticket ${ticketId} cannot start: ${redact(early)}. Tab ${opened.name} is left open. /build again.` };
     let swept = false;
@@ -10783,12 +10783,12 @@ async function runPiTicket(input, run3) {
     await run3(session);
     return void 0;
   } catch (error) {
-    return { stopped: `Ticket ${ticketId} stopped: ${messageOf(error)}${tab ? ` (herdr tab ${tab.name} is left open)` : ""}. /build resumes it.` };
+    return { stopped: `Ticket ${ticketId} stopped: ${messageOf(error)}${tab ? ` (herdr sub-agent ${tab.name} is left open)` : ""}. /build resumes it.` };
   }
 }
 
 // src/runner/ticket.ts
-var NEEDS_HERDR = "/build runs each ticket in a herdr tab; run shepherd from a terminal inside herdr (HC_TERMINAL_ID set, `hc` working) and run /build again.";
+var NEEDS_HERDR = "/build runs each ticket in a herdr sub-agent; run shepherd from a terminal inside herdr (HC_TERMINAL_ID set, `hc` working) and run /build again.";
 async function herdrSpace(client, visible = false) {
   if (!client) return { problem: "no herdr client" };
   try {
@@ -10905,7 +10905,7 @@ async function askInTab(ctx, input) {
       cost2 = null;
       progress(`could not ledger the review's usage: ${messageOf(error)}`);
     }
-    const left = (why) => `${why} (the herdr tab ${opened.name} is left open to read)`;
+    const left = (why) => `${why} (the herdr sub-agent ${opened.name} is left open to read)`;
     const branchAfter = await ctx.git.currentBranch().catch(() => void 0);
     const headAfter = await ctx.git.head().catch(() => void 0);
     if (branchBefore && branchAfter && branchAfter !== branchBefore) return failed(left(`${label} left ${branchBefore} and is on ${branchAfter}; shepherd left HEAD alone`));
@@ -10926,7 +10926,7 @@ async function askInTab(ctx, input) {
     tab = void 0;
     return { parsed, costUsd: cost2, by: label };
   } catch (error) {
-    return failed(`${label} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr tab ${tab.name} is left open)` : ""}`);
+    return failed(`${label} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr sub-agent ${tab.name} is left open)` : ""}`);
   }
 }
 
@@ -12605,7 +12605,7 @@ async function runAgentReview(ctx, input, progress) {
       progress(`could not ledger the review's usage: ${messageOf(error)}`);
     }
     const notMetered = rows.length > 0 && rows.every((entry) => entry.meter === "not-metered");
-    const left = (why) => `${why} (the herdr tab ${opened.name} is left open to read)`;
+    const left = (why) => `${why} (the herdr sub-agent ${opened.name} is left open to read)`;
     failure ??= program.failed?.();
     if (failure) return { ...unavailable(model, left(`${text} did not finish: ${failure}`)), ...notMetered ? { notMetered } : {} };
     if (!existsSync6(outFile)) return { ...unavailable(model, left(`${text} did not write the findings file ${outFile}`)), ...notMetered ? { notMetered } : {} };
@@ -12628,7 +12628,7 @@ async function runAgentReview(ctx, input, progress) {
       ...changed ? { error: `the working tree changed while ${text} reviewed it (it was told not to edit files); the findings may not match the diff above` } : { error: void 0 }
     };
   } catch (error) {
-    return unavailable(model, `${text} could not review: ${messageOf(error)}${tab ? ` (the herdr tab ${tab.name} is left open)` : ""}`);
+    return unavailable(model, `${text} could not review: ${messageOf(error)}${tab ? ` (the herdr sub-agent ${tab.name} is left open)` : ""}`);
   }
 }
 
@@ -12807,7 +12807,7 @@ async function runFixInTab(ctx, input) {
     const name = tabName(input.taskName, "fix", 1, at);
     const headBefore = await ctx.git.head().catch(() => void 0);
     const branchBefore = await ctx.git.currentBranch().catch(() => void 0);
-    progress(`opening ${label} in a herdr tab to fix the findings`);
+    progress(`opening ${label} in a herdr sub-agent to fix the findings`);
     tab = await openTab({
       ...ctx.herdrTimings,
       ...program.readyTimeoutMs ? { readyTimeoutMs: program.readyTimeoutMs } : {},
@@ -12821,7 +12821,7 @@ async function runFixInTab(ctx, input) {
       blockedNotice: `The fix (${label}) is waiting for you in herdr sub-agent ${name} (agents list)`
     });
     const opened = tab;
-    progress(`fixing in herdr tab ${opened.name} (${label})`);
+    progress(`fixing in herdr sub-agent ${opened.name} (${label})`);
     let failure;
     try {
       await opened.prompt(input.prompt);
@@ -12843,13 +12843,13 @@ async function runFixInTab(ctx, input) {
       notes.push(`The fix committed anyway; shepherd moved HEAD back to ${headBefore.slice(0, 7)} (git reset --soft), so its changes are staged, not committed.`);
     }
     const reason = failure ?? program.failed?.();
-    if (reason) return { ok: false, text: [`The fix on ${label} did not finish: ${reason} (the herdr tab ${opened.name} is left open to read).`, ...notes].join("\n") };
+    if (reason) return { ok: false, text: [`The fix on ${label} did not finish: ${reason} (the herdr sub-agent ${opened.name} is left open to read).`, ...notes].join("\n") };
     const said = redact((await program.reply(opened)).trim()).slice(-REPLY_CHARS);
     await opened.close();
     tab = void 0;
     return { ok: true, text: [`Fixed in tab ${opened.name} (${label}), nothing committed.`, ...said ? ["", said, ""] : [], ...notes, "Run /review to check."].join("\n") };
   } catch (error) {
-    return { ok: false, text: `The fix on ${label} stopped: ${messageOf(error)}${tab ? ` (herdr tab ${tab.name} is left open)` : ""}.` };
+    return { ok: false, text: `The fix on ${label} stopped: ${messageOf(error)}${tab ? ` (herdr sub-agent ${tab.name} is left open)` : ""}.` };
   }
 }
 
@@ -12913,6 +12913,9 @@ async function fixList(ctx) {
 
 // src/orchestrator/reports.ts
 import path17 from "node:path";
+function budgetSpent(summary) {
+  return summary.unknownRecords > 0 ? `\u2248 ${formatUsdShort(summary.knownUsd + summary.estimatedUnknownUsd)}` : formatUsdShort(summary.knownUsd);
+}
 function cost(ctx, format = "") {
   return guard(() => costReport(ctx, format.trim()));
 }
@@ -12956,7 +12959,7 @@ async function costReport(ctx, format) {
   const markdown = [
     `## Cost \xB7 ${line}`,
     "",
-    `Budget: task ${formatUsdShort(budget.task.knownUsd)} / $${ctx.config.budgets.taskUsd} (${statusFor(ctx, budget.task, ctx.config.budgets.taskUsd)}) \xB7 daily ${formatUsdShort(budget.daily.knownUsd)} / $${ctx.config.budgets.dailyUsd} (${statusFor(ctx, budget.daily, ctx.config.budgets.dailyUsd)})`,
+    `Budget: task ${budgetSpent(budget.task)} / $${ctx.config.budgets.taskUsd} (${statusFor(ctx, budget.task, ctx.config.budgets.taskUsd)}) \xB7 daily ${budgetSpent(budget.daily)} / $${ctx.config.budgets.dailyUsd} (${statusFor(ctx, budget.daily, ctx.config.budgets.dailyUsd)})`,
     ...unpriced.length ? ["", `No pricing row for ${unpriced.join(", ")}: their spend is unknown. Add a row to pricing.`] : [],
     "",
     "### By model",
@@ -13661,7 +13664,7 @@ async function planCommand({ workflow, config, args, stdin, cwd }) {
 
 ${stage === "tickets" ? ticketsGuide(config) : `${specGuide()}
 
-After the spec is saved, the tickets. ${ticketsGuide(config)}`}`, { ...started.data, name, stage });
+Saving the spec prints the ticket rules and schema.`}`, { ...started.data, name, stage });
       }
       case "spec": {
         const input = readJsonInput(rest[0], stdin, cwd, "spec");

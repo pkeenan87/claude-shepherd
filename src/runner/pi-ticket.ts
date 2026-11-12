@@ -120,7 +120,7 @@ export async function runPiTicket(input: PiTicketInput, run: (session: ChunkSess
       return { stopped: `Ticket ${ticketId} cannot start: ${early ? `${redact(early)}. The tab is left open` : messageOf(error)}. /build again.` };
     }
     const opened = tab;
-    host.progress(`Ticket ${ticketId} · running in herdr tab ${opened.name} (${modelLabel})`);
+    host.progress(`Ticket ${ticketId} · running in herdr sub-agent ${opened.name} (${modelLabel})`);
     const early = readStatus(statusFile).error;
     if (early) return { stopped: `Ticket ${ticketId} cannot start: ${redact(early)}. Tab ${opened.name} is left open. /build again.` };
 
@@ -157,6 +157,6 @@ export async function runPiTicket(input: PiTicketInput, run: (session: ChunkSess
     await run(session);
     return undefined;
   } catch (error) {
-    return { stopped: `Ticket ${ticketId} stopped: ${messageOf(error)}${tab ? ` (herdr tab ${tab.name} is left open)` : ""}. /build resumes it.` };
+    return { stopped: `Ticket ${ticketId} stopped: ${messageOf(error)}${tab ? ` (herdr sub-agent ${tab.name} is left open)` : ""}. /build resumes it.` };
   }
 }

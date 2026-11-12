@@ -61,7 +61,7 @@ export async function runFixInTab(ctx: WorkflowContext, input: FixInput): Promis
     const name = tabName(input.taskName, "fix", 1, at);
     const headBefore = await ctx.git.head().catch(() => undefined);
     const branchBefore = await ctx.git.currentBranch().catch(() => undefined);
-    progress(`opening ${label} in a herdr tab to fix the findings`);
+    progress(`opening ${label} in a herdr sub-agent to fix the findings`);
     tab = await openTab({
       ...ctx.herdrTimings,
       ...(program.readyTimeoutMs ? { readyTimeoutMs: program.readyTimeoutMs } : {}),
@@ -75,7 +75,7 @@ export async function runFixInTab(ctx: WorkflowContext, input: FixInput): Promis
       blockedNotice: `The fix (${label}) is waiting for you in herdr sub-agent ${name} (agents list)`,
     });
     const opened = tab;
-    progress(`fixing in herdr tab ${opened.name} (${label})`);
+    progress(`fixing in herdr sub-agent ${opened.name} (${label})`);
     let failure: string | undefined;
     try {
       await opened.prompt(input.prompt);
@@ -98,12 +98,12 @@ export async function runFixInTab(ctx: WorkflowContext, input: FixInput): Promis
       notes.push(`The fix committed anyway; shepherd moved HEAD back to ${headBefore.slice(0, 7)} (git reset --soft), so its changes are staged, not committed.`);
     }
     const reason = failure ?? program.failed?.();
-    if (reason) return { ok: false, text: [`The fix on ${label} did not finish: ${reason} (the herdr tab ${opened.name} is left open to read).`, ...notes].join("\n") };
+    if (reason) return { ok: false, text: [`The fix on ${label} did not finish: ${reason} (the herdr sub-agent ${opened.name} is left open to read).`, ...notes].join("\n") };
     const said = redact((await program.reply(opened)).trim()).slice(-REPLY_CHARS);
     await opened.close();
     tab = undefined;
     return { ok: true, text: [`Fixed in tab ${opened.name} (${label}), nothing committed.`, ...(said ? ["", said, ""] : []), ...notes, "Run /review to check."].join("\n") };
   } catch (error) {
-    return { ok: false, text: `The fix on ${label} stopped: ${messageOf(error)}${tab ? ` (herdr tab ${tab.name} is left open)` : ""}.` };
+    return { ok: false, text: `The fix on ${label} stopped: ${messageOf(error)}${tab ? ` (herdr sub-agent ${tab.name} is left open)` : ""}.` };
   }
 }
