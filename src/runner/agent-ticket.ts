@@ -98,7 +98,7 @@ export async function runAgentTicket(input: AgentTicketInput, run: (session: Chu
       return { stopped: `Ticket ${ticketId} cannot start: ${messageOf(error)}. /build again.` };
     }
     const opened = tab;
-    host.progress(`Ticket ${ticketId} · running in herdr tab ${opened.name} (${label})`);
+    host.progress(`Ticket ${ticketId} · running in herdr sub-agent ${opened.name} (${label})`);
 
     let sends = 0;
     let metered = false;
@@ -162,7 +162,7 @@ export async function runAgentTicket(input: AgentTicketInput, run: (session: Chu
     await run(session);
     return undefined;
   } catch (error) {
-    return { stopped: `Ticket ${ticketId} stopped: ${messageOf(error)}${tab ? ` (herdr tab ${tab.name} is left open)` : ""}. /build resumes it.` };
+    return { stopped: `Ticket ${ticketId} stopped: ${messageOf(error)}${tab ? ` (herdr sub-agent ${tab.name} is left open)` : ""}. /build resumes it.` };
   }
 }
 

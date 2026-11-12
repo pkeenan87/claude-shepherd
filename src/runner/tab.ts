@@ -51,8 +51,8 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 
 /** Why a wait did not end in a settled tab, or undefined. */
 export function waitProblem(waited: WaitResult, tab: string, minutes: number): string | undefined {
-  if (waited.status === "ended") return `the herdr tab ${tab} ended${waited.exitCode !== null ? ` (exit ${waited.exitCode})` : ""}`;
-  if (waited.timedOut) return `the herdr tab ${tab} was still working after ${minutes} minutes`;
+  if (waited.status === "ended") return `the herdr sub-agent ${tab} ended${waited.exitCode !== null ? ` (exit ${waited.exitCode})` : ""}`;
+  if (waited.timedOut) return `the herdr sub-agent ${tab} was still working after ${minutes} minutes`;
   if (waited.status === "error") return `the program in tab ${tab} reported an error; look at the tab`;
   return undefined;
 }

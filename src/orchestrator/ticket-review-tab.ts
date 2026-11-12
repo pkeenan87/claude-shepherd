@@ -105,7 +105,7 @@ export async function askInTab<T>(ctx: WorkflowContext, input: TabReviewInput<T>
       cost = null;
       progress(`could not ledger the review's usage: ${messageOf(error)}`);
     }
-    const left = (why: string) => `${why} (the herdr tab ${opened.name} is left open to read)`;
+    const left = (why: string) => `${why} (the herdr sub-agent ${opened.name} is left open to read)`;
     const branchAfter = await ctx.git.currentBranch().catch(() => undefined);
     const headAfter = await ctx.git.head().catch(() => undefined);
     if (branchBefore && branchAfter && branchAfter !== branchBefore) return failed(left(`${label} left ${branchBefore} and is on ${branchAfter}; shepherd left HEAD alone`));
@@ -126,6 +126,6 @@ export async function askInTab<T>(ctx: WorkflowContext, input: TabReviewInput<T>
     tab = undefined;
     return { parsed, costUsd: cost, by: label, };
   } catch (error) {
-    return failed(`${label} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr tab ${tab.name} is left open)` : ""}`);
+    return failed(`${label} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr sub-agent ${tab.name} is left open)` : ""}`);
   }
 }

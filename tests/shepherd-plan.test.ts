@@ -69,7 +69,8 @@ describe("shepherd plan", () => {
     expect(start.json?.ok).toBe(true);
     expect(start.json?.data.name).toBe("retry-ingest-parser");
     expect(start.json?.text).toContain("shepherd plan spec");
-    expect(start.json?.text).toContain('"estimatedContextTokens"'); // the schema is printed
+    expect(start.json?.text).toContain('"classificationReason"'); // the spec schema is printed
+    expect(start.json?.text).not.toContain('"estimatedContextTokens"'); // the ticket schema comes once, when the spec is saved
 
     // Approving before there are tickets fails.
     const early = await t.cli(["plan", "approve", "--json"]);

@@ -1,12 +1,17 @@
 import path from "node:path";
 import { type CommandResult, type CostRecord } from "../domain.js";
-import { summarize, toCsv, unpricedModels } from "../cost/ledger.js";
+import { summarize, toCsv, unpricedModels, type SpendSummary } from "../cost/ledger.js";
 import { atomicWrite } from "../storage/store.js";
 import { sweepAgentLogs } from "./agent-sweep.js";
 import { budgetState, statusFor } from "./budget.js";
 import { done, fail, guard, type WorkflowContext } from "./context.js";
 import { activeTask, displayName, listTasks } from "./tasks.js";
 import { cell, formatUsd, formatUsdShort, mdTable } from "./format.js";
+
+/** What a budget has spent: the known sum, or "≈ known + estimate" when some calls have an unknown cost (as budgets count it). */
+function budgetSpent(summary: SpendSummary): string {
+  return summary.unknownRecords > 0 ? `≈ ${formatUsdShort(summary.knownUsd + summary.estimatedUnknownUsd)}` : formatUsdShort(summary.knownUsd);
+}
 
 export function cost(ctx: WorkflowContext, format = ""): Promise<CommandResult> {
   return guard(() => costReport(ctx, format.trim()));
@@ -69,7 +74,7 @@ async function costReport(ctx: WorkflowContext, format: string): Promise<Command
   const markdown = [
     `## Cost · ${line}`,
     "",
-    `Budget: task ${formatUsdShort(budget.task.knownUsd)} / $${ctx.config.budgets.taskUsd} (${statusFor(ctx, budget.task, ctx.config.budgets.taskUsd)}) · daily ${formatUsdShort(budget.daily.knownUsd)} / $${ctx.config.budgets.dailyUsd} (${statusFor(ctx, budget.daily, ctx.config.budgets.dailyUsd)})`,
+    `Budget: task ${budgetSpent(budget.task)} / $${ctx.config.budgets.taskUsd} (${statusFor(ctx, budget.task, ctx.config.budgets.taskUsd)}) · daily ${budgetSpent(budget.daily)} / $${ctx.config.budgets.dailyUsd} (${statusFor(ctx, budget.daily, ctx.config.budgets.dailyUsd)})`,
     ...(unpriced.length ? ["", `No pricing row for ${unpriced.join(", ")}: their spend is unknown. Add a row to pricing.`] : []),
     "",
     "### By model",

@@ -162,7 +162,7 @@ export async function planCommand({ workflow, config, args, stdin, cwd }: PlanIn
         const name = task ? displayName(task) : "";
         const stage = workflow.planningStage();
         const head = `${(started.data as { resumed?: boolean } | undefined)?.resumed ? "Resuming" : "Planning"} task ${name}. Do not edit the repository while planning.`;
-        return done(`${head}\n\n${stage === "tickets" ? ticketsGuide(config) : `${specGuide()}\n\nAfter the spec is saved, the tickets. ${ticketsGuide(config)}`}`, { ...(started.data as object), name, stage });
+        return done(`${head}\n\n${stage === "tickets" ? ticketsGuide(config) : `${specGuide()}\n\nSaving the spec prints the ticket rules and schema.`}`, { ...(started.data as object), name, stage });
       }
       case "spec": {
         const input = readJsonInput(rest[0], stdin, cwd, "spec");

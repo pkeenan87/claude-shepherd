@@ -75,7 +75,7 @@ describe("Fix all in a tab with an agent", () => {
     expect(prompt).not.toContain("Run /review again");
     expect(result.text).toContain("Addressed 1. Left none.");
     expect(result.text).toContain("Run /review to check.");
-    expect(t.progress.join("\n")).toContain(`herdr tab ${tab.options.name}`);
+    expect(t.progress.join("\n")).toContain(`herdr sub-agent ${tab.options.name}`);
     expect(fixRows(t)).toHaveLength(1);
     expect(fixRows(t)[0]).toMatchObject({ taskId: "session", provider: "agent", model: "gemini", meter: "not-metered", actualUsd: 0, phase: "REVIEWING", tier: "medium", reason: "review fix" });
   });
