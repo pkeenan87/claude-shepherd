@@ -140,4 +140,47 @@ describe("shepherd migrate-config", () => {
     expect(result.out).toContain("workspaceDir is .pi-workflows");
     expect(readFileSync(newFile(), "utf8")).toContain("workspaceDir: .pi-workflows");
   });
+
+  it("carries an older pi-chef file's tiers and local server over to models and local, on shepherd's template", async () => {
+    writeOld(`# old pi-chef comments
+localMode:
+  difficulties: [low, medium]
+providers:
+  local:
+    baseUrl: http://127.0.0.1:8081/v1
+  anthropic:
+    apiKeyFallback: true
+tiers:
+  local:
+    - { provider: local, model: "Qwen3.8-27B", contextWindow: 131072 }
+  ticketLow:
+    - { provider: xai, model: "grok-4.7" }
+  premium:
+    - { provider: anthropic, model: claude-opus-5-5 }
+`);
+    const result = await run();
+    expect(result.code, result.err).toBe(0);
+    expect(result.out).toContain("Carried over from pi-chef's tiers: models.low: xai/grok-4.7, models.review: anthropic/claude-opus-5-5, local (from providers.local and tiers.local).");
+    expect(result.out).toContain("shepherd has no local mode: to build them there always, set models.low: local/Qwen3.8-27B and models.medium: local/Qwen3.8-27B.");
+    expect(result.out).toContain("commented template with those settings added at the end");
+    const text = readFileSync(newFile(), "utf8");
+    expect(text).not.toContain("old pi-chef comments");
+    expect(text).not.toMatch(/^\{\}/m);
+    expect(text).toContain("# budgets:");
+    const config = loadConfig(home);
+    expect(config.models).toMatchObject({ low: "xai/grok-4.7", review: "anthropic/claude-opus-5-5" });
+    expect(config.local).toEqual({ baseUrl: "http://127.0.0.1:8081/v1", models: [{ id: "Qwen3.8-27B", contextWindow: 131072 }] });
+  });
+
+  it("keeps models the file already names over its tiers, and writes the template when nothing applies", async () => {
+    writeOld("models: { medium: agent:claude }\ntiers:\n  ticketMedium: [{ provider: anthropic, model: claude-sonnet-5-5 }]\n  ticketHigh: [{ provider: openai, model: gpt-6.1-sol }]\n");
+    const kept = await run();
+    expect(kept.code, kept.err).toBe(0);
+    expect(loadConfig(home).models).toMatchObject({ medium: "agent:claude", high: "openai/gpt-6.1-sol" });
+    writeOld("tiers: { cheap: [] }\nreview: { maxChunks: 3 }\n");
+    const empty = await run("--force");
+    expect(empty.code, empty.err).toBe(0);
+    expect(empty.out).toContain("Nothing in it applied to shepherd");
+    expect(readFileSync(newFile(), "utf8")).toContain("# models:");
+  });
 });
