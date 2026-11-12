@@ -4,6 +4,16 @@ claude-shepherd is pi-chef rebuilt as a **Claude Code plugin**. Claude Code (Opu
 
 Source: pi-chef `main` at `318af03`, after PR #34: Fix all in a tab, outside-chef sweep, idle warning.
 
+## Status
+
+Phases 1 to 5 are done. One stacked PR each, in order: #1 skeleton and cost, #2 plan, #3 build, #4 review, #5 panel, `migrate-config`, docs and the removal of the Pi extension. Each keeps tests, typecheck and the bundle green, and `claude plugin validate .` passing.
+
+- Pi is gone from the main session: no extension, commands, plan tools, web tools or one-shot model calls. It remains only as the worker for Pi-model and local-model tickets, reviews and fixes (`src/ticket-mode.ts`, bundled to `dist/ticket-mode.mjs`).
+- Added beyond the plan: a build-in-progress marker so the `PreToolUse` guard also holds between `shepherd build --once` runs, and Cursor's `auto` and `auto-smart[optimize_for=...]` models in the panel.
+- Not yet verified live: see [COMPATIBILITY.md](COMPATIBILITY.md#unverified-live).
+
+The first two open points below are settled: `dist/` is committed (a plugin install runs it without `npm install`), and the main session's transcript has the shape the Claude parser reads.
+
 ## What stays the same
 
 - `/plan` → `/build` → `/review` → `/cost`.
@@ -11,7 +21,7 @@ Source: pi-chef `main` at `318af03`, after PR #34: Fix all in a tab, outside-che
 - Every model call ledgered, priced from `pricing`. Unknown cost is never $0.
 - Budgets per task and per day. Hard stops, soft warning, idle-cache warning.
 - One branch per build, and the tool owns every commit. It never pushes or opens a PR.
-- The herdr config panel (`chef-config`) and `npm run herdr:install`.
+- The herdr config panel (`shepherd-config`, was `chef-config`) and `npm run herdr:install`.
 
 ## What changes
 

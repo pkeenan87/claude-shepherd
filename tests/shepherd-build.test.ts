@@ -7,6 +7,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { main, type CliOptions } from "../src/cli/shepherd.js";
 import { ticketModePath } from "../src/cli/build-host.js";
 import { fakeHerdrClient, type FakeHerdrClientOptions, type FakeTab } from "./herdr-fake.js";
+import { TaskStore } from "../src/storage/store.js";
 import { checkRunner, sampleSpec, tempRepo } from "./helpers.js";
 
 const priorHome = process.env.HOME;
@@ -227,6 +228,86 @@ describe("shepherd build", () => {
     expect(exits).toEqual([130]);
     expect(t.fake.tabs[0]!.killed).toBe(true);
     expect(existsSync(path.join(t.taskDir(), "build.claim"))).toBe(false);
+    release();
+    await running;
+  });
+});
+
+describe("the build-in-progress marker", () => {
+  const pretool = (t: Awaited<ReturnType<typeof setup>>, command: string) => t.cli(["hook", "pretool"], JSON.stringify({ hook_event_name: "PreToolUse", session_id: "s", tool_name: "Bash", tool_input: { command } }));
+  const blocked = (result: { json?: unknown }) => (result.json as { hookSpecificOutput?: { permissionDecision?: string } } | undefined)?.hookSpecificOutput?.permissionDecision === "deny";
+
+  it("is set when a build starts, kept between `build --once` runs (so the guard holds with no claim), and cleared when the last ticket is built", async () => {
+    const t = await setup();
+    await t.approved();
+    expect(existsSync(path.join(t.taskDir(), "build.active"))).toBe(false);
+    expect(blocked(await pretool(t, "git push"))).toBe(false);
+    const first = await t.cli(["build", "--once", "--json"]);
+    expect(first.json?.data).toMatchObject({ outcome: "committed", done: false });
+    // Between tickets: no claim is held, but the build is in progress.
+    expect(existsSync(path.join(t.taskDir(), "build.claim"))).toBe(false);
+    expect(existsSync(path.join(t.taskDir(), "build.active"))).toBe(true);
+    expect(blocked(await pretool(t, "git push origin main"))).toBe(true);
+    expect(blocked(await pretool(t, "git checkout main"))).toBe(true);
+    expect(blocked(await pretool(t, "git worktree add ../x"))).toBe(true);
+    expect(blocked(await pretool(t, "git status"))).toBe(false);
+    const second = await t.cli(["build", "--once", "--json"]);
+    expect(second.json?.data).toMatchObject({ outcome: "committed", done: true });
+    expect(existsSync(path.join(t.taskDir(), "build.active"))).toBe(false);
+    expect(blocked(await pretool(t, "git push"))).toBe(false);
+  });
+
+  it("is cleared when a ticket stops the build, and when a full `shepherd build` ends", async () => {
+    const stopped = await setup({ check: () => ({ code: 1, stdout: "", stderr: "AssertionError: expected 1" }) });
+    await stopped.approved(1);
+    expect((await stopped.cli(["build", "--once", "--json"])).json?.ok).toBe(false);
+    expect(existsSync(path.join(stopped.taskDir(), "build.active"))).toBe(false);
+
+    const all = await setup();
+    await all.approved(2);
+    expect((await all.cli(["build", "--json"])).json?.ok).toBe(true);
+    expect(existsSync(path.join(all.taskDir(), "build.active"))).toBe(false);
+  });
+
+  it("is left alone by a run that never started (a spent budget, no herdr), and cleared with the task", async () => {
+    const t = await setup({ config: `${AGENTS}budgets: { taskUsd: 5 }\n` });
+    await t.approved();
+    await t.cli(["build", "--once", "--json"]);
+    expect(existsSync(path.join(t.taskDir(), "build.active"))).toBe(true);
+    // No herdr terminal: NEEDS_HERDR before startBuild. The earlier run's marker stays.
+    const noHerdr = await t.cli(["build", "--once", "--json"], "", { herdr: undefined, env: { SHEPHERD_HOME: path.join(t.home, "shepherd-home"), PATH: process.env.PATH } });
+    expect(noHerdr.json).toMatchObject({ ok: false, code: "NEEDS_HERDR" });
+    expect(existsSync(path.join(t.taskDir(), "build.active"))).toBe(true);
+    // A start refused for a spent budget is not an end of the build either: the guard keeps holding until it is closed or finished.
+    const taskId = path.basename(t.taskDir());
+    new TaskStore(path.join(t.repo, ".shepherd")).appendLedger({ id: "big", at: "2026-10-14T12:00:00.000Z", taskId, phase: "IMPLEMENTING", provider: "anthropic", model: "claude-opus-5-5", tier: "interactive", requests: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, actualUsd: 50, usageKnown: true, outcome: "success", retries: 0, reason: "observed assistant usage" });
+    const broke = await t.cli(["build", "--once", "--json"]);
+    expect(broke.json).toMatchObject({ ok: false, code: "BUDGET" });
+    expect(existsSync(path.join(t.taskDir(), "build.active"))).toBe(true);
+    const closed = await t.cli(["task", "close", "--force"]);
+    expect(closed.code, closed.err).toBe(0);
+    expect(existsSync(path.join(t.taskDir(), "build.active"))).toBe(false);
+  });
+
+  it("is cleared by a signal, with the claim", async () => {
+    let release: () => void = () => undefined;
+    const exits: number[] = [];
+    const t = await setup({
+      tickets: 1,
+      fake: {
+        onSend: async (tab) => {
+          if (tab.address === "t1") await new Promise<void>((resolve) => (release = resolve));
+        },
+      },
+    });
+    await t.approved();
+    const running = t.cli(["build", "--once", "--json"], "", { exit: (code) => void exits.push(code) });
+    for (let i = 0; i < 200 && t.fake.tabs[0]?.sends.length !== 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(existsSync(path.join(t.taskDir(), "build.active"))).toBe(true);
+    process.emit("SIGTERM");
+    for (let i = 0; i < 200 && exits.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(exits).toEqual([130]);
+    expect(existsSync(path.join(t.taskDir(), "build.active"))).toBe(false);
     release();
     await running;
   });

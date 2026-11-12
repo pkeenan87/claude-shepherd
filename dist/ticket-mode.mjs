@@ -7515,7 +7515,7 @@ var DEFAULTS = {
   budgets: { taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: DEFAULT_UNKNOWN_CALL_USD, idleWarnMinutes: 60, idleWarnTokens: 1e5 },
   checks: [],
   setup: [],
-  review: { model: true, tickets: true, maxDiffChars: 12e4, maxChunks: 6, timeoutMs: 3e5 },
+  review: { model: true, tickets: true, timeoutMs: 3e5 },
   pricing: []
 };
 var KNOWN_KEYS = {
@@ -7524,7 +7524,7 @@ var KNOWN_KEYS = {
   agents: void 0,
   budgets: ["taskUsd", "dailyUsd", "softWarningRatio", "unknownCallUsd", "idleWarnMinutes", "idleWarnTokens"],
   pricing: void 0,
-  review: ["model", "tickets", "maxDiffChars", "maxChunks", "timeoutMs"],
+  review: ["model", "tickets", "timeoutMs"],
   checks: void 0,
   setup: void 0,
   build: ["visibleTabs"],
@@ -7735,8 +7735,6 @@ function normalizeRaw(input, where, ignored) {
   if (review) {
     if (review.model !== void 0 && typeof review.model !== "boolean") invalid(where, "review.model", "must be a boolean");
     if (review.tickets !== void 0 && typeof review.tickets !== "boolean") invalid(where, "review.tickets", "must be a boolean");
-    checkNumber(review, "maxDiffChars", where, { min: 1e3, integer: true }, "review");
-    checkNumber(review, "maxChunks", where, { min: 1, integer: true }, "review");
     checkNumber(review, "timeoutMs", where, { min: 1e3, integer: true }, "review");
   }
   const local = normalizeLocal(out.local, where);

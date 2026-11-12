@@ -1,5 +1,6 @@
-// chef-config: a herdr side panel for shepherd. Four collapsible sections: the model for each ticket difficulty
-// (Pi model, local model or external agent), the local model server, the plans of the project, and what they cost.
+// shepherd-config: a herdr side panel for shepherd. Four collapsible sections: the model for each ticket difficulty
+// (a Pi-worker model, local model or external agent, with Cursor's models offered), the local model server, the plans of the
+// project, and what they cost. It reads and writes ~/.claude/shepherd.yaml.
 // Everything is read and written through the shepherd CLI named in install.json (written by `npm run herdr:install`):
 // `show` for the data, `set` / `local-add` / `local-remove` / `plan-activate` / `plan-close` for changes. Writes to the
 // user config carry --expect with the file's sha256 from the last show. This mod never writes a file itself and never
@@ -15,7 +16,7 @@ const MODEL_KEYS = ["low", "medium", "high", "review"];
 const KINDS = [["pi", "Pi"], ["local", "Local"], ["agent", "Agent"]];
 const SECTIONS = [["models", "Models"], ["local", "Local model"], ["plans", "Plans"], ["costs", "Costs"]];
 
-export default class ChefConfig extends View {
+export default class ShepherdConfig extends View {
   init(_props, cx) {
     this.root = null;
     this.start = null;
@@ -31,6 +32,7 @@ export default class ChefConfig extends View {
     this.draft = {};            // model key -> { kind }: a kind picked but not saved yet
     this.detected = null;       // the last local-detect result
     this.detectedFor = null;    // the root it was run for (the first load of a root detects once)
+    this.cursor = null;         // the Cursor models to offer ([{ model, value }]); null until asked once
     this.scope = "today";       // costs breakdown: "today" | "plan"
     this.seq = 0;               // bumped by every write; a load that started earlier is dropped
     try { this.collapsed = JSON.parse(localStorage.getItem("collapsed") ?? "{}"); } catch { this.collapsed = {}; }
@@ -112,7 +114,7 @@ export default class ChefConfig extends View {
   }
 
   async load(cx) {
-    const raw = await readTextFile(`${appHome()}/mods/chef-config/install.json`);
+    const raw = await readTextFile(`${appHome()}/mods/shepherd-config/install.json`);
     if (!raw) { this.failure = "install.json is missing: run `npm run herdr:install` in the shepherd checkout."; return; }
     const cli = JSON.parse(raw).cli;
     if (!Array.isArray(cli) || cli.length === 0) { this.failure = "install.json has no `cli` argv array: run `npm run herdr:install` again."; return; }
@@ -127,13 +129,25 @@ export default class ChefConfig extends View {
     const mine = this.seq;
     const json = await this.call(["show", "--cwd", root]);
     if (mine !== this.seq || this.busy.size > 0) return; // a write finished or is running: its result is newer
-    if (json.ok === false) { this.failure = json.error ?? "chef-config failed"; return; }
+    if (json.ok === false) { this.failure = json.error ?? "shepherd-config failed"; return; }
     this.failure = null;
     if (root !== this.root) { this.root = root; this.notes = {}; this.draft = {}; this.detected = null; }
     this.data = json;
     for (const key of Object.keys(this.notes)) if (this.notes[key].kind === "ok") delete this.notes[key];
     this.syncInputs();
     if (json.local.configured && this.detectedFor !== root) { this.detectedFor = root; this.detect(cx, true); }
+    if (this.cursor === null) this.loadCursor(cx);
+  }
+
+  // The Cursor picker: `auto`, and the auto-smart settings when `cursor-agent --list-models` lists auto-smart. Asked once
+  // (the CLI caches the list); not metered, and the router needs a Teams or Enterprise plan.
+  loadCursor(cx) {
+    this.cursor = [];
+    cx.spawn(async (cx) => {
+      const json = await this.call(["cursor-models"]);
+      this.cursor = json.ok === false || !Array.isArray(json.models) ? [] : json.models;
+      cx.notify();
+    });
   }
 
   async call(args) {
@@ -183,7 +197,7 @@ export default class ChefConfig extends View {
       this.seq++;
       this.busy.delete(noteKey);
       if (json.ok === false) {
-        this.notes[noteKey] = { kind: "err", text: json.error ?? "chef-config refused the change", needsForce: json.needsForce === true };
+        this.notes[noteKey] = { kind: "err", text: json.error ?? "shepherd-config refused the change", needsForce: json.needsForce === true };
         if (/changed since it was read/.test(json.error ?? "")) this.refresh(cx);
       } else {
         if (Array.isArray(json.plans)) { this.data = json; this.syncInputs(); }
@@ -371,7 +385,17 @@ export default class ChefConfig extends View {
             this.saveModel(key, "agent", pick, cx);
           },
         }))))
-        .child(this.input(`am:${key}`, t, busy));
+        .child(this.input(`am:${key}`, t, busy))
+        .when(row.kind === "agent" && row.agent === "cursor-agent" && (this.cursor ?? []).length > 0, (el) => el.child(v_flex().gap(4)
+          .child(div().text_size(11).text_color(t.dim).child("Cursor models (not metered; auto-smart needs a Teams or Enterprise plan)"))
+          .child(h_flex().gap(4).flex_wrap().children(this.cursor.map((c) => this.button(`cm-${key}-${c.model}`, c.model, t, {
+            selected: row.agentModel === c.model, disabled: busy,
+            onClick: (_e, cx) => {
+              const slot = this.inputs[`am:${key}`];
+              if (slot) { slot.state.set_value(c.model); slot.synced = c.model; }
+              this.saveModel(key, "agent", { agent: "cursor-agent", agentModel: c.model }, cx);
+            },
+          }))))));
     }
     const what = kind === "pi" ? "a model" : kind === "local" ? "a local model" : "an agent";
     return v_flex().id(`model-${key}`).gap(4)
@@ -538,7 +562,7 @@ export default class ChefConfig extends View {
 
   render(cx) {
     const t = theme();
-    const root = v_flex().id("chef-config").size_full().bg(t.surface).text_color(t.foreground).text_size(12);
+    const root = v_flex().id("shepherd-config").size_full().bg(t.surface).text_color(t.foreground).text_size(12);
     if (this.start && this.location() !== this.start && !this.loading) this.refresh(cx);
     if (this.failure && !this.data) return root.child(this.banner(this.failure, t.blocked, t));
     if (!this.data) return root.child(div().p(12).text_color(t.muted).child("Loading…"));

@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { contextMismatch, probeLocalContext, serverOrigin } from "../src/providers/local-context.js";
-import { warnLocalContext } from "../src/extension.js";
-import { parseConfig } from "../src/config.js";
 
 /** A fetch that answers from a table of URL to JSON body; anything else is a 404. */
 const fakeFetch = (routes: Record<string, unknown>, asked: string[] = []): typeof fetch =>
@@ -53,27 +51,5 @@ describe("contextMismatch", () => {
     expect(over).toContain("Set contextWindow: 32768");
     expect(contextMismatch("m", 8192, 32_768)).toContain("planned smaller");
     expect(contextMismatch("m", undefined, 32_768)).toContain("Pi assumes 128000");
-  });
-});
-
-describe("warnLocalContext", () => {
-  const config = parseConfig(`local:\n  baseUrl: "http://127.0.0.1:11434/v1"\n  models:\n    - { id: "qwen3.5:9b", contextWindow: 65536 }\n`);
-  const ui = () => {
-    const notices: string[] = [];
-    return { notices, ctx: { hasUI: true, ui: { notify: (message: string) => void notices.push(message) } } as never };
-  };
-
-  it("warns once with the served window", async () => {
-    const { notices, ctx } = ui();
-    await warnLocalContext(config, "qwen3.5:9b", ctx, fakeFetch({ "http://127.0.0.1:11434/api/ps": { models: [{ name: "qwen3.5:9b", context_length: 4096 }] } }));
-    expect(notices).toHaveLength(1);
-    expect(notices[0]).toContain("4096-token");
-  });
-
-  it("stays quiet when the server agrees or cannot be asked", async () => {
-    const { notices, ctx } = ui();
-    await warnLocalContext(config, "qwen3.5:9b", ctx, fakeFetch({ "http://127.0.0.1:11434/api/ps": { models: [{ name: "qwen3.5:9b", context_length: 65536 }] } }));
-    await warnLocalContext(config, "qwen3.5:9b", ctx, fakeFetch({}));
-    expect(notices).toEqual([]);
   });
 });

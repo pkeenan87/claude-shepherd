@@ -2,14 +2,11 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { loadConfig } from "../src/config.js";
-import { bindWorkflow, registerWorkflow } from "../src/extension.js";
+import { ConfigFileError, loadConfig } from "../src/config.js";
 
 const priorHome = process.env.HOME;
 afterEach(() => {
   process.env.HOME = priorHome;
-  bindWorkflow(undefined);
 });
 
 const LOCAL = `local:
@@ -25,25 +22,6 @@ function home(yaml: string): string {
   return dir;
 }
 
-function fakePi(options: { failProvider?: string } = {}) {
-  const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
-  const registered: string[] = [];
-  const pi = {
-    registerCommand() {},
-    on(event: string, handler: (event: unknown, ctx: unknown) => unknown) {
-      handlers.set(event, handler);
-      return () => undefined;
-    },
-    appendEntry() {},
-    registerProvider(name: string) {
-      if (name === options.failProvider) throw new Error("Pi refused: Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123");
-      registered.push(name);
-    },
-  };
-  registerWorkflow(pi as unknown as ExtensionAPI);
-  return { handlers, registered };
-}
-const ui = (cwd: string, notes: string[]) => ({ cwd, hasUI: true, ui: { notify: (m: string, level?: string) => notes.push(`${level}:${m}`), setStatus() {}, confirm: async () => false } });
 const project = () => mkdtempSync(path.join(tmpdir(), "pi-proj-"));
 
 describe("config errors are shown", () => {
@@ -69,16 +47,19 @@ describe("config errors are shown", () => {
     expect(fileOf("models: { high: 'agent:nope' }\n", undefined)).toMatch(/\.claude\/shepherd\.yaml$/);
   });
 
-  it("an invalid model rejects the file and the session start names it", () => {
-    const dir = home("models: { high: 'not a ref' }\n");
-    expect(() => loadConfig(project())).toThrow(/models\.high is not valid/);
-    const { handlers } = fakePi();
-    const notes: string[] = [];
-    handlers.get("session_start")!({}, ui(project(), notes));
-    const text = notes.join("\n");
-    expect(text).toContain("warning:~/.claude/shepherd.yaml was ignored; built-in defaults are in use");
-    expect(text).toContain("models.high");
-    expect(dir).toBeTruthy();
+  it("an invalid model rejects the file with an error that names the file and the key", () => {
+    home("models: { high: 'not a ref' }\n");
+    const error = (() => {
+      try {
+        loadConfig(project());
+      } catch (caught) {
+        return caught as ConfigFileError;
+      }
+      return undefined;
+    })();
+    expect(error).toBeInstanceOf(ConfigFileError);
+    expect(error!.file).toMatch(/\.claude\/shepherd\.yaml$/);
+    expect(error!.reason).toMatch(/models\.high is not valid/);
   });
 
   it("an unknown agent in models is a config error", () => {
@@ -93,43 +74,28 @@ describe("config errors are shown", () => {
     expect(() => loadConfig(project())).toThrow(/local\.models\[0\]\.contextWindow/);
   });
 
-  it("a YAML error rejects the file and the session start says which file was ignored and why", () => {
+  it("a YAML error rejects the file and says why", () => {
     home("models: [unclosed\n");
-    const cwd = project();
-    expect(() => loadConfig(cwd)).toThrow(/YAML could not be read/);
-    const { handlers } = fakePi();
-    const notes: string[] = [];
-    expect(() => handlers.get("session_start")!({}, ui(cwd, notes))).not.toThrow();
-    const text = notes.join("\n");
-    expect(text).toContain("warning:~/.claude/shepherd.yaml was ignored; built-in defaults are in use");
-    expect(text).toContain("YAML could not be read");
-    // Shown once, though two steps of session start hit the same error.
-    expect(notes.filter((note) => note.includes("was ignored")).length).toBe(1);
+    expect(() => loadConfig(project())).toThrow(/YAML could not be read/);
   });
 
   it("a secret rejects the whole file and is never shown", () => {
     home(`${LOCAL}apiKey: sk-abcdefghijklmnopqrstuvwxyz0123456789\n`);
-    const cwd = project();
-    expect(() => loadConfig(cwd)).toThrow(/contains a secret/);
-    const { handlers } = fakePi();
-    const notes: string[] = [];
-    handlers.get("session_start")!({}, ui(cwd, notes));
-    expect(notes.join("\n")).toContain("shepherd.yaml was ignored");
-    expect(notes.join("\n")).not.toContain("sk-abcdefghijklmnopqrstuvwxyz");
+    let message = "";
+    try {
+      loadConfig(project());
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/contains a secret/);
+    expect(message).not.toContain("sk-abcdefghijklmnopqrstuvwxyz");
   });
 
-  it("registers the local provider at session start, and reports a refusal redacted", () => {
-    home(LOCAL);
-    const ok = fakePi();
-    ok.handlers.get("session_start")!({}, ui(project(), []));
-    expect(ok.registered).toEqual(["local"]);
-    bindWorkflow(undefined);
-    const refused = fakePi({ failProvider: "local" });
-    const notes: string[] = [];
-    refused.handlers.get("session_start")!({}, ui(project(), notes));
-    const text = notes.join("\n");
-    expect(text).toContain("provider local could not be registered with Pi: Pi refused");
-    expect(text).not.toContain("abcdefghijklmnopqrstuvwxyz0123");
+  it("accepts a Cursor model with a bracket suffix", () => {
+    home("models: { medium: 'agent:cursor-agent/auto-smart[optimize_for=balanced]', review: 'agent:cursor-agent/auto' }\n");
+    const config = loadConfig(project());
+    expect(config.models.medium).toBe("agent:cursor-agent/auto-smart[optimize_for=balanced]");
+    expect(config.models.review).toBe("agent:cursor-agent/auto");
   });
 });
 
@@ -152,6 +118,14 @@ describe("old settings", () => {
     writeFileSync(path.join(cwd, ".shepherd", "config.yaml"), "tiers: {}\nworkers: {}\n");
     const warning = (loadConfig(cwd).warnings ?? []).find((item) => item.startsWith("Ignored settings"))!;
     expect(warning).toBe("Ignored settings that are no longer used: tiers, workers. See docs/configuration.md for the current settings.");
+  });
+
+  it("review.maxDiffChars and review.maxChunks (the Pi extension's chat pass) are ignored with the others", () => {
+    home("review: { tickets: false, maxDiffChars: 50000, maxChunks: 3, timeoutMs: 60000 }\n");
+    const config = loadConfig(project());
+    expect(config.review).toEqual({ model: true, tickets: false, timeoutMs: 60000 });
+    const warning = (config.warnings ?? []).find((item) => item.startsWith("Ignored settings"))!;
+    expect(warning).toContain("review.maxDiffChars, review.maxChunks");
   });
 
   it("an old cost-workflow.yaml is not read", () => {

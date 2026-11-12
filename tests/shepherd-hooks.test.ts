@@ -298,6 +298,29 @@ describe("hook pretool", () => {
     }
   });
 
+  it("denies the same while the build-in-progress marker is set, with no live claim, and stops denying when it is cleared", async () => {
+    const t = await setup();
+    const task = await addTask(workflow(t.repo), "fix");
+    expect(t.store.liveBuildClaim(task.taskId)).toBeUndefined();
+    expect((await t.pretool("git push")).out).toBe("");
+    t.store.markBuilding(task.taskId, BEFORE);
+    expect(t.store.buildInProgress(task.taskId)).toBe(true);
+    for (const command of ["git push origin main", "git checkout main", "git switch -c other", "git worktree add ../x"]) {
+      expect(denied(await t.pretool(command)), command).toMatchObject({ permissionDecision: "deny" });
+    }
+    expect((await t.pretool("git status")).out).toBe("");
+    t.store.clearBuilding(task.taskId);
+    expect(t.store.buildInProgress(task.taskId)).toBe(false);
+    expect((await t.pretool("git push")).out).toBe("");
+  });
+
+  it("does not apply a marker left on a closed task", async () => {
+    const t = await setup();
+    const task = await addTask(workflow(t.repo), "fix", { phase: "COMPLETE" });
+    t.store.markBuilding(task.taskId, BEFORE);
+    expect((await t.pretool("git push")).out).toBe("");
+  });
+
   it("allows everything else during a build", async () => {
     const t = await building();
     for (const command of ["git checkout -- file.ts", "git checkout main -- file.ts", "git checkout .", "git status", "git commit -m 'git push later'", "git log --oneline", "ls ; echo git push", "npm test"]) {

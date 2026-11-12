@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
-import { registryProblem } from "../src/providers/usable.js";
 import { contextOf, tempRepo, tieredConfig, workflow } from "./helpers.js";
-import { CLOUD_TICKET_TOKENS, climbed, contextTarget, escalate, localLimits, modelFor, nextRung, reviewModel, routeFor, ticketReviewModel } from "../src/orchestrator/routing.js";
+import { CLOUD_TICKET_TOKENS, climbed, contextTarget, escalate, localLimits, modelFor, nextRung, reviewModel, routeFor } from "../src/orchestrator/routing.js";
 
 const LOCAL = `local:
   baseUrl: "http://127.0.0.1:8081/v1"
@@ -46,42 +45,22 @@ describe("modelFor and escalate", () => {
 });
 
 describe("review models", () => {
-  it("the ticket review uses models.review when it is a Pi model", () => {
-    expect(ticketReviewModel(parseConfig("models: { review: openai/gpt-6.1-sol:high }\n"))).toMatchObject({ provider: "openai", id: "gpt-6.1-sol" });
-  });
-
-  it("falls back to models.high when review is an agent, else to the default review model", () => {
-    expect(ticketReviewModel(parseConfig("models: { review: 'agent:claude', high: openai/gpt-6.1-sol }\n"))).toMatchObject({ provider: "openai", id: "gpt-6.1-sol" });
-    expect(ticketReviewModel(parseConfig("models: { review: 'agent:claude', high: 'agent:codex' }\n"))).toMatchObject({ provider: "anthropic", id: "claude-opus-5-5" });
+  it("the review model is models.review, a Pi model or an agent", () => {
+    expect(reviewModel(parseConfig("models: { review: openai/gpt-6.1-sol:high }\n"))).toMatchObject({ kind: "pi", provider: "openai", id: "gpt-6.1-sol", thinking: "high" });
     expect(reviewModel(parseConfig("models: { review: 'agent:claude/opus' }\n"))).toEqual({ kind: "agent", name: "claude", model: "opus" });
   });
 });
 
-describe("availability is Pi's registry", () => {
-  const registry = (known: Record<string, boolean | undefined>) => ({
-    find: (provider: string, id: string) => (`${provider}/${id}` in known ? { provider, id } : undefined),
-    hasConfiguredAuth: (model: { provider: string; id: string }) => known[`${model.provider}/${model.id}`] === true,
-  });
-
-  it("a model Pi does not know, or holds no credentials for, is blocked with the reason", () => {
-    const reg = registry({ "anthropic/a": true, "xai/b": false });
-    expect(registryProblem(reg, "anthropic", "a")).toBeUndefined();
-    expect(registryProblem(reg, "openai", "c")).toMatch(/model c is not among the openai provider's registered models/);
-    expect(registryProblem(reg, "xai", "b")).toMatch(/provider xai has no login or key in Pi \(run \/login xai\)/);
-    expect(registryProblem({ find: () => undefined }, "x", "")).toMatch(/not among/);
-    expect(registryProblem({ find: () => { throw new Error("boom"); } }, "x", "y")).toMatch(/not among/);
-    // A registry with no auth test only checks that the model is known.
-    expect(registryProblem({ find: () => ({}) }, "x", "y")).toBeUndefined();
-  });
-
-  it("routeFor checks a Pi model only when a registry is bound, and never an agent", async () => {
+describe("availability is whether `pi` can be started", () => {
+  it("routeFor blocks a Pi model only when the host says `pi` is not on PATH, and never an agent", async () => {
     const app = workflow(await tempRepo(), { config: tieredConfig() });
     const ctx = contextOf(app);
     const sol = modelFor(ctx.config, "high");
     expect(routeFor(ctx, "high", sol)).toEqual({ rung: "high", model: sol, label: "openai/gpt-6.1-sol" });
-    ctx.registry = registry({ "anthropic/claude-sonnet-5-5": true });
-    expect(routeFor(ctx, "high", sol).blocked).toMatch(/^openai\/gpt-6\.1-sol: model gpt-6\.1-sol is not among the openai/);
-    expect(routeFor(ctx, "medium", modelFor(ctx.config, "medium")).blocked).toBeUndefined();
+    ctx.piAvailable = () => true;
+    expect(routeFor(ctx, "high", sol).blocked).toBeUndefined();
+    ctx.piAvailable = () => false;
+    expect(routeFor(ctx, "high", sol).blocked).toMatch(/^openai\/gpt-6\.1-sol: `pi` is not on PATH/);
     expect(routeFor(ctx, "high", { kind: "agent", name: "claude" })).toEqual({ rung: "high", model: { kind: "agent", name: "claude" }, label: "agent:claude" });
   });
 });

@@ -1,4 +1,4 @@
-// Pure helpers of the chef-config panel (no herdr imports, so tests can load them).
+// Pure helpers of the shepherd-config panel (no herdr imports, so tests can load them).
 
 // Cheap guard against sending a secret: the CLI refuses them too, but nothing secret should reach even an argv.
 export function looksSecret(text) {
@@ -70,7 +70,7 @@ export function parseResult(r) {
   let json = null;
   try { json = JSON.parse(r.stdout); } catch { json = null; }
   if (json && typeof json === "object") return json;
-  return { ok: false, error: "chef-config printed no JSON (exit " + r.code + "): " + String(r.stderr || r.stdout || "").trim().slice(0, 300) };
+  return { ok: false, error: "shepherd-config printed no JSON (exit " + r.code + "): " + String(r.stderr || r.stdout || "").trim().slice(0, 300) };
 }
 
 // The CLI argv (after its own command prefix) for a user-file write; `sha` is the file's sha256 from the last show.

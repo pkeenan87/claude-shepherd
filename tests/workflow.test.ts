@@ -79,7 +79,7 @@ describe("workflow", () => {
   it("does not scan the request for security keywords or ask again before /build: plan approval is the gate", async () => {
     const cwd = await tempRepo();
     let prompts = 0;
-    const app = workflow(cwd, { config: tieredConfig(), startTurn: () => undefined, confirm: async () => (prompts += 1, false) });
+    const app = workflow(cwd, { config: tieredConfig(), confirm: async () => (prompts += 1, false) });
     await app.startPlan("change auth and permissions for the ingest parser production secrets");
     await app.savePlanSpec(sampleSpec);
     await app.commitTickets([sampleTicket("01")]);
@@ -97,7 +97,7 @@ describe("a new /plan closes a finished task", () => {
 
   it("parks a task that is built but not reviewed", async () => {
     const lines: string[] = [];
-    const { app } = await builtWorkflow({ progress: (line) => void lines.push(line), startTurn: () => undefined });
+    const { app } = await builtWorkflow({ progress: (line) => void lines.push(line) });
     const firstId = app.activeTaskId()!;
     expect((await app.startPlan(request)).ok).toBe(true);
     expect(app.store.load(firstId)!.phase).toBe("IMPLEMENTING");
@@ -106,7 +106,7 @@ describe("a new /plan closes a finished task", () => {
 
   it("closes a task whose tickets are all built and whose review passed, and goes on to plan", async () => {
     const lines: string[] = [];
-    const { app } = await builtWorkflow({ progress: (line) => void lines.push(line), startTurn: () => undefined });
+    const { app } = await builtWorkflow({ progress: (line) => void lines.push(line) });
     const firstId = app.activeTaskId()!;
     await app.store.update(firstId, "reviewed", (task) => ({ ...task, review: { passed: true } as ReviewReport }));
     expect(app.store.load(firstId)!.phase).toBe("IMPLEMENTING");
@@ -123,7 +123,7 @@ describe("a new /plan closes a finished task", () => {
   it("parks, rather than closes or revises, a task that still has unfinished tickets", async () => {
     const cwd = await tempRepo();
     const lines: string[] = [];
-    const { app } = await ticketWorkflow([sampleTicket("01"), sampleTicket("02")], { config: testConfig(), startTurn: () => undefined, progress: (line) => void lines.push(line) }, { cwd });
+    const { app } = await ticketWorkflow([sampleTicket("01"), sampleTicket("02")], { config: testConfig(), progress: (line) => void lines.push(line) }, { cwd });
     const id = app.activeTaskId()!;
     await app.store.update(id, "mid-build", (task) => ({ ...task, phase: "IMPLEMENTING" }));
     const before = app.store.load(id)!;
@@ -155,7 +155,7 @@ describe("build and review robustness", () => {
     let prompts = 0;
     const config = tieredConfig();
     config.budgets.taskUsd = 1;
-    const app = workflow(cwd, { config, startTurn: () => undefined, notify: (message) => messages.push(message), confirm: async () => (prompts += 1, false) });
+    const app = workflow(cwd, { config, notify: (message) => messages.push(message), confirm: async () => (prompts += 1, false) });
     await app.startPlan("change auth and permissions for the ingest parser production secrets");
     await app.savePlanSpec(sampleSpec);
     await app.commitTickets([sampleTicket("01")]);
@@ -177,7 +177,7 @@ describe("build and review robustness", () => {
   });
 
   it("rejects a dependency cycle at plan time", async () => {
-    const app = workflow(await tempRepo(), { startTurn: () => undefined });
+    const app = workflow(await tempRepo());
     await app.startPlan("Add retry to the ingest parser");
     await app.savePlanSpec(sampleSpec);
     const cyclic = app.checkTickets([sampleTicket("01", { blockedBy: ["02"] }), sampleTicket("02", { blockedBy: ["01"] })]);

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Thin shim: runs the compiled CLI (npm run build writes build/cli/chef-config.js).
+// Thin shim: runs the compiled CLI (npm run build writes build/cli/shepherd-config.js).
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 process.stdout.on("error", (error) => process.exit(error.code === "EPIPE" ? 0 : 1));
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const entry = path.join(root, "build", "cli", "chef-config.js");
+const entry = path.join(root, "build", "cli", "shepherd-config.js");
 
 if (!existsSync(entry)) {
   process.stdout.write(`${JSON.stringify({ ok: false, error: `run npm run build in ${root}` })}\n`);

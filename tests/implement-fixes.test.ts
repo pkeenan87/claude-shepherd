@@ -5,25 +5,13 @@ import { summarize, unpricedModels } from "../src/cost/ledger.js";
 import { type CostRecord, type PlanDocument, type ReviewReport, type TaskState, type Ticket } from "../src/domain.js";
 import { forNewPlan, sameTicket } from "../src/orchestrator/plan.js";
 import { ticketPrompt } from "../src/orchestrator/prompts.js";
-import { modelReviewPrompt, parseModelFindings } from "../src/review/model-review.js";
-import type { ChatFn } from "../src/providers/pi-chat.js";
+import { parseModelFindings } from "../src/review/model-review.js";
 import { formatDuration } from "../src/orchestrator/format.js";
-import { splitDiff } from "../src/review/model-review.js";
 import { blank } from "../src/orchestrator/planning.js";
 import { TICKET_RULES } from "../src/orchestrator/prompts.js";
 import { validateTickets } from "../src/orchestrator/tickets.js";
 import type { Workflow } from "../src/orchestrator/service.js";
 import { checkRunner, tempRepo, tieredConfig, workflow } from "./helpers.js";
-
-const usage = { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, requests: 1 };
-function fakeChat(reply: () => string) {
-  const calls: { provider: string; model: string; user: string; system: string }[] = [];
-  const chat: ChatFn = async (candidate, request) => {
-    calls.push({ provider: candidate.provider, model: candidate.model, user: request.messages.filter((m) => m.role === "user").map((m) => m.content).join("\n"), system: request.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n") });
-    return { text: reply(), usage, provider: candidate.provider, model: candidate.model };
-  };
-  return { chat, calls };
-}
 
 /** An uncommitted new file in the checkout: what /review finds with no task and no commits. */
 async function adHocChange(cwd: string, body = "export const ingest = 1;\n", more: Record<string, string> = {}): Promise<void> {
@@ -156,6 +144,16 @@ describe("phantom spend", () => {
 });
 
 describe("model review", () => {
+  it("skips the model pass when review.model is off", async () => {
+    const quietCwd = await tempRepo();
+    const quiet = workflow(quietCwd, { config: tieredConfig("review: { model: false }") });
+    await adHocChange(quietCwd);
+    const silent = await quiet.review();
+    expect(silent.ok).toBe(true);
+    expect(reportText(quiet)).toContain("| Model review | did not run | — | — |");
+    expect(quiet.store.readLedger().filter((item) => item.reason === "model review")).toHaveLength(0);
+  });
+
   const plan: PlanDocument = { version: 1, createdAt: "2026-10-15T00:00:00.000Z", summary: "Add retry.", risks: [], acceptance: ["retry works"], groups: [], overlap: [], securitySensitive: false, tickets: [ticket("01", "retry", { acceptanceCriteria: ["retry works"] })] };
 
   it("parses a JSON list out of chatty output, fills defaults, reads the scores and leaves a missing one out", () => {
@@ -165,65 +163,6 @@ describe("model review", () => {
     expect(findings[1]).toMatchObject({ category: "general", evidence: "while (true)" });
     expect(parseModelFindings("I found nothing.")).toBeUndefined();
     expect(parseModelFindings("[]")).toEqual([]);
-  });
-
-  it("puts the plan before the diff and truncates the diff at the limit", () => {
-    const prompt = modelReviewPrompt(plan, "x".repeat(2000), 1000);
-    expect(prompt.indexOf("# Plan")).toBeLessThan(prompt.indexOf("# Diff"));
-    expect(prompt).toContain("- 01 T01: retry works");
-    expect(prompt).toContain("1000 more not shown");
-    expect(modelReviewPrompt(plan, "short", 1000)).not.toContain("more not shown");
-  });
-
-  it("lists the review model's findings in /review, ledgers the call, and keeps the pass deterministic", async () => {
-    const { chat, calls } = fakeChat(() => JSON.stringify([{ likelihood: 8, severity: 8, category: "correctness", file: "src/ingest.ts", message: "ingest() throws on empty input but the plan asks for a skip.", evidence: 'throw new Error("empty")' }]));
-    const cwd = await tempRepo();
-    const app = workflow(cwd, { config: tieredConfig(), chat });
-    await adHocChange(cwd);
-    const review = await app.review();
-    expect(review.ok, review.text).toBe(true);
-    const text = reportText(app);
-    expect(text).toMatch(/\| Model review \| \S+\/\S+ · 1 finding \| 0\.0s \| (<\$0\.01|\$\d+\.\d{2}) \|/);
-    expect(text).toMatch(/\| 1 \| L8×S8=64 \| src\/ingest\.ts \| ingest\(\) throws on empty input/);
-    expect(text).toMatch(/^## Review passed · 0\.0s · (<\$0\.01|\$\d+\.\d{2})\n/);
-    expect(text).toContain("| Checks | 1 of 1 passed | 0.0s | — |");
-    expect(text).toContain("| npm test | ✓ pass | 0.0s |");
-    expect(text).toContain("### Findings");
-    expect(text).toContain("### Next");
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.system).toContain("JSON array");
-    expect(calls[0]!.user).toContain("# Diff");
-    expect(calls[0]!.user).toContain("src/ingest.ts");
-    const entry = app.store.readLedger().find((item) => item.reason === "model review");
-    expect(entry).toMatchObject({ taskId: "session", phase: "REVIEWING", inputTokens: 100, outcome: "success" });
-    expect(readdirSync(path.join(cwd, ".shepherd", "reports")).some((name) => name.endsWith(".md"))).toBe(true);
-  });
-
-  it("skips the model pass when review.model is off, and reports a failed call as an unknown charge", async () => {
-    const off = fakeChat(() => "[]");
-    const quietCwd = await tempRepo();
-    const quiet = workflow(quietCwd, { config: tieredConfig("review: { model: false }"), chat: off.chat });
-    await adHocChange(quietCwd);
-    const silent = await quiet.review();
-    expect(silent.ok).toBe(true);
-    expect(reportText(quiet)).toContain("| Model review | did not run | — | — |");
-    expect(off.calls).toHaveLength(0);
-
-    const broken: ChatFn = async () => {
-      throw new Error("rate limited");
-    };
-    const cwd = await tempRepo();
-    const app = workflow(cwd, { config: tieredConfig(), chat: broken });
-    await adHocChange(cwd);
-    const review = await app.review();
-    expect(review.ok).toBe(true);
-    // Both review candidates were tried; each failed call is an unknown charge, never zero.
-    expect(reportText(app)).toMatch(/no findings: the call failed: \S+\/\S+: rate limited; \S+\/\S+: rate limited/);
-    expect(reportText(app)).toMatch(/^## Review passed · [\d.]+s · ≥ \$0\.00 \(some unknown\)\n/);
-    expect(reportText(app)).toMatch(/\| Model review \| .* \| [\d.]+s \| unknown \|/);
-    const calls = app.store.readLedger().filter((item) => item.reason === "model review");
-    expect(calls).toHaveLength(2);
-    for (const entry of calls) expect(entry).toMatchObject({ actualUsd: null, outcome: "failure" });
   });
 
   it("runs setup commands in the repo root before the checks, and hints at setup when tooling is missing", async () => {
@@ -268,58 +207,4 @@ describe("verbose output", () => {
     expect([formatDuration(800), formatDuration(12_340), formatDuration(261_000), formatDuration(3_720_000)]).toEqual(["0.8s", "12.3s", "4m21s", "1h02m"]);
     expect([formatDuration(59_970), formatDuration(119_600), formatDuration(3_599_700)]).toEqual(["1m00s", "2m00s", "1h00m"]);
   });
-
-  it("splits a large diff at file boundaries and cuts only an oversized file", () => {
-    const file = (name: string, size: number) => `diff --git a/${name} b/${name}\n${"+x".repeat(size / 2)}\n`;
-    const parts = splitDiff(file("a", 600) + file("b", 600) + file("c", 600), 1300);
-    expect(parts).toHaveLength(2);
-    expect(parts[0]).toContain("a/a b/a");
-    expect(parts[0]).toContain("a/b b/b");
-    expect(parts[1]).toContain("a/c b/c");
-    const big = splitDiff(file("a", 200) + file("huge", 5000), 1000);
-    expect(big).toHaveLength(2);
-    expect(big[1]).toContain("was cut at 1000 characters");
-    expect(splitDiff("small", 1000)).toEqual(["small"]);
-  });
-
-  it("reviews a large diff in parts, reports progress per part, and says when parts were left out", async () => {
-    let call = 0;
-    const { chat, calls } = fakeChat(() => JSON.stringify([{ likelihood: call++ === 0 ? 2 : 8, severity: 3, category: "tests", message: `finding from part ${call}` }]));
-    const progress: string[] = [];
-    const config = tieredConfig("review: { maxDiffChars: 2000, maxChunks: 2 }");
-    const cwd = await tempRepo();
-    const app = workflow(cwd, { config, chat, progress: (line) => void progress.push(line) });
-    await adHocChange(cwd, `${"// padding line that makes this file's diff long\n".repeat(80)}export const ingest = 1;\n`, { "src/alert.ts": "export const alert = 1;\n".repeat(120) });
-    const review = await app.review();
-    expect(review.ok, review.text).toBe(true);
-    const text = reportText(app);
-    expect(calls.length).toBeGreaterThanOrEqual(2);
-    expect(calls[0]!.user).toContain("# Diff (part 1 of");
-    expect(calls[0]!.system).toContain("You have no tools");
-    expect(progress.some((line) => /^Review: started · \S+ against \S+ · 0 setup step\(s\), 1 check\(s\) · model \S+\/\S+$/.test(line))).toBe(true);
-    expect(progress.some((line) => /^Review: running unit \(npm test\)$/.test(line))).toBe(true);
-    expect(progress.some((line) => /^Review: unit: passed in 0\.0s$/.test(line))).toBe(true);
-    expect(progress.some((line) => /^Review: asking \S+\/\S+ to review part 1 of \d+ \(\d+k chars\)$/.test(line))).toBe(true);
-    expect(progress.some((line) => /^Review: model pass done: \d+ finding\(s\) in 0\.0s, \$0\.\d{4}$/.test(line))).toBe(true);
-    // Severity order across parts, and the top line says how the pass ran.
-    expect(text).toMatch(/\| Model review \| \S+\/\S+ · 2 parts · 2 findings · part of the diff was not reviewed \| 0\.0s \|/);
-    expect(text.indexOf("| L8×S3=24 |")).toBeLessThan(text.indexOf("| L2×S3=6 |"));
-    const data = savedReport(app) as unknown as { modelReview: { chunks: number; truncated: boolean; error?: string } };
-    expect(data.modelReview.chunks).toBe(2);
-    // The padded file is larger than one part, so it was cut: the header says so.
-    expect(data.modelReview.truncated).toBe(true);
-  });
-
-  it("stops a model review call at review.timeoutMs", async () => {
-    const chat: ChatFn = (_candidate, request) =>
-      new Promise((_resolve, reject) => {
-        request.signal?.addEventListener("abort", () => reject(new Error("aborted by signal")));
-      });
-    const cwd = await tempRepo();
-    const app = workflow(cwd, { config: tieredConfig("review: { timeoutMs: 1000 }"), chat });
-    await adHocChange(cwd);
-    const review = await app.review();
-    expect(review.ok).toBe(true);
-    expect(reportText(app)).toMatch(/no findings: the call failed: \S+\/\S+: timed out after 1\.0s; \S+\/\S+: timed out after 1\.0s/);
-  }, 15_000);
 });

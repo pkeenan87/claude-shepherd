@@ -86,10 +86,10 @@ export interface WorkflowConfig {
   /** Commands /review runs in the repo root before the checks (an install, for example). Same rules as checks. */
   setup: CheckConfig[];
   /**
-   * The model pass of /review (`model`): the review model reads the branch diff and lists advisory findings. `tickets: false`
-   * turns the per-ticket review gate of /build off. `timeoutMs` is per review call, `maxDiffChars` the diff of one call.
+   * The model pass of /review (`model`): the review model, in a herdr sub-agent, reads the branch diff and lists advisory findings. `tickets: false`
+   * turns the per-ticket review gate of /build off. `timeoutMs` is how long one per-ticket review turn may take (never less than 15 minutes; the /review model pass and a fix run have no limit of their own).
    */
-  review: { model: boolean; tickets: boolean; maxDiffChars: number; maxChunks: number; timeoutMs: number };
+  review: { model: boolean; tickets: boolean; timeoutMs: number };
   pricing: PricingRow[];
   /** Notes from loading, for example settings that were ignored. Shown at session start. */
   warnings?: string[];
@@ -116,7 +116,7 @@ const DEFAULTS: WorkflowConfig = {
   budgets: { taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: DEFAULT_UNKNOWN_CALL_USD, idleWarnMinutes: 60, idleWarnTokens: 100_000 },
   checks: [],
   setup: [],
-  review: { model: true, tickets: true, maxDiffChars: 120_000, maxChunks: 6, timeoutMs: 300_000 },
+  review: { model: true, tickets: true, timeoutMs: 300_000 },
   pricing: [],
 };
 
@@ -127,7 +127,7 @@ const KNOWN_KEYS: Record<string, readonly string[] | undefined> = {
   agents: undefined,
   budgets: ["taskUsd", "dailyUsd", "softWarningRatio", "unknownCallUsd", "idleWarnMinutes", "idleWarnTokens"],
   pricing: undefined,
-  review: ["model", "tickets", "maxDiffChars", "maxChunks", "timeoutMs"],
+  review: ["model", "tickets", "timeoutMs"],
   checks: undefined,
   setup: undefined,
   build: ["visibleTabs"],
@@ -297,7 +297,7 @@ function normalizeLocal(value: unknown, where: string): LocalConfig | undefined 
 }
 
 /** The dotted names of the keys in `raw` that this version does not read. */
-function unknownKeys(raw: Record<string, unknown>): string[] {
+export function unknownKeys(raw: Record<string, unknown>): string[] {
   const out: string[] = [];
   for (const [key, value] of Object.entries(raw)) {
     if (!(key in KNOWN_KEYS)) {
@@ -369,8 +369,6 @@ function normalizeRaw(input: unknown, where: string, ignored: Set<string>): Reco
   if (review) {
     if (review.model !== undefined && typeof review.model !== "boolean") invalid(where, "review.model", "must be a boolean");
     if (review.tickets !== undefined && typeof review.tickets !== "boolean") invalid(where, "review.tickets", "must be a boolean");
-    checkNumber(review, "maxDiffChars", where, { min: 1000, integer: true }, "review");
-    checkNumber(review, "maxChunks", where, { min: 1, integer: true }, "review");
     checkNumber(review, "timeoutMs", where, { min: 1000, integer: true }, "review");
   }
   const local = normalizeLocal(out.local, where);

@@ -1,15 +1,14 @@
 /**
- * The /build driver, free of Pi: every ticket attempt runs as a herdr sub-agent (`hc run`) of the terminal shepherd was
+ * The /build driver: every ticket attempt runs as a herdr sub-agent (`hc run`) of the terminal shepherd was
  * started from, through `runTicket` (`runner/ticket.ts`). A Pi model runs as `pi -ne -e ticket-mode.ts` in the tab, an
  * `agent:<name>` ticket as that coding agent. Policy (routing, escalation, budgets, reviews, commits, the build claim) is
- * not here: it stays in `orchestrator/build.ts`, which drives this over the `BuildDriver` interface. Used by `shepherd build`
- * and, until the Pi extension is removed, by `extension.ts`.
+ * not here: it stays in `orchestrator/build.ts`, which drives this over the `BuildDriver` interface. Used by `shepherd build`.
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { HerdrClient } from "../herdr/client.js";
-import type { BuildDriver, ModelRef } from "../orchestrator/build.js";
+import type { BuildDriver } from "../orchestrator/build.js";
 import type { Workflow } from "../orchestrator/service.js";
 import { NO_PI } from "../runner/pi-path.js";
 import { ticketHost } from "../runner/host.js";
@@ -18,7 +17,7 @@ import { herdrSpace, NEEDS_HERDR, runTicket } from "../runner/ticket.js";
 import { redact } from "../redact.js";
 
 export interface BuildHostOptions {
-  /** Re-resolved per call: a host may replace the Workflow (Pi does, with its session). */
+  /** Re-resolved per call. */
   getWorkflow: () => Workflow;
   client: HerdrClient;
   /** The checkout the build runs in. */
@@ -29,11 +28,9 @@ export interface BuildHostOptions {
   home?: string;
   /** Test seam: timings and sleeps of the tab waits. */
   timings?: TabTimings;
-  /** Whether a `pi` can be started for a Pi-model ticket. Unset, no such check is made (Pi checks its registry in `modelPreflight`). */
+  /** Whether a `pi` can be started for a Pi-model ticket. Unset, no such check is made. */
   piAvailable?: () => boolean;
-  /** An extra check before a Pi model's ticket opens (Pi's registry): the problem, or undefined. May also warn. */
-  modelPreflight?: (model: ModelRef, ticketId: string) => Promise<string | undefined> | string | undefined;
-  /** Runs after anything is ledgered (a host redraws its status line). */
+  /** Runs after anything is ledgered. */
   changed?: () => void;
 }
 
@@ -50,8 +47,6 @@ export function createBuildDriver(options: BuildHostOptions): BuildDriver {
     },
     async fresh(model, run, ticketId, limits, attempt = 1) {
       if (!model.agent) {
-        const problem = await Promise.resolve(options.modelPreflight?.(model, ticketId)).catch((error: unknown) => `${model.provider}/${model.id} could not be checked: ${redact(error instanceof Error ? error.message : String(error))}`);
-        if (problem) return { stopped: `Ticket ${ticketId} cannot start on ${problem}. Fix the models config or sign in, then /build again.` };
         if (options.piAvailable && !options.piAvailable()) return { stopped: `Ticket ${ticketId} cannot start on ${model.provider}/${model.id}: ${NO_PI}. Then /build again.` };
       }
       const where = await herdrSpace(client, visible());

@@ -17,7 +17,7 @@
   },
   "bin": {
     "shepherd": "./bin/shepherd",
-    "chef-config": "./bin/chef-config.mjs"
+    "shepherd-config": "./bin/shepherd-config.mjs"
   },
   "files": [
     "dist/shepherd.mjs",

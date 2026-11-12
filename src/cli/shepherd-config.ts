@@ -1,8 +1,8 @@
 /**
- * chef-config: the bridge between shepherd and the herdr side panel. Every command prints one JSON document on stdout.
+ * shepherd-config: the bridge between shepherd and the herdr side panel. Every command prints one JSON document on stdout.
  * A refused request is data (`{ ok: false, error }`, exit 0); the exit status is nonzero only for a usage error.
  * The panel shows four things (models, the local server, plans, costs), so this is a small purpose-built CLI, not a
- * generic config editor. Edits go to the user file (`~/.claude/shepherd.yaml`) through the `yaml` Document API so its
+ * generic config editor. `cursor-models` lists the Cursor models worth offering in the model picker. Edits go to the user file (`~/.claude/shepherd.yaml`) through the `yaml` Document API so its
  * comments survive, are validated by the real loader before anything is written, and never carry a secret.
  */
 import { createHash } from "node:crypto";
@@ -20,6 +20,7 @@ import type { WorkflowContext } from "../orchestrator/context.js";
 import { closeTask, displayName, isClosed, listTasks, stateText, unfinishedTasks } from "../orchestrator/tasks.js";
 import { contextMismatch, probeLocalContext, serverOrigin } from "../providers/local-context.js";
 import { containsSecret, redact } from "../redact.js";
+import { shepherdHome } from "../shepherd-home.js";
 import { TaskStore, atomicWrite } from "../storage/store.js";
 
 const execFileAsync = promisify(execFile);
@@ -498,6 +499,59 @@ export async function localDetect(baseUrl: string, options: { fetchImpl?: typeof
   return { ok: true, reachable: false, baseUrl: given, models: [], error: `No answer from ${candidates.map((c) => `${c}/models`).join(" or ")}` };
 }
 
+// ---------------------------------------------------------------- cursor models
+
+/** The router's cost/quality settings Cursor offers on `auto-smart` (a Teams or Enterprise plan feature). */
+export const CURSOR_SMART_SETTINGS = ["cost", "balanced", "intelligence"] as const;
+const CURSOR_CACHE_FILE = "cursor-models.json";
+const CURSOR_CACHE_MS = 60 * 60_000;
+const CURSOR_LIST_TIMEOUT_MS = 4000;
+
+/** Whether `cursor-agent --list-models` output names the `auto-smart` router model. */
+export function listsAutoSmart(output: string): boolean {
+  // `cursor-agent --list-models` prints "<id> - <label>" lines under an "Available models" heading; a terminal may colour them.
+  const plain = output.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "");
+  return /(?<![\w-])auto-smart(?![\w-])/.test(plain);
+}
+
+/**
+ * The Cursor models the picker offers: `agent:cursor-agent/auto` always, and the three `auto-smart[optimize_for=...]`
+ * settings when `cursor-agent --list-models` lists `auto-smart`. The list is read with a short timeout and cached for an hour
+ * in `$SHEPHERD_HOME/cursor-models.json` (and in memory), so a slow or missing `cursor-agent` costs one wait, not one per refresh.
+ * Cursor is not metered (its runs count $0 as "not metered") and the router needs a Teams or Enterprise plan.
+ */
+export async function cursorModels(options: { run?: (file: string, args: string[], timeoutMs: number) => Promise<string>; now?: () => number; home?: string } = {}): Promise<Json> {
+  const now = options.now ?? Date.now;
+  const dir = options.home ?? shepherdHome();
+  const cache = path.join(dir, CURSOR_CACHE_FILE);
+  let smart: boolean | undefined;
+  let source = "cache";
+  try {
+    const saved = JSON.parse(readFileSync(cache, "utf8")) as { at?: unknown; smart?: unknown };
+    if (typeof saved.at === "number" && typeof saved.smart === "boolean" && now() - saved.at < CURSOR_CACHE_MS && now() >= saved.at) smart = saved.smart;
+  } catch {
+    smart = undefined;
+  }
+  if (smart === undefined) {
+    source = "cursor-agent";
+    const run = options.run ?? (async (file, args, timeoutMs) => (await execFileAsync(file, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 })).stdout);
+    try {
+      smart = listsAutoSmart(await run("cursor-agent", ["--list-models"], CURSOR_LIST_TIMEOUT_MS));
+    } catch {
+      smart = false;
+      source = "unavailable";
+    }
+    // An unavailable cursor-agent is cached too: the wait is for one attempt, not every refresh.
+    try {
+      atomicWrite(cache, JSON.stringify({ at: now(), smart }));
+    } catch {
+      /* the cache is an optimisation */
+    }
+  }
+  const models = ["auto", ...(smart ? CURSOR_SMART_SETTINGS.map((setting) => `auto-smart[optimize_for=${setting}]`) : [])];
+  return { ok: true, source, smart, models: models.map((model) => ({ model, value: `agent:cursor-agent/${model}` })) };
+}
+
 // ---------------------------------------------------------------- plans
 
 async function currentBranch(cwd: string): Promise<string | undefined> {
@@ -521,7 +575,7 @@ export async function planActivate(cwd: string, id: string): Promise<Json> {
   if (isClosed(task)) return refuse(`${name} is closed. Its files stay on disk; /plan <request> starts a new one.`);
   const branch = await currentBranch(cwd);
   ctx.store.setActive(task.taskId, branch);
-  const note = task.build?.branch && branch && task.build.branch !== branch ? `${name} is active. Its branch ${task.build.branch} is not checked out (you are on ${branch}); /plans ${name} in Pi switches to it.` : undefined;
+  const note = task.build?.branch && branch && task.build.branch !== branch ? `${name} is active. Its branch ${task.build.branch} is not checked out (you are on ${branch}); "shepherd task use ${name}" (or /shepherd:plans ${name}) switches to it.` : undefined;
   return { ...show(cwd), ok: true, ...(note ? { note } : {}) };
 }
 
@@ -550,13 +604,14 @@ export async function planClose(cwd: string, id: string, force = false): Promise
 // ---------------------------------------------------------------- command line
 
 const USAGE = `Usage:
-  chef-config show          --cwd <dir>
-  chef-config set           --cwd <dir> --key <${SET_KEYS.join("|")}> --value <v> [--expect <sha256 of the user file>]
-  chef-config local-add     --cwd <dir> --id <model id> --context-window <n> [--base-url <url>] [--expect <sha256>]
-  chef-config local-remove  --cwd <dir> --id <model id> [--expect <sha256>]
-  chef-config local-detect  --base-url <url> [--cwd <dir>]
-  chef-config plan-activate --cwd <dir> --id <plan id>
-  chef-config plan-close    --cwd <dir> --id <plan id> [--force]
+  shepherd-config show          --cwd <dir>
+  shepherd-config set           --cwd <dir> --key <${SET_KEYS.join("|")}> --value <v> [--expect <sha256 of the user file>]
+  shepherd-config local-add     --cwd <dir> --id <model id> --context-window <n> [--base-url <url>] [--expect <sha256>]
+  shepherd-config local-remove  --cwd <dir> --id <model id> [--expect <sha256>]
+  shepherd-config local-detect  --base-url <url> [--cwd <dir>]
+  shepherd-config cursor-models
+  shepherd-config plan-activate --cwd <dir> --id <plan id>
+  shepherd-config plan-close    --cwd <dir> --id <plan id> [--force]
 
 Prints one JSON document on stdout: { "ok": true, ... } or { "ok": false, "error": "..." }.
 A refused request is reported inside it (exit 0); the exit status is nonzero only for a usage error.`;
@@ -583,13 +638,13 @@ function authFetch(cwd: string, baseUrl: string): typeof fetch | undefined {
   return (input, init) => fetch(input, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${key}` } });
 }
 
-const COMMANDS = ["show", "set", "local-add", "local-remove", "local-detect", "plan-activate", "plan-close"];
+const COMMANDS = ["show", "set", "local-add", "local-remove", "local-detect", "cursor-models", "plan-activate", "plan-close"];
 
 /** Runs the CLI. Returns the exit code; output goes through `out` / `err` so tests need no process. */
 export async function main(argv: string[], out: (text: string) => void = (t) => process.stdout.write(t), err: (text: string) => void = (t) => process.stderr.write(t)): Promise<number> {
   const [command, ...rest] = argv;
   const usage = (message: string): number => {
-    err(`chef-config: ${message}\n${USAGE}\n`);
+    err(`shepherd-config: ${message}\n${USAGE}\n`);
     return 2;
   };
   const print = (result: Json): number => {
@@ -598,7 +653,7 @@ export async function main(argv: string[], out: (text: string) => void = (t) => 
   };
   if (!command || !COMMANDS.includes(command)) return usage(command ? `unknown command "${command}"` : "no command");
   const cwdArg = flag(rest, "--cwd");
-  if (command !== "local-detect" && (!cwdArg || cwdArg.startsWith("--"))) return usage(`${command} needs --cwd <dir>`);
+  if (command !== "local-detect" && command !== "cursor-models" && (!cwdArg || cwdArg.startsWith("--"))) return usage(`${command} needs --cwd <dir>`);
   const cwd = cwdArg && !cwdArg.startsWith("--") ? dirOf(cwdArg) : "";
   const expect = flag(rest, "--expect");
   if (rest.includes("--expect") && (expect === undefined || expect.startsWith("--"))) return usage("--expect needs a sha256");
@@ -630,6 +685,8 @@ export async function main(argv: string[], out: (text: string) => void = (t) => 
         const fetchImpl = cwd ? authFetch(cwd, baseUrl) : undefined;
         return print(await localDetect(baseUrl, { ...(configured ? { configured } : {}), ...(fetchImpl ? { fetchImpl } : {}) }));
       }
+      case "cursor-models":
+        return print(await cursorModels());
       case "plan-activate":
       case "plan-close":
         if (!id) return usage(`${command} needs --id`);

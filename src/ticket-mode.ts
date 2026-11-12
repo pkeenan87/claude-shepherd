@@ -1,6 +1,6 @@
 /**
- * Ticket mode: the second Pi entry point. A herdr-run ticket child starts as `pi -ne -e <shepherd>/src/ticket-mode.ts`,
- * so it has the `local` provider (registered from the config, as the main extension does), the bash rules of a ticket
+ * Ticket mode: the only Pi entry point. A herdr-run ticket (or review, or fix) child starts as `pi -ne -e <shepherd>/dist/ticket-mode.mjs`,
+ * so it has the `local` provider (registered from the config), the bash rules of a ticket
  * and a turn budget, and none of shepherd's session machinery. Registers NO commands and none of shepherd's session hooks
  * (no ledgering: the runner reads the ledger rows from the session file); its `session_start` handlers are a warning
  * shown when the config has a problem and no status file is set, and the reset of the turn count and status on a new session.
@@ -11,7 +11,7 @@
  *   It lives in the workspace dir, never in the checkout; this extension writes only where told.
  * - PI_CHEF_TICKET: the ticket id, for labels only.
  *
- * It imports the config loader, the provider registration and the bash rules, never `extension.ts` or `commands.ts`.
+ * It imports the config loader, the provider registration and the bash rules.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
@@ -49,7 +49,7 @@ function writeStatus(file: string, status: Partial<TicketStatus>): void {
 }
 
 /**
- * Registers the `local` provider from the config, the same way extension.ts does, so `local/<id>` resolves in the child.
+ * Registers the `local` provider from the config so `local/<id>` resolves in the child.
  * Never throws: Pi's own providers still work. Returns the redacted problem, if any, so the runner and the user are told.
  */
 function registerProviders(pi: ExtensionAPI, cwd: string): string | undefined {

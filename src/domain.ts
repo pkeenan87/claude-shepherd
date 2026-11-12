@@ -220,11 +220,9 @@ export interface ReviewReport {
   stages?: { setup?: ReviewStage; checks?: ReviewStage; model?: ReviewStage };
 }
 
-/** Where an interview-driven /plan stands while the task is in PLANNING (or PAUSED from it). */
+/** Where a /plan stands while the task is in PLANNING (or PAUSED from it). */
 export interface PlanningProgress {
   stage: "interview" | "tickets";
-  /** True when /plan --no-questions skipped the interview. */
-  noQuestions: boolean;
   /** The person's requested changes when a drafted plan was sent back from the plan review. */
   revision?: string;
 }
@@ -354,8 +352,6 @@ export interface TaskState {
   closedReason?: string;
   phase: Phase;
   planning?: PlanningProgress;
-  /** A freshly drafted plan that has not been shown yet: the extension posts it and asks for the decision when the planning turn settles. */
-  presentPlan?: { version: number };
   pausedFrom?: Phase;
   createdAt: string;
   updatedAt: string;

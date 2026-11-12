@@ -100,3 +100,24 @@ describe("labels", () => {
     expect(parseModelRef("ab")).toBeUndefined();
   });
 });
+
+describe("a model with a bracket suffix (Cursor's router)", () => {
+  const smart = "auto-smart[optimize_for=balanced]";
+
+  it("is one model after the first slash, brackets and equals sign included", () => {
+    for (const setting of ["cost", "balanced", "intelligence"]) {
+      expect(parseTicketModel(`agent:cursor-agent/auto-smart[optimize_for=${setting}]`)).toEqual({ kind: "agent", name: "cursor-agent", model: `auto-smart[optimize_for=${setting}]` });
+    }
+    expect(parseTicketModel("agent:cursor-agent/auto")).toEqual({ kind: "agent", name: "cursor-agent", model: "auto" });
+    expect(ticketModelProblem(`agent:cursor-agent/${smart}`)).toBeUndefined();
+    expect(modelText(parseTicketModel(`agent:cursor-agent/${smart}`) as never)).toBe(`agent:cursor-agent/${smart}`);
+    // Whitespace is still refused, so the suffix cannot smuggle a second argument.
+    expect(ticketModelProblem("agent:cursor-agent/auto-smart[optimize_for=balanced] --force")).toMatch(/whitespace/);
+  });
+
+  it("is passed to the agent as one argv element, not split or shell-quoted", () => {
+    const argv = agentCommand({ kind: "agent", name: "cursor-agent", model: smart });
+    expect(argv).toEqual(["cursor-agent", "--auto-review", "--model", smart]);
+    expect(agentCommand({ kind: "agent", name: "cursor-agent", model: "auto" })).toEqual(["cursor-agent", "--auto-review", "--model", "auto"]);
+  });
+});

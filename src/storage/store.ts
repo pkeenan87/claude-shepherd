@@ -377,7 +377,7 @@ export class TaskStore {
 
   /**
    * Claims the task's build for this process: refused (returns who holds it) while another live process holds it, so
-   * two Pi sessions never run /build on one task at once. A claim whose process is gone is taken over.
+   * two builds never run on one task at once. A claim whose process is gone is taken over.
    */
   claimBuild(taskId: string, checkout: string, at: string): { pid: number; checkout: string } | undefined {
     const file = path.join(this.taskDir(taskId), "build.claim");
@@ -397,6 +397,25 @@ export class TaskStore {
   liveBuildClaim(taskId: string): { pid: number; checkout: string } | undefined {
     const held = readClaim(path.join(this.taskDir(taskId), "build.claim"));
     return held && processAlive(held.pid) ? held : undefined;
+  }
+
+  /**
+   * The persistent "build in progress" marker (`build.active`): set when a build starts and kept between `shepherd build
+   * --once` runs, which hold no claim while a ticket is not running. Cleared when the build is done or stopped, and when
+   * the task closes. The pretool guard honours it as well as a live claim.
+   */
+  markBuilding(taskId: string, at: string): void {
+    atomicWrite(path.join(this.taskDir(taskId), "build.active"), JSON.stringify({ at }, null, 2));
+  }
+
+  /** Clears the build-in-progress marker. */
+  clearBuilding(taskId: string): void {
+    rmSync(path.join(this.taskDir(taskId), "build.active"), { force: true });
+  }
+
+  /** Whether the task's build-in-progress marker is set. */
+  buildInProgress(taskId: string): boolean {
+    return existsSync(path.join(this.taskDir(taskId), "build.active"));
   }
 
   private watermarkPath(): string {
@@ -608,17 +627,6 @@ export class TaskStore {
       const eventsPath = path.join(dir, "events.jsonl");
       const clean = redactUnknown(route) as RouteEvent;
       this.appendEvent(eventsPath, { seq: this.nextSeq(eventsPath), at, type: "route", route: clean });
-    });
-  }
-
-  /** Appends a `decision` event (one interview answer) to the task log without touching state.json. */
-  async appendDecision(taskId: string, decision: DecisionEvent, at: string): Promise<void> {
-    await withLock(this.lockPath(taskId), async () => {
-      const dir = this.taskDir(taskId);
-      if (!existsSync(dir)) return;
-      const eventsPath = path.join(dir, "events.jsonl");
-      const clean = redactUnknown(decision) as DecisionEvent;
-      this.appendEvent(eventsPath, { seq: this.nextSeq(eventsPath), at, type: "decision", decision: clean });
     });
   }
 

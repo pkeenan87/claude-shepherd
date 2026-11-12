@@ -2,7 +2,7 @@ import path from "node:path";
 import type { CommandResult, TaskState } from "../domain.js";
 import { done, fail, guard, iso, type WorkflowContext } from "./context.js";
 import { assertGraph, PLAN_FILE, renderPlanReview } from "./plan.js";
-import { requestPlanChanges, SPEC_FILE } from "./interview.js";
+import { SPEC_FILE } from "./interview.js";
 import { closeTask, displayName, isFinished, nameForNewTask, requireActiveTask, stateText } from "./tasks.js";
 
 export function blank(taskId: string, request: string, at: string, name?: string): TaskState {
@@ -74,39 +74,16 @@ export function approveDraft(ctx: WorkflowContext): Promise<CommandResult> {
   });
 }
 
-/** Posts the active task's plan in the chat. A draft opens the review screen, so it can be approved from here. */
+/** The active task's plan as markdown. */
 export function showPlan(ctx: WorkflowContext): Promise<CommandResult> {
   return guard(async () => showTaskPlan(ctx, await requireActiveTask(ctx)));
 }
 
-/** Posts one task's plan in the chat, under a header that names the task and its state. Shared by /show-plan and /plans <name>. */
+/** One task's plan as markdown, under a header that names the task and its state. Shared by `plan show` and `/plans <name>`. */
 export async function showTaskPlan(ctx: WorkflowContext, current: TaskState): Promise<CommandResult> {
   if (!current.plan) return fail("NO_PLAN", `${displayName(current)} has no plan yet. Run /plan <request>.`);
   const header = `**Task ${displayName(current)}** · ${stateText(current)}`;
   const markdown = `${header}\n\n${planMarkdown(ctx, current)}`;
-  const version = current.plan.version;
-  const approved = current.approvedVersion === version;
   const where = path.join(ctx.store.taskDir(current.taskId), PLAN_FILE);
-  if (!approved && current.phase === "AWAITING_PLAN_APPROVAL" && ctx.review) {
-    assertGraph(current.plan.groups);
-    const revisable = !!current.plan.tickets?.length;
-    const choice = await ctx.review({
-      title: `${displayName(current)} · Plan v${version} (draft)`,
-      markdown,
-      actions: [
-        { value: "approve", label: `Approve plan v${version}` },
-        ...(revisable ? [{ value: "revise", label: "Request changes", input: "What should change in the plan?" }] : []),
-        { value: "close", label: "Close" },
-      ],
-    });
-    if (choice?.value === "revise") return requestPlanChanges(ctx, current, choice.text ?? "");
-    if (choice?.value === "approve") {
-      const state = await freezeApproval(ctx, current);
-      return done(`Approved plan v${version}. Run /build.`, state);
-    }
-    return done(`Plan v${version} is still a draft. /show-plan to approve later. File: ${where}`, { taskId: current.taskId, file: where });
-  }
-  if (ctx.show) ctx.show(markdown);
-  const status = approved ? "approved" : current.phase === "AWAITING_PLAN_APPROVAL" ? "a draft; /show-plan in a session with a UI approves it" : current.phase.toLowerCase();
-  return done(ctx.show ? `Plan v${version} (${status}) is shown above. File: ${where}` : markdown, { taskId: current.taskId, file: where });
+  return done(markdown, { taskId: current.taskId, file: where });
 }

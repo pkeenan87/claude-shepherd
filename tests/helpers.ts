@@ -7,7 +7,6 @@ import { parseConfig, type WorkflowConfig } from "../src/config.js";
 import type { TaskState, Ticket, TokenUsage } from "../src/domain.js";
 import { GitWorkspace } from "../src/git/workspace.js";
 import type { WorkflowContext } from "../src/orchestrator/context.js";
-import type { ChatFn } from "../src/providers/pi-chat.js";
 import { runBuild, type BuildDriver } from "../src/orchestrator/build.js";
 import { Workflow, type WorkflowOptions } from "../src/orchestrator/service.js";
 import type { CheckRunner } from "../src/review/review.js";
@@ -99,20 +98,6 @@ export function tieredConfig(extraYaml = ""): WorkflowConfig {
   return parseConfig(tieredYaml(extraYaml));
 }
 
-/** A Pi registry fake in which every model asked for exists and has credentials. */
-export function permissiveRegistry() {
-  const seen: { provider: string; id: string }[] = [];
-  return {
-    find: (provider: string, id: string) => {
-      const model = { provider, id };
-      seen.push(model);
-      return model;
-    },
-    isUsingOAuth: () => true,
-    getAvailable: () => seen,
-  };
-}
-
 export function sampleTicket(id: string, extra: Partial<Ticket> = {}): Ticket {
   return { id, slug: `t${id}`, title: `Ticket ${id}`, whatToBuild: `Build part ${id}.`, acceptanceCriteria: ["retry works"], blockedBy: [], estimatedContextTokens: 40_000, ...extra };
 }
@@ -122,7 +107,7 @@ export const sampleSpec = { summary: "Retry failed ingests.", context: "src/inge
 /** A workflow in a fresh repo with a ticket plan saved through the /plan tools and, unless `approve` is false, approved. */
 export async function ticketWorkflow(tickets: Ticket[], extras: Partial<WorkflowOptions> = {}, options: { approve?: boolean; cwd?: string; request?: string } = {}) {
   const cwd = options.cwd ?? (await tempRepo());
-  const app = workflow(cwd, { config: tieredConfig(), startTurn: () => undefined, ...extras });
+  const app = workflow(cwd, { config: tieredConfig(), ...extras });
   if (!(await app.startPlan(options.request ?? "Add retry to the ingest parser")).ok) throw new Error("startPlan failed in fixture");
   await app.savePlanSpec(sampleSpec);
   await app.commitTickets(tickets);
@@ -133,36 +118,6 @@ export async function ticketWorkflow(tickets: Ticket[], extras: Partial<Workflow
 /** The context a Workflow holds, for tests of the modules that take one. */
 export function contextOf(app: Workflow): WorkflowContext {
   return (app as unknown as { ctx: WorkflowContext }).ctx;
-}
-
-export interface FakeCall {
-  provider: string;
-  model: string;
-  system: string;
-  user: string;
-  maxTokens?: number;
-  signal?: AbortSignal;
-}
-
-/** A chat client that records every call and answers from `answer`; a thrown error is the call failing. */
-export function fakeChat(answer: (call: FakeCall) => string | { text: string; usage?: Partial<TokenUsage> } | Promise<string | { text: string; usage?: Partial<TokenUsage> }>) {
-  const calls: FakeCall[] = [];
-  const chat: ChatFn = async (candidate, request) => {
-    const call: FakeCall = {
-      provider: candidate.provider,
-      model: candidate.model,
-      system: request.messages.filter((message) => message.role === "system").map((message) => message.content).join("\n"),
-      user: request.messages.filter((message) => message.role === "user").map((message) => message.content).join("\n"),
-      maxTokens: request.maxTokens,
-      signal: request.signal,
-    };
-    calls.push(call);
-    const reply = await answer(call);
-    const text = typeof reply === "string" ? reply : reply.text;
-    const usage = { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, requests: 1, ...(typeof reply === "string" ? {} : reply.usage) };
-    return { text, usage, provider: candidate.provider, model: candidate.model };
-  };
-  return { chat, calls };
 }
 
 /** A GitWorkspace that records the argv of every git call, for tests that must show a command made none. */

@@ -6,52 +6,12 @@ import { budgetState } from "./budget.js";
 import { active, done, fail, guard, iso, type WorkflowContext } from "./context.js";
 import { move } from "./machine.js";
 import { announceParked, newTask, retireCurrent } from "./planning.js";
-import { INTERVIEW_RULES, LOCAL_SIZE_RULES, MAX_INTERVIEW_QUESTIONS, NO_QUESTIONS_RULES, REVISION_RULES, TICKET_RULES } from "./prompts.js";
-import { CLOUD_TICKET_TOKENS, localLimits } from "./routing.js";
-import { renderTicketsMarkdown } from "./tickets.js";
 import { activeTask, displayName } from "./tasks.js";
 
-export interface InterviewOption {
-  value: string;
-  label: string;
-  description?: string;
-}
-
-export interface InterviewQuestion {
-  id: string;
-  title: string;
-  prompt: string;
-  options: InterviewOption[];
-  recommended: string;
-  reason: string;
-  dependsOn?: string[];
-}
-
-export interface InterviewAnswer {
-  id: string;
-  value: string;
-  label: string;
-  wasCustom: boolean;
-  acceptedRecommendation: boolean;
-}
-
-export interface InterviewRound {
-  round: number;
-  at: string;
-  questions: InterviewQuestion[];
-  answers: InterviewAnswer[];
-  /** True when no UI was available and the recommendations were recorded as the answers. */
-  headless: boolean;
-}
-
-/** `interview.json` in the task folder: everything needed to resume an interview after a restart. */
+/** `interview.json` in the task folder: the request a /plan was started with. Older files also hold `rounds` of answered questions, which nothing reads now. */
 export interface InterviewFile {
   version: 1;
   request: string;
-  noQuestions: boolean;
-  rounds: InterviewRound[];
-  /** A round that was shown but not answered yet. Only one may be pending; a new round is refused until it is answered. */
-  pending?: { round: number; questions: InterviewQuestion[] };
 }
 
 /** A technical implementation plan, in the shape of an engineer's plan mode: what changes where, and how it is verified. */
@@ -81,7 +41,7 @@ export function readInterview(ctx: WorkflowContext, taskId: string): InterviewFi
   if (!text) return undefined;
   try {
     const parsed = JSON.parse(text) as InterviewFile;
-    return parsed && Array.isArray(parsed.rounds) ? parsed : undefined;
+    return parsed && typeof parsed.request === "string" ? parsed : undefined;
   } catch {
     return undefined;
   }
@@ -91,11 +51,7 @@ function writeInterview(ctx: WorkflowContext, taskId: string, file: InterviewFil
   ctx.store.writeText(taskId, INTERVIEW_FILE, `${JSON.stringify(redactUnknown(file), null, 2)}\n`);
 }
 
-export function questionsAsked(file: InterviewFile): number {
-  return file.rounds.reduce((sum, round) => sum + round.questions.length, 0);
-}
-
-/** The task whose /plan interview or ticket stage is running now, with its interview file. */
+/** The task whose /plan (spec or ticket stage) is being drafted now, with its interview file. */
 export function activePlanning(ctx: WorkflowContext): { task: TaskState; interview: InterviewFile } | undefined {
   const task = active(ctx);
   if (!task?.planning || task.phase !== "PLANNING") return undefined;
@@ -106,16 +62,9 @@ export function activePlanning(ctx: WorkflowContext): { task: TaskState; intervi
 export function planningStatusText(ctx: WorkflowContext): string | undefined {
   const found = activePlanning(ctx);
   if (!found) return undefined;
-  const { task, interview } = found;
+  const { task } = found;
   if (task.planning!.stage === "tickets") return "plan · writing tickets";
-  if (task.planning!.revision) return "plan · revising";
-  if (interview.noQuestions) return "plan · writing spec (no questions)";
-  const round = interview.pending?.round ?? interview.rounds.length + 1;
-  return `plan · interview round ${round} (${questionsAsked(interview)}/${MAX_INTERVIEW_QUESTIONS} questions)`;
-}
-
-function showStatus(ctx: WorkflowContext): void {
-  ctx.planStatus?.(planningStatusText(ctx));
+  return task.planning!.revision ? "plan · revising" : "plan · writing spec";
 }
 
 /** Steps a task back to PLANNING from wherever it is, one legal edge at a time. */
@@ -125,27 +74,18 @@ function toPlanning(task: TaskState, at: string): TaskState {
   return move(direct.includes(task.phase) ? task : move(task, "AWAITING_PLAN_APPROVAL", at), "PLANNING", at);
 }
 
-function resumeMessage(request: string): string {
-  return `Resume planning: ${request}`;
-}
-
-/** `/plan` entry point. Starts (or resumes) the model-run interview in the session. */
-export function startPlan(ctx: WorkflowContext, request: string, options: { noQuestions?: boolean; /** The caller drives the interview itself (the shepherd CLI): no session turn is started. */ headless?: boolean } = {}): Promise<CommandResult> {
+/** `shepherd plan start`: starts (or resumes) the plan. Claude Code drafts the spec and tickets; nothing here runs a model. */
+export function startPlan(ctx: WorkflowContext, request: string): Promise<CommandResult> {
   return guard(async () => {
     const current = await activeTask(ctx);
     const text = request.trim();
-    if (!text && !current?.planning) return fail("USAGE", "Usage: /plan [--no-questions] <request>");
-    if (!ctx.startTurn && !options.headless) return fail("NO_SESSION", "Planning needs a Pi session to run the interview.");
+    if (!text && !current?.planning) return fail("USAGE", "Usage: shepherd plan start \"<request>\"");
     const safe = redact(text);
-    const noQuestions = options.noQuestions ?? false;
     const at = iso(ctx);
-    // Resume: no request, or the same request again, and an interview already on disk. A different request is a new task.
+    // Resume: no request, or the same request again, and a plan already being drafted. A different request is a new task.
     if (current?.planning && (!text || current.request === safe)) {
-      const interview = readInterview(ctx, current.taskId);
-      if (interview) {
+      if (readInterview(ctx, current.taskId)) {
         await ctx.store.update(current.taskId, "plan resumed", (task) => toPlanning(task, at));
-        showStatus(ctx);
-        ctx.startTurn?.(resumeMessage(current.request));
         return done(`Resuming the plan for ${displayName(current)}. ${planningStatusText(ctx) ?? ""}`.trim(), { taskId: current.taskId, resumed: true });
       }
     }
@@ -154,18 +94,13 @@ export function startPlan(ctx: WorkflowContext, request: string, options: { noQu
     }
     // A request always starts a new task. A finished task is closed; any other is parked untouched (/plans switches back).
     const parked = await retireCurrent(ctx, current);
-    // Until plan_spec saves the planner's rating, the task has the default classification.
+    // Until `plan spec` saves the planner's rating, the task has the default classification.
     const classification: AcceptedClassification = defaultClassification();
-    const state = await ctx.store.create({ ...newTask(ctx, safe, at), classification, planning: { stage: "interview", noQuestions } });
+    const state = await ctx.store.create({ ...newTask(ctx, safe, at), classification, planning: { stage: "interview" } });
     announceParked(ctx, parked);
     await initAgentWatermark(ctx);
-    writeInterview(ctx, state.taskId, { version: 1, request: safe, noQuestions, rounds: [] });
-    showStatus(ctx);
-    ctx.startTurn?.(`Plan this request${noQuestions ? " (no questions)" : ""}:\n\n${safe}`);
-    return done(
-      `${noQuestions ? `Planning ${displayName(state)} without an interview. The model will write the spec and tickets.` : `Interview started for ${displayName(state)}. ${planningStatusText(ctx)}`}`,
-      { taskId: state.taskId },
-    );
+    writeInterview(ctx, state.taskId, { version: 1, request: safe });
+    return done(`Planning ${displayName(state)}. ${planningStatusText(ctx)}`, { taskId: state.taskId });
   });
 }
 
@@ -173,101 +108,9 @@ function planningOrThrow(ctx: WorkflowContext, stage: "interview" | "tickets"): 
   const found = activePlanning(ctx);
   if (!found) throw new WorkflowError("NO_INTERVIEW", "No /plan is running. Start one with /plan <request>.");
   if (found.task.planning!.stage !== stage) {
-    throw new WorkflowError("WRONG_STAGE", stage === "interview" ? "The interview is over: the spec is saved. Call plan_tickets." : "Write the spec first with plan_spec, then call plan_tickets.");
+    throw new WorkflowError("WRONG_STAGE", stage === "interview" ? "The spec is saved. Call plan_tickets." : "Write the spec first with plan_spec, then call plan_tickets.");
   }
   return found;
-}
-
-/** Rounds shown in this process and not yet answered, per workflow context. Disk `pending` alone cannot tell a live round from one left by a restart. */
-const inFlight = new WeakMap<WorkflowContext, Set<string>>();
-
-function inFlightFor(ctx: WorkflowContext): Set<string> {
-  let set = inFlight.get(ctx);
-  if (!set) inFlight.set(ctx, (set = new Set()));
-  return set;
-}
-
-/** Releases the in-process pending marker (the user dismissed the round or the tool failed). The pending record stays on disk for a re-ask. */
-export function abandonRound(ctx: WorkflowContext): void {
-  const taskId = ctx.store.readActive();
-  if (taskId) inFlightFor(ctx).delete(taskId);
-}
-
-/** Validates a round of questions against the cap, ordering, and shape rules, then records it as pending. */
-export async function beginRound(ctx: WorkflowContext, input: { round: number; questions: InterviewQuestion[] }): Promise<{ round: number; asked: number; remaining: number }> {
-  const { task, interview } = planningOrThrow(ctx, "interview");
-  if (interview.noQuestions) throw new WorkflowError("NO_QUESTIONS", "The user chose --no-questions. Do not ask; call plan_spec and record assumptions instead.");
-  if (task.planning!.revision) throw new WorkflowError("NO_QUESTIONS", "This is a revision of a drafted plan. Do not ask; apply the requested changes and call plan_spec.");
-  const asked = questionsAsked(interview);
-  const round = interview.rounds.length + 1;
-  const { questions } = input;
-  const pending = interview.pending;
-  if (pending) {
-    if (inFlightFor(ctx).has(task.taskId)) {
-      throw new WorkflowError("ROUND_PENDING", `Round ${pending.round} is still waiting for the user's answers. Ask one round at a time; wait for this result.`);
-    }
-    // Left by a restart: only the same round may be asked again, and it replaces the stale pending one.
-    if (input.round !== pending.round) throw new WorkflowError("ROUND_PENDING", `Round ${pending.round} was shown but not answered. Ask round ${pending.round} again, or call plan_spec.`);
-  }
-  if (!Array.isArray(questions) || questions.length === 0) throw new WorkflowError("QUESTIONS_INVALID", "A round needs at least one question.");
-  if (asked + questions.length > MAX_INTERVIEW_QUESTIONS) {
-    throw new WorkflowError(
-      "QUESTION_CAP",
-      `Asking ${questions.length} more would exceed the ${MAX_INTERVIEW_QUESTIONS}-question cap (${asked} already asked). ${asked >= MAX_INTERVIEW_QUESTIONS ? "" : `At most ${MAX_INTERVIEW_QUESTIONS - asked} more are allowed. `}Finalize now: call plan_spec and record any open decision as an assumption.`,
-    );
-  }
-  if (input.round !== round) throw new WorkflowError("QUESTIONS_INVALID", `This is round ${round}, not ${input.round}.`);
-  const answered = new Set(interview.rounds.flatMap((item) => item.answers.map((answer) => answer.id)));
-  const inRound = new Set(questions.map((question) => question.id));
-  const errors: string[] = [];
-  const seen = new Set<string>();
-  for (const question of questions) {
-    const where = `Question ${question.id || "(no id)"}`;
-    if (!question.id) errors.push("Every question needs an id.");
-    else if (seen.has(question.id) || answered.has(question.id)) errors.push(`${where}: id already used.`);
-    seen.add(question.id);
-    if (!question.title?.trim() || !question.prompt?.trim()) errors.push(`${where}: title and prompt are required.`);
-    if (!Array.isArray(question.options) || question.options.length < 2 || question.options.length > 4) errors.push(`${where}: needs 2 to 4 options.`);
-    else {
-      const values = question.options.map((option) => option.value);
-      if (new Set(values).size !== values.length || question.options.some((option) => !option.value || !option.label)) errors.push(`${where}: option values must be unique, and each needs a value and label.`);
-      if (!values.includes(question.recommended)) errors.push(`${where}: recommended must be one of the option values.`);
-    }
-    if (!question.reason?.trim()) errors.push(`${where}: a one-line reason for the recommendation is required.`);
-    for (const dep of question.dependsOn ?? []) {
-      if (inRound.has(dep)) errors.push(`${where}: depends on ${dep}, which is in the same round. Ask ${dep} first and ${question.id} in the next round.`);
-      else if (!answered.has(dep)) errors.push(`${where}: depends on ${dep}, which has not been answered. Ask it in an earlier round.`);
-    }
-  }
-  if (errors.length) throw new WorkflowError("QUESTIONS_INVALID", errors.join("\n"));
-  writeInterview(ctx, task.taskId, { ...interview, pending: { round, questions } });
-  inFlightFor(ctx).add(task.taskId);
-  showStatus(ctx);
-  return { round, asked, remaining: MAX_INTERVIEW_QUESTIONS - asked - questions.length };
-}
-
-/** Persists a finished round, logs one `decision` event per answer, and clears the pending marker. */
-export async function recordAnswers(ctx: WorkflowContext, round: number, questions: InterviewQuestion[], answers: InterviewAnswer[], headless: boolean): Promise<{ asked: number; remaining: number }> {
-  const { task, interview } = planningOrThrow(ctx, "interview");
-  if (round !== interview.rounds.length + 1 || interview.pending?.round !== round) {
-    throw new WorkflowError("QUESTIONS_INVALID", `Round ${round} is not the pending round (${interview.pending ? `round ${interview.pending.round}` : "none pending"}).`);
-  }
-  const already = questionsAsked(interview);
-  if (already + questions.length > MAX_INTERVIEW_QUESTIONS) {
-    throw new WorkflowError("QUESTION_CAP", `Recording ${questions.length} questions would exceed the ${MAX_INTERVIEW_QUESTIONS}-question cap (${already} already asked).`);
-  }
-  inFlightFor(ctx).delete(task.taskId);
-  const at = iso(ctx);
-  const clean = redactUnknown(answers) as InterviewAnswer[];
-  const next: InterviewFile = { ...interview, rounds: [...interview.rounds, { round, at, questions, answers: clean, headless }], pending: undefined };
-  writeInterview(ctx, task.taskId, next);
-  for (const answer of clean) {
-    const question = questions.find((item) => item.id === answer.id);
-    await ctx.store.appendDecision(task.taskId, { round, questionId: answer.id, title: question?.title ?? answer.id, value: answer.value, label: answer.label, wasCustom: answer.wasCustom, acceptedRecommendation: answer.acceptedRecommendation }, at);
-  }
-  showStatus(ctx);
-  const asked = questionsAsked(next);
-  return { asked, remaining: MAX_INTERVIEW_QUESTIONS - asked };
 }
 
 export function renderSpec(spec: PlanSpec): string {
@@ -370,10 +213,9 @@ export async function savePlanSpec(ctx: WorkflowContext, input: unknown): Promis
   await ctx.store.update(task.taskId, "spec saved", (current) => ({
     ...current,
     classification,
-    planning: { stage: "tickets", noQuestions: current.planning?.noQuestions ?? false, ...(current.planning?.revision ? { revision: current.planning.revision } : {}) },
+    planning: { stage: "tickets", ...(current.planning?.revision ? { revision: current.planning.revision } : {}) },
     updatedAt: iso(ctx),
   }));
-  showStatus(ctx);
   return { file, classification };
 }
 
@@ -403,60 +245,19 @@ function plannerRating(raw: Record<string, unknown>, current: AcceptedClassifica
   };
 }
 
-/** Rules and state to inject before a user prompt while /plan is running, or undefined when it is not. */
-export function planningPrompt(ctx: WorkflowContext): string | undefined {
-  const found = activePlanning(ctx);
-  if (!found) return undefined;
-  return stagePrompt(ctx, found);
-}
-
-function stagePrompt(ctx: WorkflowContext, found: NonNullable<ReturnType<typeof activePlanning>>): string {
-  const { task, interview } = found;
-  const revision = task.planning!.revision;
-  const feedback = revision ? ["", "The user sent the drafted plan back with these requested changes:", revision] : [];
-  if (task.planning!.stage === "tickets") {
-    const spec = ctx.store.readText(task.taskId, SPEC_FILE) ?? "";
-    // A difficulty whose model is a local one has a small context window: its tickets must fit.
-    const limits = localLimits(ctx.config);
-    const rules = [TICKET_RULES(CLOUD_TICKET_TOKENS), ...(limits.length ? ["", LOCAL_SIZE_RULES(limits)] : [])];
-    return [...rules, ...feedback, "", "Saved spec:", spec.slice(0, 12000)].join("\n");
-  }
-  if (revision) {
-    const spec = ctx.store.readText(task.taskId, SPEC_FILE) ?? "";
-    const tickets = task.plan?.tickets?.length ? renderTicketsMarkdown(task.plan.tickets) : "";
-    return [REVISION_RULES, "", `Request: ${interview.request}`, ...feedback, "", "Previous spec:", spec.slice(0, 12000), ...(tickets ? ["", "Previous tickets:", tickets.slice(0, 12000)] : [])].join("\n");
-  }
-  const lines = [interview.noQuestions ? NO_QUESTIONS_RULES : INTERVIEW_RULES, "", `Request: ${interview.request}`];
-  if (!interview.noQuestions) {
-    const asked = questionsAsked(interview);
-    lines.push("", `Questions asked so far: ${asked}/${MAX_INTERVIEW_QUESTIONS}. Next round: ${interview.rounds.length + 1}.`);
-    for (const round of interview.rounds) {
-      for (const answer of round.answers) {
-        const question = round.questions.find((item) => item.id === answer.id);
-        lines.push(`- [${answer.id}] ${question?.title ?? ""}: ${answer.label}${answer.wasCustom ? " (user wrote)" : answer.acceptedRecommendation ? " (accepted recommendation)" : ""}`);
-      }
-    }
-    if (interview.pending) lines.push("", `Round ${interview.pending.round} was shown but not answered (session restarted). Ask it again with plan_questions: ${interview.pending.questions.map((item) => item.id).join(", ")}.`);
-  }
-  return lines.join("\n");
-}
-
 /**
- * Sends a drafted plan back to planning with the person's requested changes. The model rewrites the spec and
- * tickets (no new interview questions), and the plan returns for approval. Plan approval stays required.
+ * Sends a drafted plan back to planning with the person's requested changes. The caller rewrites the spec and
+ * tickets, and the plan returns for approval. Plan approval stays required.
  */
-export async function requestPlanChanges(ctx: WorkflowContext, task: TaskState, feedback: string, options: { headless?: boolean } = {}): Promise<CommandResult> {
+export async function requestPlanChanges(ctx: WorkflowContext, task: TaskState, feedback: string): Promise<CommandResult> {
   const text = redact(feedback.trim());
-  if (!text) return fail("USAGE", "Describe the changes you want, then run /show-plan again.");
+  if (!text) return fail("USAGE", "Describe the changes you want.");
   if (!readInterview(ctx, task.taskId)) return fail("NO_INTERVIEW", "This plan was not drafted by the /plan interview. Run /plan again with the changes in the request.");
-  if (!ctx.startTurn && !options.headless) return fail("NO_SESSION", "Revising the plan needs a Pi session.");
   const at = iso(ctx);
   await ctx.store.update(task.taskId, "plan changes requested", (current) => ({
     ...toPlanning(current, at),
     approvedVersion: undefined,
-    planning: { stage: "interview", noQuestions: true, revision: text },
+    planning: { stage: "interview", revision: text },
   }));
-  showStatus(ctx);
-  ctx.startTurn?.(`Revise the plan with these changes:\n\n${text}`);
   return done("Sent the plan back for changes. The revised plan will be shown for review again.", { taskId: task.taskId });
 }

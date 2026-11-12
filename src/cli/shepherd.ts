@@ -25,6 +25,7 @@ import type { TabTimings } from "../runner/tab.js";
 import type { WorkflowOptions } from "../orchestrator/types.js";
 import { buildCommand, BUILD_USAGE, type OpenSession } from "./build.js";
 import { fixCommand, FIX_USAGE, reviewCommand, REVIEW_USAGE } from "./review.js";
+import { migrateConfig, MIGRATE_USAGE } from "./migrate-config.js";
 import { approvalReason, PLAN_USAGE, planCommand, plansCommand, taskCommand } from "./plan.js";
 
 const run = promisify(execFile);
@@ -40,6 +41,7 @@ const USAGE = `Usage:
   shepherd plan <start|spec|tickets|show|revise|approve> ...   (shepherd plan --help)
   shepherd plans [<name> | close <name> | --all]
   shepherd task <list|use <name>|close [<name>]>
+  shepherd migrate-config [--force] [--json]   (copies ~/.pi/agent/chef.yaml to ~/.claude/shepherd.yaml, never over an existing one)
 `;
 
 export interface CliIo {
@@ -308,7 +310,8 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
     if (hits.length === 0) return undefined;
     const deny = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
     const open = openTask(task);
-    const building = open && workflow.store.liveBuildClaim(open.taskId);
+    // A live claim (a ticket is running) or the marker (a build has more tickets to go, between `build --once` runs).
+    const building = open && (workflow.store.liveBuildClaim(open.taskId) || workflow.store.buildInProgress(open.taskId));
     const blocked = hits.find((hit) => building && GUARD_WHY[hit]);
     if (blocked) return deny(`Blocked \`${blocked}\`: ${GUARD_WHY[blocked]} (task ${open?.name ?? open?.taskId}).`);
     const spendHit = hits.find((hit) => hit === "shepherd run" || hit === "hc run");
@@ -435,6 +438,13 @@ export async function main(argv: string[], io: CliIo = defaultIo, options: CliOp
   if (command === "status") return statusCommand(io, options);
   if (command === "hook") return hookCommand(rest[0], io, options);
   if (command === "build" || command === "review" || command === "fix") return buildFamily(command, rest, io, options);
+  if (command === "migrate-config") {
+    const json = rest.includes("--json");
+    if (rest.includes("--help") || rest.includes("-h")) return emit(done(MIGRATE_USAGE), json, io);
+    const unknown = rest.filter((word) => word !== "--json" && word !== "--force");
+    if (unknown.length > 0) return emit(fail("USAGE", MIGRATE_USAGE), json, io);
+    return emit(migrateConfig({ home: options.home, ...(options.cwd ? { cwd: options.cwd } : {}), force: rest.includes("--force") }), json, io);
+  }
   if (command === "plan" || command === "plans" || command === "task") return planFamily(command, rest, io, options);
   io.err(USAGE);
   return 2;

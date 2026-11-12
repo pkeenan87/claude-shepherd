@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { Ticket, TokenUsage } from "../src/domain.js";
 import { runBuild, type BuildDriver, type ModelRef } from "../src/orchestrator/build.js";
 import { carriedFindings, reviewTicket } from "../src/orchestrator/ticket-review.js";
-import { checkRunner, contextOf, fakeChat, sampleTicket, tempRepo, tieredConfig, ticketWorkflow, type FakeCall } from "./helpers.js";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { fakeHerdrClient, type FakeTab } from "./herdr-fake.js";
+import { checkRunner, contextOf, sampleTicket, tempRepo, tieredConfig, ticketWorkflow } from "./helpers.js";
 
 const OPUS = "claude-opus-5-5";
 const pass = (extra: object = {}) => JSON.stringify({ summary: "Looks right.", findings: [], ...extra });
@@ -41,26 +43,66 @@ function fakeDriver(cwd: string, script: (send: Send) => { lastText?: string; ab
   return { driver, sends, write };
 }
 
-type Answer = (call: FakeCall) => string | { text: string; usage?: Partial<TokenUsage> } | Promise<string | { text: string; usage?: Partial<TokenUsage> }>;
+/** What a review tab was asked: the model it ran as, and the prompt (the ticket, the rules and where to write the findings). */
+interface FakeCall {
+  provider: string;
+  model: string;
+  prompt: string;
+  /** The prompt again: the rules are in it. */
+  system: string;
+  user: string;
+}
+
+/**
+ * A fake herdr that plays the review tab: a review prompt is answered by writing `answer(call)` to the findings file it names
+ * and the reply's usage to a Pi session file (the tab is a Pi child). An answer that throws is a turn that failed; one that
+ * returns undefined writes no file.
+ */
+function reviewHerdr(answer: Answer) {
+  const calls: FakeCall[] = [];
+  const fake = fakeHerdrClient({
+    onSend: async (tab: FakeTab, text: string) => {
+      const out = /Write ONLY a JSON object to (\S+\.json)/.exec(text)?.[1];
+      if (!out) return;
+      const [provider = "", ...rest] = tab.model.split("/");
+      const call: FakeCall = { provider, model: rest.join("/").replace(/:(off|minimal|low|medium|high|xhigh)$/, ""), prompt: text, system: text, user: text };
+      calls.push(call);
+      const reply = await answer(call);
+      if (reply === undefined) return;
+      const body = typeof reply === "string" ? reply : reply.text;
+      const usage = { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, requests: 1, ...(typeof reply === "string" ? {} : reply.usage) };
+      mkdirSync(path.dirname(out), { recursive: true });
+      writeFileSync(out, body);
+      const sm = SessionManager.create("/work", tab.sessionDir);
+      sm.appendMessage({ role: "user", content: "review", timestamp: Date.now() } as never);
+      sm.appendMessage({ role: "assistant", content: [{ type: "text", text: "done" }], api: "x", provider: call.provider, model: call.model, usage: { input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, totalTokens: (usage.input ?? 0) + (usage.output ?? 0), cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: Date.now() } as never);
+    },
+  });
+  return { client: fake.client, calls };
+}
+
+type Answer = (call: FakeCall) => string | undefined | { text: string; usage?: Partial<TokenUsage> } | Promise<string | undefined | { text: string; usage?: Partial<TokenUsage> }>;
 
 /** Answers the review model's call. */
 function roles(handlers: { review?: Answer }): Answer {
   return (call) => (handlers.review ?? (() => pass()))(call);
 }
 
-async function setup(options: { tickets?: Ticket[]; answer?: Answer; mutate?: (config: ReturnType<typeof tieredConfig>) => void; chat?: boolean } = {}) {
+async function setup(options: { tickets?: Ticket[]; answer?: Answer; mutate?: (config: ReturnType<typeof tieredConfig>) => void; herdr?: boolean } = {}) {
   const cwd = await tempRepo();
   const config = tieredConfig();
   options.mutate?.(config);
   const progress: string[] = [];
   const reports: string[] = [];
   const passing = { ok: true };
-  const fake = fakeChat(options.answer ?? roles({}));
+  const fake = reviewHerdr(options.answer ?? roles({}));
   const { app, taskId } = await ticketWorkflow(
     options.tickets ?? [sampleTicket("01", { difficulty: "low" })],
     {
       config,
-      chat: options.chat === false ? undefined : fake.chat,
+      herdr: options.herdr === false ? undefined : fake.client,
+      herdrTimings: { sleep: async () => undefined },
+      ticketModePath: "/shepherd/dist/ticket-mode.mjs",
       progress: (line) => void progress.push(line),
       report: (markdown) => void reports.push(markdown),
       runner: checkRunner(async () => (passing.ok ? { code: 0, stdout: "ok", stderr: "" } : { code: 1, stdout: "", stderr: "AssertionError: expected 1" })),
@@ -82,16 +124,15 @@ describe("per-ticket review in /build", () => {
     expect(result.ok, result.text).toBe(true);
     expect(t.calls).toHaveLength(1);
     expect(t.calls[0]!.model).toBe(OPUS);
-    // The review sees the ticket and its own diff, including the new untracked file.
+    // The reviewer is told the ticket and how to see its own change (it reads the checkout itself); it is not sent the diff.
     expect(t.calls[0]!.user).toContain("# Ticket 01: Ticket 01");
     expect(t.calls[0]!.user).toContain("Build part 01.");
-    expect(t.calls[0]!.user).toContain("+export const x = 1;");
-    expect(t.calls[0]!.system).not.toContain("questions");
+    expect(t.calls[0]!.user).toContain("git diff HEAD");
     const run = t.load().ticketRuns!["01"]!;
     expect(run).toMatchObject({ status: "done", difficulty: "low" });
     expect(run.reviews).toHaveLength(1);
     expect(run.reviews![0]).toMatchObject({ attempt: 1, round: 1, tier: "low", implementer: "xai/grok-4.7", verdict: "pass" });
-    expect(t.app.store.readLedger().filter((row) => row.reason.startsWith("ticket review")).map((row) => [row.reason, row.model, row.tier])).toEqual([["ticket review ticket 01", OPUS, "review"]]);
+    expect(t.app.store.readLedger().filter((row) => row.reason.startsWith("ticket review")).map((row) => [row.reason, row.model, row.tier])).toEqual([["ticket review · ticket 01", OPUS, "review"]]);
   });
 
   it("retries once in the same session on a failed review, then commits when the second review passes", async () => {
@@ -102,8 +143,7 @@ describe("per-ticket review in /build", () => {
     expect(result.ok, result.text).toBe(true);
     expect(d.sends.map((item) => item.turn)).toEqual([0, 1]);
     expect(d.sends[1]!.text).toContain("retry loop never stops");
-    // The second review reads the fixed tree.
-    expect(t.calls[1]!.user).toContain("+export const v = 1;");
+    expect(t.calls).toHaveLength(2);
     expect(t.load().ticketRuns!["01"]!.reviews!.map((item) => [item.round, item.verdict])).toEqual([[1, "fail"], [2, "pass"]]);
     expect(t.progress.find((line) => line.startsWith("Ticket 01 ·"))).toContain("review pass (2nd)");
   });
@@ -141,7 +181,7 @@ describe("per-ticket review in /build", () => {
     expect(t.load().ticketRuns!["01"]!.attempts).toBe(2);
   });
 
-  it("commits with a warning when the review call errors twice, and the report says so", async () => {
+  it("commits with a warning when the review turn fails, and the report says so", async () => {
     const t = await setup({
       answer: () => {
         throw new Error("overloaded");
@@ -150,7 +190,7 @@ describe("per-ticket review in /build", () => {
     const d = fakeDriver(t.cwd, () => d.write("f.txt"));
     const result = await t.run(d.driver);
     expect(result.ok, result.text).toBe(true);
-    expect(t.calls).toHaveLength(2);
+    expect(t.calls).toHaveLength(1);
     const review = t.load().ticketRuns!["01"]!.reviews![0]!;
     expect(review.verdict).toBe("unavailable");
     expect(review.rationale).toContain("overloaded");
@@ -160,39 +200,23 @@ describe("per-ticket review in /build", () => {
     expect(await gitLog(t.cwd)).toBe("01: Ticket 01\nbase");
   });
 
-  it("retries an unparseable review answer once on the same model", async () => {
-    let n = 0;
-    const t = await setup({ answer: () => (++n === 1 ? "looks fine to me" : pass()) });
+  it("an answer that is not the JSON asked for is an unavailable review, not a pass", async () => {
+    const t = await setup({ answer: () => "looks fine to me" });
     const d = fakeDriver(t.cwd, () => d.write("f.txt"));
     expect((await t.run(d.driver)).ok).toBe(true);
-    expect(t.calls.map((call) => call.model)).toEqual([OPUS, OPUS]);
-    expect(t.load().ticketRuns!["01"]!.reviews![0]).toMatchObject({ verdict: "pass", reviewer: `anthropic/${OPUS}` });
+    expect(t.calls.map((call) => call.model)).toEqual([OPUS]);
+    expect(t.load().ticketRuns!["01"]!.reviews![0]).toMatchObject({ verdict: "unavailable" });
+    expect(t.load().ticketRuns!["01"]!.reviews![0]!.rationale).toContain("not the JSON asked for");
   });
 
-  it("does not review when review.tickets is false or there is no model connection", async () => {
-    for (const options of [{ mutate: (config: ReturnType<typeof tieredConfig>) => void (config.review.tickets = false) }, { chat: false }]) {
+  it("does not review when review.tickets is false or there is no herdr client", async () => {
+    for (const options of [{ mutate: (config: ReturnType<typeof tieredConfig>) => void (config.review.tickets = false) }, { herdr: false }]) {
       const t = await setup(options);
       const d = fakeDriver(t.cwd, () => d.write("f.txt"));
       expect((await t.run(d.driver)).ok).toBe(true);
       expect(t.calls).toHaveLength(0);
       expect(t.load().ticketRuns!["01"]!.reviews).toBeUndefined();
     }
-  });
-
-  it("clips the diff to review.maxDiffChars and lists what was cut, with lockfiles omitted", async () => {
-    const t = await setup({ mutate: (config) => void (config.review.maxDiffChars = 3000) });
-    const d = fakeDriver(t.cwd, () => {
-      d.write("a.txt", `${"a".repeat(2500)}\n`);
-      d.write("b.txt", `${"b".repeat(2500)}\n`);
-      d.write("package-lock.json", `${'{"lock": 1}\n'.repeat(500)}`);
-      d.write("secret.txt", "token = ghp_abcdefghijklmnopqrstuvwxyz0123456789\n");
-    });
-    expect((await t.run(d.driver)).ok).toBe(true);
-    const sent = t.calls.find((call) => call.model === OPUS)!.user;
-    expect(sent).toContain("[diff clipped to 3000 characters; cut:");
-    expect(sent).toContain("b.txt (not shown)");
-    expect(sent).not.toContain("lock\": 1");
-    expect(sent).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
   });
 });
 
@@ -370,7 +394,7 @@ describe("the per-ticket log, costs and status", () => {
     expect(run.costSplit).toEqual({ implementer: 0.06, review: 0.0525 });
     expect(run.costUsd).toBe(0.1125);
     const reasons = t.app.store.readLedger().map((row) => row.reason).filter((reason) => /ticket 01$/.test(reason));
-    expect(reasons.sort()).toEqual(["observed assistant usage · ticket 01", "ticket review ticket 01"].sort());
+    expect(reasons.sort()).toEqual(["observed assistant usage · ticket 01", "ticket review · ticket 01"].sort());
     expect(t.progress.find((line) => line.startsWith("Ticket 01 ·"))).toContain("$0.1125 (impl $0.0600 · review $0.0525) · checks passed · review pass · committed");
     expect(t.reports[0]).toContain("| 01 | Ticket 01 | high | openai/gpt-6.1-sol | pass |");
     expect(t.reports[0]).toContain("$0.1125 (impl $0.0600 · review $0.0525)");
@@ -466,7 +490,7 @@ describe("aborting and resuming", () => {
 });
 
 describe("reviewTicket never throws", () => {
-  it("returns unavailable when the diff or the ledger blow up", async () => {
+  it("returns unavailable when the diff blows up, and keeps the verdict when only the ledger does", async () => {
     const t = await setup({ tickets: [sampleTicket("01", { difficulty: "high" })] });
     const state = t.load();
     const ticket = state.plan!.tickets![0]!;
@@ -479,7 +503,9 @@ describe("reviewTicket never throws", () => {
       throw new Error("disk full");
     });
     const second = await reviewTicket(t.ctx, state, ticket, run);
-    expect(second).toMatchObject({ kind: "unavailable" });
+    // A ledger that cannot be written does not hide the verdict; the review's cost is unknown, never zero.
+    expect(second).toMatchObject({ kind: "pass", record: { costUsd: { review: null } } });
+    expect(t.progress.some((line) => line.includes("could not ledger the review's usage: disk full"))).toBe(true);
     ledger.mockRestore();
   });
 });

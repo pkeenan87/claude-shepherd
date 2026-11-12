@@ -1,8 +1,8 @@
 /**
- * Docks the chef-config panel into a herdr layout as its own column on the right edge of the root row. herdr applies a
+ * Docks the shepherd-config panel into a herdr layout as its own column on the right edge of the root row. herdr applies a
  * mod's `place` only the first time it sees the mod, and rewrites its shipped layouts (`main`, `terminals`, `win98`) on
- * every start, so the panel lives in a layout of the user's own (default name `chef`, made from the layout in use).
- * `dockChefPanel` is the pure transform; `dockLayoutFile` reads, backs up and writes the files.
+ * every start, so the panel lives in a layout of the user's own (default name `shepherd`, made from the layout in use).
+ * `dockShepherdPanel` is the pure transform; `dockLayoutFile` reads, backs up and writes the files.
  * `scripts/herdr-install.mjs` calls the second from `build/`.
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -10,13 +10,13 @@ import path from "node:path";
 
 type Node = { id?: unknown; type?: unknown; children?: unknown; content?: { mod?: unknown } } & Record<string, unknown>;
 
-export const CHEF_MOD = "chef-config";
-export const CHEF_ID = "chef";
+export const SHEPHERD_MOD = "shepherd-config";
+export const SHEPHERD_ID = "shepherd";
 /** The layout the installer makes and docks into unless told otherwise. */
-export const DEFAULT_LAYOUT = "chef";
+export const DEFAULT_LAYOUT = "shepherd";
 /** Layouts herdr ships and rewrites on every start: never edited. */
 export const SHIPPED_LAYOUTS = ["main", "terminals", "win98"];
-export const CHEF_COLUMN = { id: CHEF_ID, type: "block", size: { px: 340 }, min: 280, max: 640, content: { mod: CHEF_MOD } } as const;
+export const SHEPHERD_COLUMN = { id: SHEPHERD_ID, type: "block", size: { px: 340 }, min: 280, max: 640, content: { mod: SHEPHERD_MOD } } as const;
 
 export type DockStatus = "added" | "present" | "no-row" | "id-taken";
 
@@ -40,28 +40,28 @@ function walk(node: Node, visit: (node: Node) => void): void {
 }
 
 /**
- * Appends `{ id: "chef", type: "block", size: { px: 340 }, min, max, content: { mod: "chef-config" } }` to the root row,
+ * Appends `{ id: "shepherd", type: "block", size: { px: 340 }, min, max, content: { mod: "shepherd-config" } }` to the root row,
  * so the panel is a column on the right edge. Idempotent: a layout that already shows the mod anywhere is returned as
- * it is. Nothing is added when the root is not a row or the id `chef` belongs to something else.
+ * it is. Nothing is added when the root is not a row or the id `shepherd` belongs to something else.
  */
-export function dockChefPanel(layout: unknown): DockResult {
+export function dockShepherdPanel(layout: unknown): DockResult {
   const copy = structuredClone(layout);
   if (!isNode(copy)) return { layout: copy, status: "no-row" };
   let present = false;
   let taken = false;
   walk(copy, (node) => {
-    if (isNode(node.content) && node.content.mod === CHEF_MOD) present = true;
-    else if (node.id === CHEF_ID) taken = true;
+    if (isNode(node.content) && node.content.mod === SHEPHERD_MOD) present = true;
+    else if (node.id === SHEPHERD_ID) taken = true;
   });
   if (present) return { layout: copy, status: "present" };
   if (copy.type !== "row") return { layout: copy, status: "no-row" };
   if (taken) return { layout: copy, status: "id-taken" };
-  copy.children = [...childrenOf(copy), structuredClone(CHEF_COLUMN)];
+  copy.children = [...childrenOf(copy), structuredClone(SHEPHERD_COLUMN)];
   return { layout: copy, status: "added" };
 }
 
 export interface DockOptions {
-  /** The layout file to edit or create, without `.json`. Default: `chef`. A shipped layout name is refused. */
+  /** The layout file to edit or create, without `.json`. Default: `shepherd`. A shipped layout name is refused. */
   layout?: string;
   now?: Date;
 }
@@ -100,7 +100,7 @@ function usage(name: string): string[] {
   return [
     `Switch to it: herdr-app do layout.switch '{"name":"${name}"}'   (ctrl-shift-l cycles layouts)`,
     `Toggle the panel with a key: add this to the "global" section of ~/.config/herdr-app/keys.json (this tool does not edit it):`,
-    `  "ctrl-shift-g": {"command": "layout.toggle", "args": {"id": "${CHEF_ID}"}}`,
+    `  "ctrl-shift-g": {"command": "layout.toggle", "args": {"id": "${SHEPHERD_ID}"}}`,
   ];
 }
 
@@ -128,13 +128,13 @@ export function dockLayoutFile(appHome: string, options: DockOptions = {}): Dock
       created = true;
     }
   } catch (error) {
-    return { status: "unreadable", file, lines: [`Could not read a layout to dock into (${created || !existsSync(file) ? sourceName : name}): ${error instanceof Error ? error.message : String(error)}`, "Not docked. Add the column yourself (see docs/install.md)."] };
+    return { status: "unreadable", file, lines: [`Could not read a layout to dock into (${created || !existsSync(file) ? sourceName : name}): ${error instanceof Error ? error.message : String(error)}`, "Not docked. Add the column yourself (see README.md#herdr-panel)."] };
   }
-  const result = dockChefPanel(parsed);
-  if (result.status === "no-row") return { status: "no-row", file, lines: [`Did not edit ${file}: its root is not a row, so there is no right edge to add a column to.`, `Add ${JSON.stringify(CHEF_COLUMN)} to a row you choose (docs/install.md), or use --layout <name>.`] };
-  if (result.status === "id-taken") return { status: "id-taken", file, lines: [`Did not edit ${file}: a node with id "${CHEF_ID}" already exists that does not show ${CHEF_MOD}.`, "Add the column yourself with another id (docs/install.md)."] };
+  const result = dockShepherdPanel(parsed);
+  if (result.status === "no-row") return { status: "no-row", file, lines: [`Did not edit ${file}: its root is not a row, so there is no right edge to add a column to.`, `Add ${JSON.stringify(SHEPHERD_COLUMN)} to a row you choose (README.md#herdr-panel), or use --layout <name>.`] };
+  if (result.status === "id-taken") return { status: "id-taken", file, lines: [`Did not edit ${file}: a node with id "${SHEPHERD_ID}" already exists that does not show ${SHEPHERD_MOD}.`, "Add the column yourself with another id (README.md#herdr-panel)."] };
   // A layout of that name that exists and shows the panel is left alone. One made from a layout that already shows it still has to be written, or `name` would not exist to switch to.
-  if (result.status === "present" && !created) return { status: "present", file, lines: [`The ${name} layout already shows the ${CHEF_MOD} panel; nothing changed.`, ...usage(name)] };
+  if (result.status === "present" && !created) return { status: "present", file, lines: [`The ${name} layout already shows the ${SHEPHERD_MOD} panel; nothing changed.`, ...usage(name)] };
   let backup: string | undefined;
   if (!created) {
     const stamp = (options.now ?? new Date()).toISOString().replace(/[:.]/g, "-");
@@ -147,7 +147,7 @@ export function dockLayoutFile(appHome: string, options: DockOptions = {}): Dock
     file,
     ...(backup ? { backup } : {}),
     lines: [
-      created ? (result.status === "present" ? `Made the ${name} layout from ${sourceName}, which already shows the ${CHEF_MOD} panel (${file}).` : `Made the ${name} layout from ${sourceName} with the panel as a ${CHEF_COLUMN.size.px}px column on the right edge (${file}).`) : `Docked the panel in the ${name} layout as a ${CHEF_COLUMN.size.px}px column on the right edge (${file}).`,
+      created ? (result.status === "present" ? `Made the ${name} layout from ${sourceName}, which already shows the ${SHEPHERD_MOD} panel (${file}).` : `Made the ${name} layout from ${sourceName} with the panel as a ${SHEPHERD_COLUMN.size.px}px column on the right edge (${file}).`) : `Docked the panel in the ${name} layout as a ${SHEPHERD_COLUMN.size.px}px column on the right edge (${file}).`,
       ...(backup ? [`Backup: ${backup}`] : []),
       ...usage(name),
     ],
