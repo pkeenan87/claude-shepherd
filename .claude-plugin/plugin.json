@@ -1,7 +1,7 @@
 {
   "name": "shepherd",
   "displayName": "Claude Shepherd",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Plan, build and review with a model per ticket, herdr sub-agents and cost controls",
   "author": { "name": "pkeenan87" },
   "repository": "https://github.com/pkeenan87/claude-shepherd",

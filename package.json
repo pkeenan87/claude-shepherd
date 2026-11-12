@@ -1,6 +1,6 @@
 {
   "name": "claude-shepherd",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Claude Code plugin: plan, build and review with a model per ticket, herdr sub-agents and cost controls",
   "type": "module",
