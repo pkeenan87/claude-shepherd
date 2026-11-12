@@ -33,6 +33,7 @@ describe("defaults", () => {
     expect(config.review).toEqual({ model: true, tickets: true, maxDiffChars: 120000, maxChunks: 6, timeoutMs: 300000 });
     expect(config.budgets).toEqual({ taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: 0.05, idleWarnMinutes: 60, idleWarnTokens: 100000 });
     expect(config.branchPrefix).toBe("shepherd");
+    expect(config.build).toEqual({ visibleTabs: false });
   });
 
   it("fills the models a file leaves out from the defaults", () => {
@@ -61,6 +62,7 @@ describe("parseConfig validation", () => {
     ["local:\n  baseUrl: 'http://127.0.0.1:1/v1'\n  models: [{ id: m, contextWindow: 100 }]\n", /contextWindow/],
     ["local:\n  baseUrl: 'http://127.0.0.1:1/v1'\n  models: [{ id: m, contextWindow: 8192, maxTokens: 5 }]\n", /maxTokens/],
     ["local:\n  baseUrl: 'http://127.0.0.1:1/v1'\n  models: [{ id: m, contextWindow: 8192 }, { id: m, contextWindow: 8192 }]\n", /duplicates/],
+    ["build: { visibleTabs: yes please }\n", /build\.visibleTabs/],
     ["agents:\n  mine: { run: [] }\n", /agents\.mine\.run/],
     ["agents:\n  mine: { run: [cli], modelFlag: model }\n", /modelFlag/],
     ["agents:\n  'bad name': { run: [cli] }\n", /agent name/],
@@ -69,6 +71,11 @@ describe("parseConfig validation", () => {
     ["pricing:\n  - { provider: local, model: m, effectiveFrom: '2026-02-30', inputPerMillionUsd: 1, outputPerMillionUsd: 1 }\n", /effectiveFrom/],
   ])("rejects %j", (yaml, message) => {
     expect(() => parseConfig(yaml)).toThrow(message);
+  });
+
+  it("reads build.visibleTabs", () => {
+    expect(parseConfig("build: { visibleTabs: true }\n").build).toEqual({ visibleTabs: true });
+    expect(parseConfig("build: {}\n").build).toEqual({ visibleTabs: false });
   });
 
   it("rejects duplicate pricing rows", () => {

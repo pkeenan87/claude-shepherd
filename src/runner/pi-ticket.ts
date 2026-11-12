@@ -42,8 +42,8 @@ export interface HerdrTicketHost {
 export interface PiTicketInput extends TabTimings {
   client: HerdrClient;
   host: HerdrTicketHost;
-  /** The herdr space of shepherd's own terminal (`client.self()`): the ticket's tab opens beside it. */
-  space: string;
+  /** Set only with `build.visibleTabs`: the tab opens beside shepherd's own. */
+  space?: string;
   /** The build's checkout: the child's cwd. */
   cwd: string;
   ticketId: string;
@@ -112,7 +112,7 @@ export async function runPiTicket(input: PiTicketInput, run: (session: ChunkSess
         name,
         labels: { "shepherd.ticket": ticketId },
         progress: host.progress,
-        blockedNotice: `Ticket ${ticketId} is waiting for you in tab ${name}`,
+        blockedNotice: `Ticket ${ticketId} is waiting for you in herdr sub-agent ${name} (agents list)`,
         readyTimeoutMs: input.readyTimeoutMs ?? READY_TIMEOUT_MS,
       });
     } catch (error) {

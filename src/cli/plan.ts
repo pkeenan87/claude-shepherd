@@ -80,7 +80,7 @@ function ticketsGuide(config: WorkflowConfig): string {
 const NEXT_APPROVAL = "Next: `shepherd plan show` and show it to the user, then ask whether to approve.";
 
 /** The text of a failed or finished command, in the CLI's words rather than Pi's. */
-function cliText(text: string): string {
+export function cliText(text: string): string {
   return text
     .replace(/Call plan_tickets\.?/g, "Resend with `shepherd plan tickets`.")
     .replace(/and call plan_tickets again/g, "and run `shepherd plan tickets` again")

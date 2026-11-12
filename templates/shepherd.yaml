@@ -82,5 +82,8 @@
 ## ---------------------------------------------------------------------------------------------------------------
 ## Everything else.
 
+# build:
+#   visibleTabs: false      # /build runs each ticket and review as a paneless herdr sub-agent of the Claude Code terminal (listed in herdr's agents list).
+#                           # true gives each its own labelled herdr tab beside it instead (needs the terminal's herdr.space label).
 # branchPrefix: shepherd          # /build names its branch <branchPrefix>/<task name>
 # workspaceDir: .shepherd   # where task state, the ledger and reports live, in each project

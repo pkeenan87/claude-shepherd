@@ -67,7 +67,7 @@ describe("a Pi model ticket in a herdr tab", () => {
     expect(tab.options.argv).toContain("/shepherd/src/ticket-mode.ts");
     expect(tab.model).toBe("xai/grok-4.7");
     expect(tab.options.cwd).toBe(cwd);
-    expect(tab.options.name).toMatch(/^chef-.*-01-1-[a-z0-9]{4}$/);
+    expect(tab.options.name).toMatch(/^shep-.*-01-1-[a-z0-9]{4}$/);
     expect(tab.options.labels).toMatchObject({ "herdr.space": "sp1", "shepherd.ticket": "01" });
     expect(tab.killed).toBe(true);
     expect(state().ticketRuns!["01"]).toMatchObject({ status: "done", provider: "xai", model: "grok-4.7" });
@@ -99,11 +99,11 @@ describe("a Pi model ticket in a herdr tab", () => {
   it("names tabs within hc's 32 characters, with a clock suffix so a tab left open never shares a name", () => {
     const at = 1_800_000_000_000;
     const suffix = Math.floor(at / 1000).toString(36).slice(-4);
-    expect(tabName("retry-ingest", "01", 1, at)).toBe(`chef-retry-ingest-01-1-${suffix}`);
+    expect(tabName("retry-ingest", "01", 1, at)).toBe(`shep-retry-ingest-01-1-${suffix}`);
     const long = tabName("a-very-long-task-name-that-keeps-going", "12", 3, at);
     expect(long.length).toBeLessThanOrEqual(32);
     expect(long.endsWith(`-12-3-${suffix}`)).toBe(true);
-    expect(tabName("Odd Name!", "01", 2, at)).toBe(`chef-odd-name--01-2-${suffix}`);
+    expect(tabName("Odd Name!", "01", 2, at)).toBe(`shep-odd-name--01-2-${suffix}`);
     expect(tabName("retry-ingest", "01", 1, at + 1000)).not.toBe(tabName("retry-ingest", "01", 1, at));
     for (const name of [long, tabName("Odd Name!", "01", 2, at)]) expect(name).toMatch(/^[a-z0-9_-]+$/);
   });
@@ -135,7 +135,7 @@ describe("an agent ticket in a herdr tab", () => {
     const tab = fake.tabs[0]!;
     expect(tab.options.argv).toEqual(["env", `PATH=${process.env.PATH}`, ...agentCommand({ kind: "agent", name: "gemini" }, app.config)]);
     expect(tab.options.cwd).toBe(cwd);
-    expect(tab.options.name).toMatch(/^chef-.*-01-1-[a-z0-9]{4}$/);
+    expect(tab.options.name).toMatch(/^shep-.*-01-1-[a-z0-9]{4}$/);
     expect(tab.sends).toHaveLength(1);
     expect(tab.sends[0]).toContain("[BUILD CHUNK]");
     expect(tab.sends[0]).toContain("# Ticket 01:");
@@ -158,7 +158,7 @@ describe("an agent ticket in a herdr tab", () => {
     const { result, progress, fake } = await herdrBuild({ models: AGENT, fake: { turn: () => ["blocked", "blocked", "done"] } });
     expect(result.ok, result.text).toBe(true);
     const tab = fake.tabs[0]!;
-    expect(progress.filter((line) => line === `Ticket 01 is waiting for you in tab ${tab.options.name}`)).toHaveLength(1);
+    expect(progress.filter((line) => line === `Ticket 01 is waiting for you in herdr sub-agent ${tab.options.name} (agents list)`)).toHaveLength(1);
     expect(tab.events).toEqual(["wait", "wait", "send", "wait", "wait"]);
   });
 
@@ -168,7 +168,7 @@ describe("an agent ticket in a herdr tab", () => {
     expect(result.ok).toBe(false);
     expect(fake.tabs[0]!.sends).toHaveLength(2);
     expect(fake.tabs[0]!.events).toEqual(["wait", "wait", "send", "wait", "wait", "send"]);
-    expect(progress.filter((line) => line.includes("is waiting for you in tab"))).toHaveLength(1);
+    expect(progress.filter((line) => line.includes("is waiting for you in herdr sub-agent"))).toHaveLength(1);
   });
 
   it("a send cannot end a turn early on an idle status read just before it started: the turn is the send's own wait", async () => {
@@ -351,6 +351,28 @@ describe("a ticket that crosses runners", () => {
     }
     expect(fake.tabs).toHaveLength(2);
     expect(new Set(fake.tabs.map((tab) => tab.options.name)).size).toBe(2);
+  });
+});
+
+describe("sub-agent labels", () => {
+  it("a ticket without a space opens with only its shepherd label; with one (build.visibleTabs) the tab is labelled", async () => {
+    const { runTicket } = await import("../src/runner/ticket.js");
+    const { app } = await ticketWorkflow([sampleTicket("01", { difficulty: "low" })], { config: tieredConfig() });
+    const fake = fakeHerdrClient();
+    const base = { client: fake.client, host: ticketHost(() => app as Workflow), cwd: app.cwd, ticketId: "01", attempt: 1, model: { provider: "xai", id: "grok-4.7" }, config: app.config, ticketModePath: "/shepherd/src/ticket-mode.ts", sleep: async () => undefined };
+    await runTicket(base, async () => undefined);
+    await runTicket({ ...base, space: "sp1", now: () => 1_800_000_000_000 }, async () => undefined);
+    expect(fake.tabs[0]!.options.labels).toEqual({ "shepherd.ticket": "01" });
+    expect(fake.tabs[1]!.options.labels).toMatchObject({ "herdr.space": "sp1", "shepherd.ticket": "01" });
+  });
+
+  it("herdrSpace needs no space label unless tabs are visible", async () => {
+    const { herdrSpace } = await import("../src/runner/ticket.js");
+    const bare = fakeHerdrClient({ self: { terminal: "t0" } });
+    expect(await herdrSpace(bare.client)).toEqual({});
+    expect(await herdrSpace(bare.client, true)).toEqual({ problem: expect.stringContaining("herdr.space") });
+    expect(await herdrSpace(fakeHerdrClient().client, true)).toEqual({ space: "sp1" });
+    expect(await herdrSpace(fakeHerdrClient().client)).toEqual({});
   });
 });
 

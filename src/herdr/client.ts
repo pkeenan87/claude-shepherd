@@ -49,7 +49,8 @@ export function execFileExec(): HerdrExec {
 
 export type Labels = Record<string, string>;
 
-export type SelfResult = { terminal: string; space: string } | { problem: string };
+/** `space` is the terminal's `herdr.space` label, when it has one; only visible tabs (`build.visibleTabs`) need it. */
+export type SelfResult = { terminal: string; space?: string } | { problem: string };
 
 export interface RunOptions {
   argv: string[];
@@ -173,8 +174,7 @@ export function createHerdrClient(options: ClientOptions = {}): HerdrClient {
         const info = asRecord(await call(["get", terminal, "--json"], `get ${terminal} --json`));
         if (typeof info?.address !== "string") return { problem: `${command} get ${terminal} returned no terminal` };
         const space = asRecord(info.labels)?.["herdr.space"];
-        if (typeof space !== "string" || !space) return { problem: `terminal ${terminal} has no herdr.space label` };
-        return { terminal, space };
+        return typeof space === "string" && space ? { terminal, space } : { terminal };
       } catch (error) {
         return { problem: (error as Error).message };
       }

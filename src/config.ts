@@ -64,6 +64,8 @@ export interface WorkflowConfig {
      */
     maxTicketTurns: number;
   };
+  /** /build runs each ticket as a herdr sub-agent of the terminal it was started from (no pane). `visibleTabs: true` gives each its own labelled tab instead. */
+  build: { visibleTabs: boolean };
   /** /build names each task's branch `<branchPrefix>/<task name>` (with -2, -3 when taken), always from the default branch. */
   branchPrefix: string;
   budgets: {
@@ -109,6 +111,7 @@ const DEFAULTS: WorkflowConfig = {
   models: DEFAULT_MODELS,
   agents: {},
   routing: { maxEscalations: 2, maxTicketTurns: 100 },
+  build: { visibleTabs: false },
   branchPrefix: "shepherd",
   budgets: { taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: DEFAULT_UNKNOWN_CALL_USD, idleWarnMinutes: 60, idleWarnTokens: 100_000 },
   checks: [],
@@ -127,6 +130,7 @@ const KNOWN_KEYS: Record<string, readonly string[] | undefined> = {
   review: ["model", "tickets", "maxDiffChars", "maxChunks", "timeoutMs"],
   checks: undefined,
   setup: undefined,
+  build: ["visibleTabs"],
   branchPrefix: undefined,
   workspaceDir: undefined,
   routing: ["maxEscalations", "maxTicketTurns"],
@@ -339,6 +343,8 @@ function normalizeRaw(input: unknown, where: string, ignored: Set<string>): Reco
     invalid(where, "branchPrefix", "must be a plain branch-name prefix such as shepherd");
   }
   if (out.workspaceDir !== undefined && (typeof out.workspaceDir !== "string" || out.workspaceDir.trim() === "")) invalid(where, "workspaceDir", "must be a non-empty path");
+  const buildSection = section(out, "build", where);
+  if (buildSection && buildSection.visibleTabs !== undefined && typeof buildSection.visibleTabs !== "boolean") invalid(where, "build.visibleTabs", "must be a boolean");
   const budgets = section(out, "budgets", where);
   if (budgets) {
     for (const key of ["taskUsd", "dailyUsd"]) checkNumber(budgets, key, where, { exclusiveMin: 0 }, "budgets");
@@ -397,6 +403,7 @@ function build(norm: Record<string, unknown>): WorkflowConfig {
     ...(norm.local ? { local: norm.local as LocalConfig } : {}),
     agents: isRecord(norm.agents) ? (norm.agents as Record<string, AgentDef>) : {},
     routing: { ...DEFAULTS.routing, ...obj("routing") } as WorkflowConfig["routing"],
+    build: { ...DEFAULTS.build, ...obj("build") } as WorkflowConfig["build"],
     branchPrefix: typeof norm.branchPrefix === "string" ? norm.branchPrefix : DEFAULTS.branchPrefix,
     budgets: { ...DEFAULTS.budgets, ...obj("budgets") } as WorkflowConfig["budgets"],
     checks: Array.isArray(norm.checks) ? (norm.checks as CheckConfig[]).map((check) => ({ ...check, args: check.args ?? [] })) : DEFAULTS.checks,

@@ -80,16 +80,30 @@ export function initAgentWatermark(ctx: WorkflowContext, home: string = ctx.agen
  * Ledgers what the agents spent in this repo since the watermark, and posts one progress line when some of it was
  * outside chef. Nothing is counted the first time (see above).
  */
+/** Labels a log file: a known main session's transcript, one of its subagents' logs, or anything else ("outside chef"). */
+function sessionReason(list: readonly { transcriptPath: string; sessionId: string }[]): (file: string) => SweepReason {
+  const sessions = list.map((item) => ({ file: path.resolve(item.transcriptPath), dir: path.join(path.dirname(path.resolve(item.transcriptPath)), item.sessionId) + path.sep }));
+  return (file) => {
+    const full = path.resolve(file);
+    return sessions.some((item) => item.file === full) ? "session" : sessions.some((item) => full.startsWith(item.dir)) ? "session subagent" : "outside chef";
+  };
+}
+
+/** Whether a log file belongs to a main session the hooks know: agent meters skip it, so a tab never counts the chat's turns. */
+export function isSessionLog(ctx: WorkflowContext, file: string): boolean {
+  try {
+    return sessionReason(ctx.knownSessions?.() ?? [])(file) !== "outside chef";
+  } catch {
+    return false;
+  }
+}
+
 export async function sweepAgentLogs(ctx: WorkflowContext, options: SweepOptions = {}): Promise<SweepSummary> {
   const summary: SweepSummary = { counted: {} };
   try {
     const home = options.home ?? ctx.agentLogHome ?? homedir();
     const transcript = options.transcriptPath ? path.resolve(options.transcriptPath) : undefined;
-    const sessions = [...(options.transcriptPath && options.sessionId ? [{ transcriptPath: options.transcriptPath, sessionId: options.sessionId }] : []), ...(options.known ?? [])].map((item) => ({ file: path.resolve(item.transcriptPath), dir: path.join(path.dirname(path.resolve(item.transcriptPath)), item.sessionId) + path.sep }));
-    const reasonOf = (file: string): SweepReason => {
-      const full = path.resolve(file);
-      return sessions.some((item) => item.file === full) ? "session" : sessions.some((item) => full.startsWith(item.dir)) ? "session subagent" : "outside chef";
-    };
+    const reasonOf = sessionReason([...(options.transcriptPath && options.sessionId ? [{ transcriptPath: options.transcriptPath, sessionId: options.sessionId }] : []), ...(options.known ?? []), ...(ctx.knownSessions?.() ?? [])]);
     await ctx.store.withWatermarkLock(() => {
       const mark = ctx.store.readAgentWatermark();
       if (!mark) {

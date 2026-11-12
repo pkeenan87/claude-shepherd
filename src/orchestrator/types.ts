@@ -72,8 +72,12 @@ export interface WorkflowOptions {
   /** Test seam: timings and sleeps of the herdr tab waits. */
   herdrTimings?: TabTimings;
   ticketModePath?: string;
+  /** Outside Pi: whether `pi` can be started (see `WorkflowContext.piAvailable`). */
+  piAvailable?: () => boolean;
   /** Home directory the agent logs are looked for under (default: the user's). */
   agentLogHome?: string;
+  /** Main Claude Code sessions the hooks have recorded: their logs are the session's own, never an agent tab's or outside chef. */
+  knownSessions?: () => { transcriptPath: string; sessionId: string }[];
   /** Today's records for the daily budget, across repos (default: this repo's ledger). */
   dailyRecords?: () => CostRecord[];
   status?: (text: string | undefined) => void;
