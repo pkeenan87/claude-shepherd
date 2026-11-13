@@ -88,19 +88,17 @@ A ticket goes to `models.low`, `models.medium` or `models.high` by its difficult
 
 ## Status line
 
-A plugin cannot set Claude Code's status line, so add this to `~/.claude/settings.json` if you want spend in it:
+A plugin cannot set Claude Code's status line itself, so run this once per machine:
 
-```json
-{
-  "statusLine": { "type": "command", "command": "shepherd status" }
-}
+```
+shepherd statusline-install
 ```
 
-`shepherd status` prints `shepherd · <task> · task $1.20/$20 · today $3.40/$75` for the repo it runs in. If `shepherd` is not on your `PATH`, use `node /path/to/claude-shepherd/dist/shepherd.mjs status`.
+It sets `statusLine` in `~/.claude/settings.json` to a small launcher in `~/.claude/shepherd/`, which every prompt points at the plugin version you are running, so it survives `/plugin update`. The line reads `shepherd · <plan> · plan $1.20/$20 · today $3.40/$75` for the repo you are in (`≈` marks spend that includes estimates for calls of unknown cost). If you already have a status line, it is left alone unless you pass `--force`; the old settings are kept in `settings.json.shepherd.bak`.
 
 ## Herdr panel
 
-An optional side panel in the herdr app edits `~/.claude/shepherd.yaml` for you (models per difficulty, with Cursor's models offered as buttons; the local server; budgets), lists the project's tasks and shows today's and the task's cost by model. Install it from the plugin, with nothing to build:
+An optional side panel in the herdr app edits `~/.claude/shepherd.yaml` for you (models per difficulty, with Cursor's models offered as buttons; the local server; budgets), lists the project's plans and shows today's and the plan's cost by model. A bar at the top always names the plan the repo is on, its state and what it has spent against `budgets.taskUsd`. Install it from the plugin, with nothing to build:
 
 ```bash
 ! shepherd herdr-install                     # inside Claude Code: the plugin's bin/ is on its Bash PATH

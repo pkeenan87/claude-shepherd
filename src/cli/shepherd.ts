@@ -28,6 +28,7 @@ import { fixCommand, FIX_USAGE, reviewCommand, REVIEW_USAGE } from "./review.js"
 import { herdrInstall, HERDR_INSTALL_USAGE } from "./herdr-install.js";
 import { migrateConfig, MIGRATE_USAGE } from "./migrate-config.js";
 import { approvalReason, PLAN_USAGE, planCommand, plansCommand, taskCommand } from "./plan.js";
+import { installStatusLine, refreshStatusLine, STATUSLINE_USAGE } from "./statusline.js";
 
 const run = promisify(execFile);
 
@@ -43,6 +44,7 @@ const USAGE = `Usage:
   shepherd plans [<name> | close <name> | --all]
   shepherd task <list|use <name>|close [<name>]>
   shepherd herdr-install [--layout <name>] [--no-dock]   (installs the herdr panel into the herdr app; re-run after a plugin update)
+  shepherd statusline-install [--force]   (shows the plan's spend and today's in Claude Code's status line)
   shepherd migrate-config [--force] [--json]   (copies ~/.pi/agent/chef.yaml to ~/.claude/shepherd.yaml, never over an existing one)
 `;
 
@@ -67,7 +69,11 @@ export interface CliOptions {
   piAvailable?: () => boolean;
   ticketModePath?: string;
   exit?: (code: number) => void;
+  /** The bundle the status line launcher runs (default: this file). */
+  entry?: string;
 }
+
+const selfEntry = (options: CliOptions) => options.entry ?? fileURLToPath(import.meta.url);
 
 const defaultIo: CliIo = { out: (text) => process.stdout.write(text), err: (text) => process.stderr.write(text) };
 
@@ -167,9 +173,21 @@ async function costCommand(args: string[], io: CliIo, options: CliOptions): Prom
   return 0;
 }
 
-async function statusCommand(io: CliIo, options: CliOptions): Promise<number> {
+/** The folder Claude Code's status line JSON names (`workspace.current_dir`, else `cwd`), if stdin holds one. */
+function statusLineCwd(stdin: string | undefined): string | undefined {
   try {
-    const opened = await open(options.cwd ?? process.cwd(), options);
+    const input = JSON.parse(stdin ?? "") as { cwd?: unknown; workspace?: { current_dir?: unknown } };
+    const dir = input?.workspace?.current_dir ?? input?.cwd;
+    return typeof dir === "string" && dir ? dir : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function statusCommand(rest: string[], io: CliIo, options: CliOptions): Promise<number> {
+  try {
+    const fromClaude = rest.includes("--statusline") ? statusLineCwd(options.stdin) : undefined;
+    const opened = await open(fromClaude ?? options.cwd ?? process.cwd(), options);
     if ("problem" in opened) {
       io.out(opened.problem === "no-repo" ? "shepherd · no repo\n" : "shepherd · config error\n");
       return 0;
@@ -178,7 +196,7 @@ async function statusCommand(io: CliIo, options: CliOptions): Promise<number> {
     const task = openTask(await session.workflow.activeTask());
     const { state } = budgetOf(session, task);
     const { taskUsd, dailyUsd } = session.config.budgets;
-    io.out(`shepherd · ${task ? (task.name ?? task.taskId) : "no task"} · task ${spend(state.task)}/$${taskUsd} · today ${spend(state.daily)}/$${dailyUsd}\n`);
+    io.out(`shepherd · ${task ? `${task.name ?? task.taskId} · plan ${spend(state.task)}/$${taskUsd}` : "no plan"} · today ${spend(state.daily)}/$${dailyUsd}\n`);
   } catch {
     io.out("shepherd · status unavailable\n");
   }
@@ -378,6 +396,7 @@ async function hookCommand(kind: string | undefined, io: CliIo, options: CliOpti
       return 0;
     }
     if (!input || typeof input !== "object") return 0;
+    if (kind === "prompt") refreshStatusLine(shepherdHome(options.env ?? process.env, options.home ?? homedir()), selfEntry(options));
     const opened = await open(input.cwd || options.cwd || process.cwd(), options);
     if ("problem" in opened) return 0;
     const output = await runHook(kind, input, opened.session);
@@ -449,7 +468,13 @@ export async function main(argv: string[], io: CliIo = defaultIo, options: CliOp
     return 0;
   }
   if (command === "cost") return costCommand(rest, io, options);
-  if (command === "status") return statusCommand(io, options);
+  if (command === "status") return statusCommand(rest, io, options);
+  if (command === "statusline-install") {
+    const json = rest.includes("--json");
+    if (rest.includes("--help") || rest.includes("-h")) return emit(done(STATUSLINE_USAGE), json, io);
+    if (rest.some((word) => word !== "--json" && word !== "--force")) return emit(fail("USAGE", STATUSLINE_USAGE), json, io);
+    return emit(installStatusLine({ home: options.home ?? homedir(), shepherd: shepherdHome(options.env ?? process.env, options.home ?? homedir()), entry: selfEntry(options), force: rest.includes("--force") }), json, io);
+  }
   if (command === "hook") return hookCommand(rest[0], io, options);
   if (command === "build" || command === "review" || command === "fix") return buildFamily(command, rest, io, options);
   if (command === "herdr-install") {
@@ -498,5 +523,5 @@ if (isEntry()) {
 }
 
 function readStdinFor(argv: string[]): Promise<string> {
-  return argv[0] === "hook" || argv.includes("-") ? readStdin() : Promise.resolve("");
+  return argv[0] === "hook" || argv.includes("-") || (argv[0] === "status" && argv.includes("--statusline")) ? readStdin() : Promise.resolve("");
 }

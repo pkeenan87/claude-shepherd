@@ -25,11 +25,11 @@ You are planning, not building. Do not edit or create files in the repo; use Rea
 
 5. Save the tickets the same way with `shepherd plan tickets - <<'JSON' ... JSON`, as `{ "tickets": [...] }` per the schema printed by `start`. Vertical slices, each within one context window, `difficulty` on every ticket, `checks` as plain command lines. On an error the CLI lists every problem: fix them all and resend, as many times as needed.
 
-6. Run `shepherd plan show` and show the plan to the user verbatim: the ticket table, the model for each ticket, and every ticket. Do not summarize it away.
+6. Run `shepherd plan show`. It writes the whole plan to `_plans/<task>.md` at the repo root and prints that path first. Tell the user the path in your reply text (they read the plan there, for example in herdr's Files panel), and show the ticket table with the model for each ticket. Tool output is collapsed in the UI, so put both in your reply text rather than relying on the command's output.
 
 7. Ask with AskUserQuestion: "Approve", "Change something", "Stop".
    - Approve: run `shepherd plan approve`. Claude Code will ask the user to confirm it; that confirmation is their approval, so never try to work around it or run it any other way. When it succeeds, say "/shepherd:build runs it."
    - Change something: ask what to change if it is not clear, run `shepherd plan revise "<the changes>"`, redo steps 4 to 7 with the full revised spec and tickets (not a diff).
-   - Stop: leave the draft as it is. Say that `/shepherd:plans` lists it and `shepherd plan show` shows it again.
+   - Stop: leave the draft as it is. Say that `/shepherd:plans` lists it and the plan stays in its `_plans/` file.
 
 Never run `shepherd plan approve` before the user has chosen Approve, and never start building.

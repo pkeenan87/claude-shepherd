@@ -15,7 +15,8 @@ Five slash commands, backed by the `shepherd` CLI. A skill tells Claude Code whi
 ```text
 shepherd version
 shepherd cost [--json]
-shepherd status                                   one line: task, task spend, today's spend
+shepherd status [--statusline]                    one line: plan, plan spend, today's spend (--statusline reads Claude Code's status line JSON)
+shepherd statusline-install [--force]             puts that line in Claude Code's status line (~/.claude/settings.json)
 shepherd plan <start|spec|tickets|show|revise|approve> ...
 shepherd plans [<name> | close <name> | --all]
 shepherd task <list|use <name>|close [<name>] [--force]>
@@ -36,7 +37,7 @@ shepherd migrate-config [--force] [--json]
 2. **Interviews** you with AskUserQuestion, only on decisions the code cannot answer: at most 7 questions in all, 2 to 4 options each, the recommended one first. A clear request skips the interview; what would have been asked becomes assumptions in the spec. Your answers go into the spec's `decisions`.
 3. **Saves the spec** with `plan spec`: a technical plan (context, approach, files to change, reuse, decisions, assumptions, risks, verification) with the planner's rating of complexity and risk. Nothing scans the request for keywords; the rating is the planner's.
 4. **Saves the tickets** with `plan tickets`: vertical slices, each with a difficulty (`low`, `medium`, `high`), implementation steps, acceptance criteria and `checks`. The CLI rejects, and lists every problem at once: a duplicate id, a missing blocker, a cycle, a ticket without acceptance criteria, a ticket too big for its model's context (150000 tokens, or half the `contextWindow` of a local model), and a check that has shell syntax, is destructive, or is not a command on `PATH`.
-5. **Shows** the plan (`plan show`), then asks Approve, Change something, or Stop. Approving runs `shepherd plan approve`, which Claude Code asks you to confirm whatever a skill allows; that confirmation is the approval. `plan revise "<changes>"` sends the draft back for a full revised spec and tickets. `shepherd build` refuses a plan with no recorded approval.
+5. **Writes and shows** the plan. `plan tickets`, `plan show` and `plan approve` write the whole plan to `_plans/<task>.md` at the repo root, to read in herdr's Files panel or an editor; the folder has its own `.gitignore` (`*`), so plans never land in a ticket's commit or a review. The chat gets the path and the ticket table (`plan show`), then asks Approve, Change something, or Stop. Approving runs `shepherd plan approve`, which Claude Code asks you to confirm whatever a skill allows; that confirmation is the approval. `plan revise "<changes>"` sends the draft back for a full revised spec and tickets. `shepherd build` refuses a plan with no recorded approval.
 
 Every request starts a new task: a finished active task is closed, an unfinished one is parked (`/shepherd:plans <name>` brings it back). `plan start` with no request resumes the plan in progress. Files go under `.shepherd/tasks/<id>/`: `plan.md`, `spec.md`, `interview.json`, `tickets/NN-slug.md`.
 
