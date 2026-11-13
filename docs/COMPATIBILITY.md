@@ -46,7 +46,7 @@ Also not yet run live: the build-in-progress marker held between real `shepherd 
 | Hooks | `Stop`, `UserPromptSubmit`, `PreToolUse` (Bash), each running `node ${CLAUDE_PLUGIN_ROOT}/dist/shepherd.mjs hook <kind>`; JSON on stdin, JSON on stdout to block | `hooks/hooks.json`, `src/cli/shepherd.ts` |
 | CLI | `bin/shepherd` (on `PATH` in Claude Code's Bash tool) imports the committed bundle `dist/shepherd.mjs` | `bin/`, `dist/` |
 | Transcript | `transcript_path` in the hook JSON; `type: "assistant"` lines carry `message.id`, `message.model`, `message.usage` | `src/runner/agent-usage.ts` |
-| Status line | not settable by a plugin; the README gives a `statusLine` snippet running `shepherd status` | README |
+| Status line | not settable by a plugin; `shepherd statusline-install` writes `statusLine` into `~/.claude/settings.json`, pointing at a launcher the prompt hook keeps on the running plugin version | README |
 
 Claude Code writes its transcript asynchronously, so `Stop` can miss the last turn; the next `Stop`, or `/shepherd:cost`, reads it from the same watermark and counts it once.
 

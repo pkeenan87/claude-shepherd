@@ -3,7 +3,7 @@
  * methods. Claude Code's main session drafts the spec and tickets; every rule (validation, redaction, ticket sizing,
  * phases, approval) stays in the orchestrator. Nothing here throws: a failure is a failed CommandResult.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { WorkflowConfig } from "../config.js";
 import { ticketDifficulty, WorkflowError, type CommandResult, type TaskState } from "../domain.js";
@@ -76,7 +76,38 @@ function ticketsGuide(config: WorkflowConfig): string {
   return rephrase(`Next: write the tickets as JSON to a file and run \`shepherd plan tickets <file>\`. Every problem is listed; fix them all and resend.\n${rules}${limits.length ? `\n\n${LOCAL_SIZE_RULES(limits)}` : ""}\n\nTickets JSON:\n${TICKETS_SCHEMA}`);
 }
 
-const NEXT_APPROVAL = "Next: `shepherd plan show` and show it to the user, then ask whether to approve.";
+const NEXT_APPROVAL = "Next: `shepherd plan show`, tell the user where the plan file is and show the ticket table, then ask whether to approve.";
+
+/** Where the plan is written for the user to read: `_plans/<task>.md` at the repo root. */
+export const PLANS_DIR = "_plans";
+const PLANS_IGNORE = "# Written by shepherd. Plans stay out of git, so they never land in a ticket's commit or a review diff.\n*\n";
+
+/**
+ * Writes the active task's plan to `_plans/<task name>.md` and returns the path relative to the repo root, or undefined
+ * when there is no plan. The folder ignores itself (its own `.gitignore` is `*`) unless it already has a `.gitignore`.
+ * Never throws: the file is a convenience, and a failed write must not fail the command that saved the plan.
+ */
+export async function writePlanFile(workflow: Workflow): Promise<string | undefined> {
+  try {
+    const shown = await workflow.showPlan();
+    const task = workflow.activeTaskId() ? workflow.store.load(workflow.activeTaskId()!) : undefined;
+    if (!shown.ok || !task) return undefined;
+    const dir = path.join(workflow.cwd, PLANS_DIR);
+    mkdirSync(dir, { recursive: true });
+    const ignore = path.join(dir, ".gitignore");
+    if (!existsSync(ignore)) writeFileSync(ignore, PLANS_IGNORE);
+    const name = displayName(task).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+/, "") || task.taskId;
+    const file = path.join(dir, `${name}.md`);
+    const temp = `${file}.${process.pid}.tmp`;
+    writeFileSync(temp, `${shown.text}\n`);
+    renameSync(temp, file);
+    return path.relative(workflow.cwd, file);
+  } catch {
+    return undefined;
+  }
+}
+
+const planLine = (file: string | undefined) => (file ? `Plan file: ${file} (open it in herdr's Files panel).` : "");
 
 /** The text of a failed or finished command, in the CLI's words rather than Pi's. */
 export function cliText(text: string): string {
@@ -179,11 +210,14 @@ export async function planCommand({ workflow, config, args, stdin, cwd }: PlanIn
         const check = workflow.checkTickets(raw);
         if (check.errors.length) return fail("TICKETS_INVALID", `Tickets rejected (${check.errors.length} problem${check.errors.length === 1 ? "" : "s"}). Fix all of them and run \`shepherd plan tickets\` again:\n${check.errors.map((e) => `- ${cliText(e)}`).join("\n")}`);
         const { plan, files, table } = await workflow.commitTickets(check.tickets);
-        return done(`${check.tickets.length} tickets written (${files.length} files). Plan v${plan.version} is a draft.\n\n${table}\n\n${NEXT_APPROVAL}`, { version: plan.version, tickets: check.tickets.length, files });
+        const planFile = await writePlanFile(workflow);
+        return done(`${check.tickets.length} tickets written (${files.length} files). Plan v${plan.version} is a draft.\n${planLine(planFile)}\n\n${table}\n\n${NEXT_APPROVAL}`, { version: plan.version, tickets: check.tickets.length, files, ...(planFile ? { planFile } : {}) });
       }
       case "show": {
         const shown = await workflow.showPlan();
-        return shown.ok ? shown : fail(shown.code ?? "ERROR", cliText(shown.text));
+        if (!shown.ok) return fail(shown.code ?? "ERROR", cliText(shown.text));
+        const planFile = await writePlanFile(workflow);
+        return planFile ? { ...shown, text: `${planLine(planFile)}\n\n${shown.text}`, data: { ...(shown.data as object), planFile } } : shown;
       }
       case "revise": {
         const changes = rest.length === 1 && rest[0] === "-" ? stdin.trim() : rest.join(" ").trim();
@@ -194,7 +228,9 @@ export async function planCommand({ workflow, config, args, stdin, cwd }: PlanIn
       }
       case "approve": {
         const approved = await workflow.approveDraft();
-        return approved.ok ? done(cliText(approved.text), approved.data) : fail(approved.code ?? "ERROR", cliText(approved.text));
+        if (!approved.ok) return fail(approved.code ?? "ERROR", cliText(approved.text));
+        const planFile = await writePlanFile(workflow);
+        return done([cliText(approved.text), planLine(planFile)].filter(Boolean).join("\n"), approved.data);
       }
       default:
         return fail("USAGE", PLAN_USAGE);

@@ -108,17 +108,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path26) {
-      const ctrl = callVisitor(key, node, visitor, path26);
+    function visit_(key, node, visitor, path27) {
+      const ctrl = callVisitor(key, node, visitor, path27);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path26, ctrl);
-        return visit_(key, ctrl, visitor, path26);
+        replaceNode(key, path27, ctrl);
+        return visit_(key, ctrl, visitor, path27);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path26 = Object.freeze(path26.concat(node));
+          path27 = Object.freeze(path27.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path26);
+            const ci = visit_(i, node.items[i], visitor, path27);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -129,13 +129,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path26 = Object.freeze(path26.concat(node));
-          const ck = visit_("key", node.key, visitor, path26);
+          path27 = Object.freeze(path27.concat(node));
+          const ck = visit_("key", node.key, visitor, path27);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path26);
+          const cv = visit_("value", node.value, visitor, path27);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -156,17 +156,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path26) {
-      const ctrl = await callVisitor(key, node, visitor, path26);
+    async function visitAsync_(key, node, visitor, path27) {
+      const ctrl = await callVisitor(key, node, visitor, path27);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path26, ctrl);
-        return visitAsync_(key, ctrl, visitor, path26);
+        replaceNode(key, path27, ctrl);
+        return visitAsync_(key, ctrl, visitor, path27);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path26 = Object.freeze(path26.concat(node));
+          path27 = Object.freeze(path27.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path26);
+            const ci = await visitAsync_(i, node.items[i], visitor, path27);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -177,13 +177,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path26 = Object.freeze(path26.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path26);
+          path27 = Object.freeze(path27.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path27);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path26);
+          const cv = await visitAsync_("value", node.value, visitor, path27);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -210,23 +210,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path26) {
+    function callVisitor(key, node, visitor, path27) {
       if (typeof visitor === "function")
-        return visitor(key, node, path26);
+        return visitor(key, node, path27);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path26);
+        return visitor.Map?.(key, node, path27);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path26);
+        return visitor.Seq?.(key, node, path27);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path26);
+        return visitor.Pair?.(key, node, path27);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path26);
+        return visitor.Scalar?.(key, node, path27);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path26);
+        return visitor.Alias?.(key, node, path27);
       return void 0;
     }
-    function replaceNode(key, path26, node) {
-      const parent = path26[path26.length - 1];
+    function replaceNode(key, path27, node) {
+      const parent = path27[path27.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -838,10 +838,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path26, value) {
+    function collectionFromPath(schema, path27, value) {
       let v = value;
-      for (let i = path26.length - 1; i >= 0; --i) {
-        const k = path26[i];
+      for (let i = path27.length - 1; i >= 0; --i) {
+        const k = path27[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -860,7 +860,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path26) => path26 == null || typeof path26 === "object" && !!path26[Symbol.iterator]().next().done;
+    var isEmptyPath = (path27) => path27 == null || typeof path27 === "object" && !!path27[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -890,11 +890,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path26, value) {
-        if (isEmptyPath(path26))
+      addIn(path27, value) {
+        if (isEmptyPath(path27))
           this.add(value);
         else {
-          const [key, ...rest] = path26;
+          const [key, ...rest] = path27;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -908,8 +908,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path26) {
-        const [key, ...rest] = path26;
+      deleteIn(path27) {
+        const [key, ...rest] = path27;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -923,8 +923,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path26, keepScalar) {
-        const [key, ...rest] = path26;
+      getIn(path27, keepScalar) {
+        const [key, ...rest] = path27;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -942,8 +942,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path26) {
-        const [key, ...rest] = path26;
+      hasIn(path27) {
+        const [key, ...rest] = path27;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -953,8 +953,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path26, value) {
-        const [key, ...rest] = path26;
+      setIn(path27, value) {
+        const [key, ...rest] = path27;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -3469,9 +3469,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path26, value) {
+      addIn(path27, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path26, value);
+          this.contents.addIn(path27, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -3546,14 +3546,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path26) {
-        if (Collection.isEmptyPath(path26)) {
+      deleteIn(path27) {
+        if (Collection.isEmptyPath(path27)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path26) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path27) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -3568,10 +3568,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path26, keepScalar) {
-        if (Collection.isEmptyPath(path26))
+      getIn(path27, keepScalar) {
+        if (Collection.isEmptyPath(path27))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path26, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path27, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -3582,10 +3582,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path26) {
-        if (Collection.isEmptyPath(path26))
+      hasIn(path27) {
+        if (Collection.isEmptyPath(path27))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path26) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path27) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -3602,13 +3602,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path26, value) {
-        if (Collection.isEmptyPath(path26)) {
+      setIn(path27, value) {
+        if (Collection.isEmptyPath(path27)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path26), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path27), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path26, value);
+          this.contents.setIn(path27, value);
         }
       }
       /**
@@ -5569,9 +5569,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path26) => {
+    visit.itemAtPath = (cst, path27) => {
       let item = cst;
-      for (const [field, index] of path26) {
+      for (const [field, index] of path27) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -5580,23 +5580,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path26) => {
-      const parent = visit.itemAtPath(cst, path26.slice(0, -1));
-      const field = path26[path26.length - 1][0];
+    visit.parentCollection = (cst, path27) => {
+      const parent = visit.itemAtPath(cst, path27.slice(0, -1));
+      const field = path27[path27.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path26, item, visitor) {
-      let ctrl = visitor(item, path26);
+    function _visit(path27, item, visitor) {
+      let ctrl = visitor(item, path27);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path26.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path27.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -5607,10 +5607,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path26);
+            ctrl = ctrl(item, path27);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path26) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path27) : ctrl;
     }
     exports.visit = visit;
   }
@@ -7364,9 +7364,9 @@ var require_dist = __commonJS({
 // src/cli/shepherd.ts
 import { execFile as execFile4 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
-import { closeSync as closeSync2, existsSync as existsSync14, fstatSync, mkdirSync as mkdirSync9, openSync as openSync2, writeFileSync as writeFileSync4, readdirSync as readdirSync6, readFileSync as readFileSync15, readSync as readSync2, realpathSync as realpathSync2 } from "node:fs";
+import { closeSync as closeSync2, existsSync as existsSync15, fstatSync, mkdirSync as mkdirSync11, openSync as openSync2, writeFileSync as writeFileSync6, readdirSync as readdirSync6, readFileSync as readFileSync16, readSync as readSync2, realpathSync as realpathSync2 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import path25 from "node:path";
+import path26 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { promisify as promisify3 } from "node:util";
 
@@ -8354,7 +8354,7 @@ var GitWorkspace = class {
     const add = await this.git([...safe, "add", "-A", "--", "."], cwd);
     if (add.code !== 0) throw new WorkflowError("GIT", add.stderr);
     if (skip.length > 0) {
-      const unstage = await this.git([...safe, "reset", "-q", "--", ...skip.map((path26) => `:(literal)${path26}`)], cwd);
+      const unstage = await this.git([...safe, "reset", "-q", "--", ...skip.map((path27) => `:(literal)${path27}`)], cwd);
       if (unstage.code !== 0) throw new WorkflowError("GIT", unstage.stderr);
     }
     const commit = await this.git([...safe, "commit", "--no-verify", "-m", message], cwd);
@@ -10399,9 +10399,9 @@ function waitProblem(waited, tab, minutes) {
   if (waited.status === "error") return `the program in tab ${tab} reported an error; look at the tab`;
   return void 0;
 }
-function withPath(argv, path26) {
-  if (!path26 || path26.includes("\n")) return argv;
-  const assignment = `PATH=${path26}`;
+function withPath(argv, path27) {
+  if (!path27 || path27.includes("\n")) return argv;
+  const assignment = `PATH=${path27}`;
   return argv[0] === "env" ? ["env", assignment, ...argv.slice(1)] : ["env", assignment, ...argv];
 }
 async function openTab(input) {
@@ -13571,7 +13571,7 @@ function ticketModePath(from = import.meta.url) {
 }
 
 // src/cli/plan.ts
-import { existsSync as existsSync10, readFileSync as readFileSync12 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync7, readFileSync as readFileSync12, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import path21 from "node:path";
 var PLAN_USAGE = `Usage:
   shepherd plan start "<request>"     (or "-" to read the request from stdin)
@@ -13637,7 +13637,30 @@ ${LOCAL_SIZE_RULES(limits)}` : ""}
 Tickets JSON:
 ${TICKETS_SCHEMA}`);
 }
-var NEXT_APPROVAL = "Next: `shepherd plan show` and show it to the user, then ask whether to approve.";
+var NEXT_APPROVAL = "Next: `shepherd plan show`, tell the user where the plan file is and show the ticket table, then ask whether to approve.";
+var PLANS_DIR = "_plans";
+var PLANS_IGNORE = "# Written by shepherd. Plans stay out of git, so they never land in a ticket's commit or a review diff.\n*\n";
+async function writePlanFile(workflow) {
+  try {
+    const shown = await workflow.showPlan();
+    const task = workflow.activeTaskId() ? workflow.store.load(workflow.activeTaskId()) : void 0;
+    if (!shown.ok || !task) return void 0;
+    const dir = path21.join(workflow.cwd, PLANS_DIR);
+    mkdirSync7(dir, { recursive: true });
+    const ignore = path21.join(dir, ".gitignore");
+    if (!existsSync10(ignore)) writeFileSync2(ignore, PLANS_IGNORE);
+    const name = displayName(task).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+/, "") || task.taskId;
+    const file = path21.join(dir, `${name}.md`);
+    const temp = `${file}.${process.pid}.tmp`;
+    writeFileSync2(temp, `${shown.text}
+`);
+    renameSync2(temp, file);
+    return path21.relative(workflow.cwd, file);
+  } catch {
+    return void 0;
+  }
+}
+var planLine = (file) => file ? `Plan file: ${file} (open it in herdr's Files panel).` : "";
 function cliText(text) {
   return text.replace(/Call plan_tickets\.?/g, "Resend with `shepherd plan tickets`.").replace(/and call plan_tickets again/g, "and run `shepherd plan tickets` again").replace(/Write the spec first with plan_spec, then call plan_tickets\./g, "Save the spec first with `shepherd plan spec <file>`, then run `shepherd plan tickets <file>`.").replace(/No \/plan is running\. Start one with \/plan <request>\./g, 'No plan is being drafted. Run `shepherd plan start "<request>"`.').replace(/plan_tickets/g, "`shepherd plan tickets`").replace(/plan_spec/g, "`shepherd plan spec`").replace(/\/show-plan/g, "`shepherd plan show`").replace(/\/plan <request>/g, '`shepherd plan start "<request>"`').replace(/\/plans/g, "`shepherd plans`").replace(/Run \/build\./g, "/shepherd:build runs it.").replace(/\/build/g, "/shepherd:build");
 }
@@ -13716,15 +13739,21 @@ ${ticketsGuide(config)}`, { file: saved.file, classification: rated });
         if (check.errors.length) return fail("TICKETS_INVALID", `Tickets rejected (${check.errors.length} problem${check.errors.length === 1 ? "" : "s"}). Fix all of them and run \`shepherd plan tickets\` again:
 ${check.errors.map((e) => `- ${cliText(e)}`).join("\n")}`);
         const { plan, files, table } = await workflow.commitTickets(check.tickets);
+        const planFile = await writePlanFile(workflow);
         return done(`${check.tickets.length} tickets written (${files.length} files). Plan v${plan.version} is a draft.
+${planLine(planFile)}
 
 ${table}
 
-${NEXT_APPROVAL}`, { version: plan.version, tickets: check.tickets.length, files });
+${NEXT_APPROVAL}`, { version: plan.version, tickets: check.tickets.length, files, ...planFile ? { planFile } : {} });
       }
       case "show": {
         const shown = await workflow.showPlan();
-        return shown.ok ? shown : fail(shown.code ?? "ERROR", cliText(shown.text));
+        if (!shown.ok) return fail(shown.code ?? "ERROR", cliText(shown.text));
+        const planFile = await writePlanFile(workflow);
+        return planFile ? { ...shown, text: `${planLine(planFile)}
+
+${shown.text}`, data: { ...shown.data, planFile } } : shown;
       }
       case "revise": {
         const changes = rest.length === 1 && rest[0] === "-" ? stdin.trim() : rest.join(" ").trim();
@@ -13737,7 +13766,9 @@ ${specGuide()}`, revised.data);
       }
       case "approve": {
         const approved = await workflow.approveDraft();
-        return approved.ok ? done(cliText(approved.text), approved.data) : fail(approved.code ?? "ERROR", cliText(approved.text));
+        if (!approved.ok) return fail(approved.code ?? "ERROR", cliText(approved.text));
+        const planFile = await writePlanFile(workflow);
+        return done([cliText(approved.text), planLine(planFile)].filter(Boolean).join("\n"), approved.data);
       }
       default:
         return fail("USAGE", PLAN_USAGE);
@@ -13961,13 +13992,13 @@ async function fixCommand(rest, io, options, open2) {
 }
 
 // src/cli/herdr-install.ts
-import { cpSync, existsSync as existsSync12, mkdirSync as mkdirSync8, rmSync as rmSync4, copyFileSync as copyFileSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { cpSync, existsSync as existsSync12, mkdirSync as mkdirSync9, rmSync as rmSync4, copyFileSync as copyFileSync2, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import path23 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/cli/herdr-layout.ts
-import { copyFileSync, existsSync as existsSync11, mkdirSync as mkdirSync7, readFileSync as readFileSync13, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { copyFileSync, existsSync as existsSync11, mkdirSync as mkdirSync8, readFileSync as readFileSync13, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
 import path22 from "node:path";
 var SHEPHERD_MOD = "shepherd-config";
 var SHEPHERD_ID = "shepherd";
@@ -14011,11 +14042,11 @@ function readLayout(file) {
   return JSON.parse(readFileSync13(file, "utf8"));
 }
 function writeJson2(file, value) {
-  mkdirSync7(path22.dirname(file), { recursive: true });
+  mkdirSync8(path22.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync2(tmp, `${JSON.stringify(value, null, 2)}
+  writeFileSync3(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  renameSync2(tmp, file);
+  renameSync3(tmp, file);
 }
 function usage(name) {
   return [
@@ -14099,11 +14130,11 @@ function herdrInstall(args, out, err, options = {}) {
     }
   }
   const target = path23.join(appHome, "mods", "shepherd-config");
-  mkdirSync8(target, { recursive: true });
+  mkdirSync9(target, { recursive: true });
   for (const name of ["main.js", "lib.js", "edit.js", "mod.json", CLI_FILE, ...EDITOR_ONLY]) rmSync4(path23.join(target, name), { force: true });
   cpSync(source, target, { recursive: true, filter: (file) => !EDITOR_ONLY.includes(path23.basename(file)) });
   copyFileSync2(bundle, path23.join(target, CLI_FILE));
-  writeFileSync3(path23.join(target, "install.json"), JSON.stringify({ cli: ["node", path23.join(target, CLI_FILE)] }, null, 2) + "\n");
+  writeFileSync4(path23.join(target, "install.json"), JSON.stringify({ cli: ["node", path23.join(target, CLI_FILE)] }, null, 2) + "\n");
   out(`shepherd-config mod installed in ${target}
 `);
   if (!args.includes("--no-dock")) {
@@ -14236,6 +14267,63 @@ ${(0, import_yaml2.stringify)(left)}` : template;
   return done(lines2.join("\n"), { source, dest, dropped, backedUp: !!existing });
 }
 
+// src/cli/statusline.ts
+import { existsSync as existsSync14, mkdirSync as mkdirSync10, readFileSync as readFileSync15, renameSync as renameSync4, writeFileSync as writeFileSync5, copyFileSync as copyFileSync3 } from "node:fs";
+import path25 from "node:path";
+var STATUSLINE_USAGE = `Usage: shepherd statusline-install [--force]
+Shows "shepherd \xB7 <plan> \xB7 plan $spent/$budget \xB7 today $spent/$budget" in Claude Code's status line by setting
+statusLine in ~/.claude/settings.json. --force replaces a status line you already have (a backup is kept).`;
+var LAUNCHER = "statusline.sh";
+function launcherText(entry) {
+  return `#!/bin/sh
+# Written by shepherd: runs the installed plugin's status command. Rewritten on every prompt.
+exec node '${entry.replace(/'/g, "'\\''")}' status --statusline
+`;
+}
+function writeAtomic(file, text, mode) {
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync5(temp, text, mode === void 0 ? void 0 : { mode });
+  renameSync4(temp, file);
+}
+function refreshStatusLine(shepherd, entry) {
+  try {
+    const file = path25.join(shepherd, LAUNCHER);
+    if (!existsSync14(file)) return;
+    const text = launcherText(entry);
+    if (readFileSync15(file, "utf8") !== text) writeAtomic(file, text, 493);
+  } catch {
+  }
+}
+function installStatusLine({ home, shepherd, entry, force = false }) {
+  const settingsFile = path25.join(home, ".claude", "settings.json");
+  const launcher = path25.join(shepherd, LAUNCHER);
+  const command = `sh '${launcher.replace(/'/g, "'\\''")}'`;
+  let settings = {};
+  if (existsSync14(settingsFile)) {
+    try {
+      const parsed = JSON.parse(readFileSync15(settingsFile, "utf8"));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fail("SETTINGS", `${settingsFile} is not a JSON object; left it alone.`);
+      settings = parsed;
+    } catch (error) {
+      return fail("SETTINGS", `Cannot read ${settingsFile} (${error.message.split("\n")[0]}); left it alone.`);
+    }
+  }
+  const current = settings.statusLine;
+  const ours = !!current && typeof current.command === "string" && current.command.includes(LAUNCHER);
+  if (current && !ours && !force) {
+    return fail("STATUSLINE_SET", `You already have a status line (${JSON.stringify(current)}). Run \`shepherd statusline-install --force\` to replace it with shepherd's; your settings are backed up first.`);
+  }
+  mkdirSync10(shepherd, { recursive: true });
+  writeAtomic(launcher, launcherText(entry), 493);
+  if (!ours) {
+    mkdirSync10(path25.dirname(settingsFile), { recursive: true });
+    if (existsSync14(settingsFile)) copyFileSync3(settingsFile, `${settingsFile}.shepherd.bak`);
+    writeAtomic(settingsFile, `${JSON.stringify({ ...settings, statusLine: { type: "command", command, padding: 0 } }, null, 2)}
+`);
+  }
+  return done(`${ours ? "The status line was already shepherd's; refreshed its launcher" : `Set statusLine in ${settingsFile}`}. It shows the active plan, what it has spent and today's spend. It appears after the next message.`, { settings: settingsFile, launcher });
+}
+
 // src/cli/shepherd.ts
 var run2 = promisify3(execFile4);
 var USAGE = `Usage:
@@ -14250,13 +14338,15 @@ var USAGE = `Usage:
   shepherd plans [<name> | close <name> | --all]
   shepherd task <list|use <name>|close [<name>]>
   shepherd herdr-install [--layout <name>] [--no-dock]   (installs the herdr panel into the herdr app; re-run after a plugin update)
+  shepherd statusline-install [--force]   (shows the plan's spend and today's in Claude Code's status line)
   shepherd migrate-config [--force] [--json]   (copies ~/.pi/agent/chef.yaml to ~/.claude/shepherd.yaml, never over an existing one)
 `;
+var selfEntry = (options) => options.entry ?? fileURLToPath4(import.meta.url);
 var defaultIo = { out: (text) => process.stdout.write(text), err: (text) => process.stderr.write(text) };
 function packageVersion() {
   for (const rel of ["../../package.json", "../package.json"]) {
     try {
-      const pkg = JSON.parse(readFileSync15(new URL(rel, import.meta.url), "utf8"));
+      const pkg = JSON.parse(readFileSync16(new URL(rel, import.meta.url), "utf8"));
       if (pkg.name === "claude-shepherd" && pkg.version) return pkg.version;
     } catch {
     }
@@ -14281,7 +14371,7 @@ async function open(cwd, options, confirm, extras = {}) {
   const now = options.now ?? (() => /* @__PURE__ */ new Date());
   const home = options.home ?? homedir7();
   const shepherd = shepherdHome(options.env ?? process.env, home);
-  const workspace = path25.join(root, config.workspaceDir);
+  const workspace = path26.join(root, config.workspaceDir);
   ignoreWorkspace(workspace);
   await registerRepo(shepherd, workspace);
   const workflow = new Workflow({ cwd: root, config, now, ...confirm ? { confirm } : {}, agentLogHome: home, knownSessions: () => knownSessions(shepherd), dailyRecords: () => dailyRecordsOf([...registeredRepos(shepherd), workspace], now()), ...extras });
@@ -14330,9 +14420,19 @@ async function costCommand(args, io, options) {
 `);
   return 0;
 }
-async function statusCommand(io, options) {
+function statusLineCwd(stdin) {
   try {
-    const opened = await open(options.cwd ?? process.cwd(), options);
+    const input = JSON.parse(stdin ?? "");
+    const dir = input?.workspace?.current_dir ?? input?.cwd;
+    return typeof dir === "string" && dir ? dir : void 0;
+  } catch {
+    return void 0;
+  }
+}
+async function statusCommand(rest, io, options) {
+  try {
+    const fromClaude = rest.includes("--statusline") ? statusLineCwd(options.stdin) : void 0;
+    const opened = await open(fromClaude ?? options.cwd ?? process.cwd(), options);
     if ("problem" in opened) {
       io.out(opened.problem === "no-repo" ? "shepherd \xB7 no repo\n" : "shepherd \xB7 config error\n");
       return 0;
@@ -14341,7 +14441,7 @@ async function statusCommand(io, options) {
     const task = openTask(await session.workflow.activeTask());
     const { state } = budgetOf(session, task);
     const { taskUsd, dailyUsd } = session.config.budgets;
-    io.out(`shepherd \xB7 ${task ? task.name ?? task.taskId : "no task"} \xB7 task ${spend(state.task)}/$${taskUsd} \xB7 today ${spend(state.daily)}/$${dailyUsd}
+    io.out(`shepherd \xB7 ${task ? `${task.name ?? task.taskId} \xB7 plan ${spend(state.task)}/$${taskUsd}` : "no plan"} \xB7 today ${spend(state.daily)}/$${dailyUsd}
 `);
   } catch {
     io.out("shepherd \xB7 status unavailable\n");
@@ -14350,8 +14450,8 @@ async function statusCommand(io, options) {
 }
 function knownSessions(shepherd) {
   try {
-    return readdirSync6(path25.join(shepherd, "sessions")).filter((name) => name.endsWith(".json") && !name.endsWith(".pending.json")).flatMap((name) => {
-      const note = readJson(path25.join(shepherd, "sessions", name));
+    return readdirSync6(path26.join(shepherd, "sessions")).filter((name) => name.endsWith(".json") && !name.endsWith(".pending.json")).flatMap((name) => {
+      const note = readJson(path26.join(shepherd, "sessions", name));
       return note && typeof note.transcriptPath === "string" && typeof note.sessionId === "string" ? [{ transcriptPath: note.transcriptPath, sessionId: note.sessionId }] : [];
     });
   } catch {
@@ -14413,7 +14513,7 @@ async function runHook(kind, input, session) {
     const prompt = (input.prompt ?? "").trim();
     if (!prompt || prompt.startsWith("/")) return void 0;
     await sweep();
-    if (sessionId && input.transcript_path && !existsSync14(sessionFile(shepherd, sessionId))) writeJson(sessionFile(shepherd, sessionId), { transcriptPath: input.transcript_path, sessionId });
+    if (sessionId && input.transcript_path && !existsSync15(sessionFile(shepherd, sessionId))) writeJson(sessionFile(shepherd, sessionId), { transcriptPath: input.transcript_path, sessionId });
     const budget = budgetOf(session, task);
     if (budget.status === "hard") {
       return { decision: "block", reason: `Budget exhausted: ${budget.text}. Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.` };
@@ -14422,7 +14522,7 @@ async function runHook(kind, input, session) {
     if (idle) return { decision: "block", reason: idle };
     if (budget.status === "soft") {
       const open2 = openTask(task);
-      const mark = path25.join(shepherd, "warned.json");
+      const mark = path26.join(shepherd, "warned.json");
       const day = now().toISOString().slice(0, 10);
       const key = open2?.taskId ?? "daily";
       const warned = readJson(mark);
@@ -14499,6 +14599,7 @@ async function hookCommand(kind, io, options) {
       return 0;
     }
     if (!input || typeof input !== "object") return 0;
+    if (kind === "prompt") refreshStatusLine(shepherdHome(options.env ?? process.env, options.home ?? homedir7()), selfEntry(options));
     const opened = await open(input.cwd || options.cwd || process.cwd(), options);
     if ("problem" in opened) return 0;
     const output = await runHook(kind, input, opened.session);
@@ -14534,10 +14635,10 @@ async function planFamily(command, rest, io, options) {
   }
 }
 function ignoreWorkspace(workspace) {
-  const file = path25.join(workspace, ".gitignore");
-  if (existsSync14(file)) return;
-  mkdirSync9(workspace, { recursive: true });
-  writeFileSync4(file, "*\n");
+  const file = path26.join(workspace, ".gitignore");
+  if (existsSync15(file)) return;
+  mkdirSync11(workspace, { recursive: true });
+  writeFileSync6(file, "*\n");
 }
 function opener(cwd, options) {
   return async (extras) => {
@@ -14563,7 +14664,13 @@ async function main(argv, io = defaultIo, options = {}) {
     return 0;
   }
   if (command === "cost") return costCommand(rest, io, options);
-  if (command === "status") return statusCommand(io, options);
+  if (command === "status") return statusCommand(rest, io, options);
+  if (command === "statusline-install") {
+    const json = rest.includes("--json");
+    if (rest.includes("--help") || rest.includes("-h")) return emit(done(STATUSLINE_USAGE), json, io);
+    if (rest.some((word) => word !== "--json" && word !== "--force")) return emit(fail("USAGE", STATUSLINE_USAGE), json, io);
+    return emit(installStatusLine({ home: options.home ?? homedir7(), shepherd: shepherdHome(options.env ?? process.env, options.home ?? homedir7()), entry: selfEntry(options), force: rest.includes("--force") }), json, io);
+  }
   if (command === "hook") return hookCommand(rest[0], io, options);
   if (command === "build" || command === "review" || command === "fix") return buildFamily(command, rest, io, options);
   if (command === "herdr-install") {
@@ -14590,7 +14697,7 @@ function isEntry() {
   if (!invoked) return false;
   try {
     const real = realpathSync2(invoked);
-    return real === realpathSync2(fileURLToPath4(import.meta.url)) || path25.basename(real) === "shepherd";
+    return real === realpathSync2(fileURLToPath4(import.meta.url)) || path26.basename(real) === "shepherd";
   } catch {
     return false;
   }
@@ -14606,7 +14713,7 @@ if (isEntry()) {
   readStdinFor(argv).then((stdin) => main(argv, defaultIo, { stdin })).then((code) => void (process.exitCode = code), () => void (process.exitCode = argv[0] === "hook" ? 0 : 1));
 }
 function readStdinFor(argv) {
-  return argv[0] === "hook" || argv.includes("-") ? readStdin() : Promise.resolve("");
+  return argv[0] === "hook" || argv.includes("-") || argv[0] === "status" && argv.includes("--statusline") ? readStdin() : Promise.resolve("");
 }
 export {
   main

@@ -364,10 +364,13 @@ describe("hook pretool", () => {
 describe("shepherd status and cost", () => {
   it("prints one status line, for a task, none, and a directory that is not a repo", async () => {
     const t = await setup();
-    expect((await t.cli(["status"])).out).toBe("shepherd · no task · task $0.00/$20 · today $0.00/$75\n");
+    expect((await t.cli(["status"])).out).toBe("shepherd · no plan · today $0.00/$75\n");
     await addTask(workflow(t.repo), "fix");
     await t.spend(t.repo, 1_000_000);
-    expect((await t.cli(["status"])).out).toBe("shepherd · fix · task $5.00/$20 · today $5.00/$75\n");
+    expect((await t.cli(["status"])).out).toBe("shepherd · fix · plan $5.00/$20 · today $5.00/$75\n");
+    // As Claude Code's status line: the folder comes from the JSON on stdin, not the process's cwd.
+    const elsewhere = mkdtempSync(path.join(tmpdir(), "elsewhere-"));
+    expect((await t.cli(["status", "--statusline"], { cwd: elsewhere, workspace: { current_dir: t.repo } }, elsewhere)).out).toBe("shepherd · fix · plan $5.00/$20 · today $5.00/$75\n");
     const bare = mkdtempSync(path.join(tmpdir(), "not-a-repo-"));
     expect(await t.cli(["status"], {}, bare)).toMatchObject({ code: 0, out: "shepherd · no repo\n" });
   });
@@ -417,5 +420,32 @@ describe("shepherd status and cost", () => {
     await t.cli(["status"]);
     const repos = JSON.parse(readFileSync(path.join(t.shepherd, "repos.json"), "utf8"));
     expect(repos).toEqual([path.join(contextOf(workflow(t.repo)).git.repoRoot, ".shepherd")]);
+  });
+});
+
+describe("shepherd statusline-install", () => {
+  it("sets statusLine to a launcher, refuses to replace another status line without --force, and prompts refresh the launcher", async () => {
+    const t = await setup();
+    const settings = path.join(t.home, ".claude", "settings.json");
+    const launcher = path.join(t.shepherd, "statusline.sh");
+    writeFileSync(settings, JSON.stringify({ theme: "dark", statusLine: { type: "command", command: "my-line" } }));
+    const refused = await t.cli(["statusline-install", "--json"]);
+    expect(refused.json).toMatchObject({ ok: false, code: "STATUSLINE_SET" });
+    expect(JSON.parse(readFileSync(settings, "utf8")).statusLine.command).toBe("my-line");
+    expect(existsSync(launcher)).toBe(false);
+
+    const forced = await t.cli(["statusline-install", "--force", "--json"]);
+    expect(forced.json?.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settings, "utf8"));
+    expect(written.theme).toBe("dark");
+    expect(written.statusLine).toMatchObject({ type: "command", command: `sh '${launcher}'` });
+    expect(JSON.parse(readFileSync(`${settings}.shepherd.bak`, "utf8")).statusLine.command).toBe("my-line");
+    expect(readFileSync(launcher, "utf8")).toContain("status --statusline");
+
+    // Installing again is a no-op on settings; a prompt hook points the launcher at the running plugin version.
+    expect((await t.cli(["statusline-install", "--json"])).json?.ok).toBe(true);
+    writeFileSync(launcher, "#!/bin/sh\nexec node '/old/version/dist/shepherd.mjs' status --statusline\n");
+    await t.prompt("hello");
+    expect(readFileSync(launcher, "utf8")).not.toContain("/old/version/");
   });
 });

@@ -568,18 +568,31 @@ export default class ShepherdConfig extends View {
     if (!this.data) return root.child(div().p(12).text_color(t.muted).child("Loading…"));
     const d = this.data;
     const c = d.costs;
+    const tone = (status) => (status === "hard" ? t.blocked : status === "soft" ? t.working : t.dim);
+    const usd = (scope) => `${fmtUsd(scope.spendUsd)}${scope.unknown > 0 ? "+?" : ""}`;
+    const open = d.plans.filter((p) => !p.closed).length;
+    const current = d.plans.find((p) => p.active && !p.closed);
     const summaries = {
       models: {},
       local: this.localStatus(t),
-      plans: { text: `${d.plans.filter((p) => !p.closed).length} open` },
-      costs: { text: `${fmtUsd(c.today.spendUsd)} / ${fmtUsd(c.today.limitUsd)}`, color: c.today.status === "hard" ? t.blocked : c.today.status === "soft" ? t.working : t.dim },
+      plans: { text: current ? `${current.name}${open > 1 ? ` · ${open} open` : ""}` : `${open} open` },
+      costs: { text: `${c.plan ? `plan ${usd(c.plan)} · ` : ""}today ${usd(c.today)}`, color: tone(c.plan?.status === "hard" || c.today.status === "hard" ? "hard" : c.plan?.status === "soft" || c.today.status === "soft" ? "soft" : "ok") },
     };
+    // The plan this repo is on and what it has spent, always in view (the sections below may be collapsed).
+    const planBar = h_flex().gap(6).px(10).py(6).items_center().border_b(1).border_color(t.border)
+      .when(!current, (el) => el.child(div().text_size(11).text_color(t.dim).child("No active plan. /shepherd:plan starts one.")))
+      .when(!!current, (el) => el
+        .child(v_flex().flex_1().min_w(0)
+          .child(div().truncate().text_size(12).font_semibold().child(current.name))
+          .child(div().truncate().text_size(11).text_color(t.muted).child(current.state)))
+        .when(!!c.plan, (e) => e.child(div().text_size(12).text_color(c.plan.status === "ok" ? t.foreground : tone(c.plan.status)).child(`${usd(c.plan)} / ${fmtUsd(c.plan.limitUsd)}`))));
     const bodies = { models: () => this.modelsBody(t), local: () => this.localBody(t), plans: () => this.plansBody(t), costs: () => this.costsBody(t) };
     return root
       .child(h_flex().gap(6).px(10).py(7).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().text_size(13).child("shepherd"))
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.root?.split("/").pop() ?? ""))
         .child(this.button("refresh", this.loading ? "…" : "↻", t, { selected: false, disabled: false, onClick: (_e, cx) => this.refresh(cx) })))
+      .child(planBar)
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar()
         .when(!!this.failure, (el) => el.child(this.banner(this.failure, t.blocked, t)))
         .children(d.errors.map((e) => this.banner(e, t.blocked, t)))

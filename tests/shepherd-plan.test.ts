@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -112,7 +113,13 @@ describe("shepherd plan", () => {
     // Good tickets, read from stdin as a bare array.
     const good = await t.cli(["plan", "tickets", "-", "--json"], JSON.stringify([ticket("01", { difficulty: "low" }), ticket("02", { difficulty: "high", blockedBy: ["01"] })]));
     expect(good.code).toBe(0);
-    expect(good.json?.data).toMatchObject({ version: 1, tickets: 2 });
+    expect(good.json?.data).toMatchObject({ version: 1, tickets: 2, planFile: "_plans/retry-ingest-parser.md" });
+    expect(good.json?.text).toContain("Plan file: _plans/retry-ingest-parser.md");
+    // The plan is written for the user to read, and its folder keeps it out of git (so out of ticket commits and reviews).
+    const planFile = path.join(t.repo, "_plans", "retry-ingest-parser.md");
+    expect(readFileSync(planFile, "utf8")).toContain("| 02 | Step 02 | high | anthropic/claude-opus | 01 |");
+    expect(readFileSync(path.join(t.repo, "_plans", ".gitignore"), "utf8")).toMatch(/^\*$/m);
+    expect(execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: t.repo, encoding: "utf8" })).not.toContain("_plans");
 
     const show = await t.cli(["plan", "show"]);
     expect(show.code).toBe(0);
@@ -120,11 +127,14 @@ describe("shepherd plan", () => {
     expect(show.out).toContain("| 01 | Step 01 | low | anthropic/claude-haiku |");
     expect(show.out).toContain("| 02 | Step 02 | high | anthropic/claude-opus | 01 |");
     expect(show.out).toContain("~30K tokens");
+    expect(show.out.split("\n")[0]).toBe("Plan file: _plans/retry-ingest-parser.md (open it in herdr's Files panel).");
 
     const approve = await t.cli(["plan", "approve", "--json"]);
     expect(approve.code).toBe(0);
     expect(approve.json?.text).toContain("Approved plan v1");
     expect(approve.json?.text).toContain("/shepherd:build");
+    expect(readFileSync(planFile, "utf8")).toContain("approved");
+    expect(existsSync(planFile)).toBe(true);
     expect((await t.cli(["plan", "approve", "--json"])).json?.text).toContain("already approved");
   });
 
