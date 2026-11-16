@@ -20,12 +20,14 @@
  * Never throws: any failure is a `{ stopped }`, which `runBuild` handles like the Pi runner's.
  */
 import { TRUST_PROMPTS } from "../agents.js";
+import { homedir } from "node:os";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import type { ChunkSession } from "../orchestrator/build.js";
 import type { HerdrClient } from "../herdr/client.js";
 import { redact } from "../redact.js";
 import { createAgentMeter, meteredEntries, notMeteredEntry, type AgentLedgerEntry, type AgentMeter } from "./agent-usage.js";
+import { CURSOR_SILENT_HINT, cursorHookInstalledLine, ensureCursorStatusHook } from "./cursor-status.js";
 import { messageOf, openTab, tabName, type Tab, type TabTimings } from "./tab.js";
 
 /** Added to the ticket prompt an agent gets: an agent commits on its own unless told not to. */
@@ -87,12 +89,19 @@ export async function runAgentTicket(input: AgentTicketInput, run: (session: Chu
     const root = host.sessionsRoot();
     const summaryFile = root ? path.resolve(root, `${ticketId}-${input.attempt}.summary.md`) : undefined;
     if (root) mkdirSync(root, { recursive: true });
+    if (input.agent.name === "cursor-agent") {
+      const home = input.home ?? homedir();
+      const hook = ensureCursorStatusHook(home);
+      if ("problem" in hook) return { stopped: `Ticket ${ticketId} cannot start: ${hook.problem}. /build again.` };
+      if (hook.changed) host.progress(cursorHookInstalledLine(home));
+    }
     try {
       tab = await openTab({
         ...input,
         name,
         labels: { "shepherd.ticket": ticketId },
         ...(TRUST_PROMPTS[input.agent.name] ? { trust: TRUST_PROMPTS[input.agent.name] } : {}),
+        ...(input.agent.name === "cursor-agent" ? { silentHint: CURSOR_SILENT_HINT } : {}),
         progress: host.progress,
         blockedNotice: `Ticket ${ticketId} is waiting for you in herdr sub-agent ${name} (agents list)`,
       });

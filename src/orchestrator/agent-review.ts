@@ -108,6 +108,7 @@ export async function runAgentReview(ctx: WorkflowContext, input: AgentPassInput
       cwd: ctx.git.repoRoot,
       argv: program.argv,
       ...(program.trust ? { trust: program.trust } : {}),
+      ...(program.silentHint ? { silentHint: program.silentHint } : {}),
       name,
       labels: { "shepherd.review": input.stamp },
       progress,

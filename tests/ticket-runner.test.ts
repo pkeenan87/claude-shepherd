@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -143,6 +143,26 @@ describe("an agent ticket in a herdr tab", () => {
     expect(tab.sends[0]!.endsWith(summaryRule(summaryFileOf(tab.sends[0]!)))).toBe(true);
     expect(tab.killed).toBe(true);
     expect(state().ticketRuns!["01"]).toMatchObject({ status: "done", provider: "agent", model: "gemini", tier: "low", notMetered: true });
+  });
+
+  it("installs cursor-agent's status hook in the given home once, posts one progress line, and gives the tab a silent hint", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "cursor-home-"));
+    const { result, progress, fake } = await herdrBuild({ models: AGENT.replace("gemini", "cursor-agent/auto"), home });
+    expect(result.ok, result.text).toBe(true);
+    const hooks = JSON.parse(readFileSync(path.join(home, ".cursor", "hooks.json"), "utf8"));
+    expect(Object.keys(hooks.hooks).sort()).toEqual(["beforeSubmitPrompt", "sessionStart", "stop"]);
+    expect(progress.filter((line) => line.startsWith("cursor-agent: installed shepherd's status hook in "))).toEqual([`cursor-agent: installed shepherd's status hook in ${path.join(home, ".cursor", "hooks.json")} (Cursor does not report idle/working to herdr on its own)`]);
+    expect(fake.tabs[0]!.options.argv).toContain("cursor-agent");
+  });
+
+  it("stops a cursor-agent ticket with the reason when hooks.json cannot be merged", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "cursor-home-"));
+    mkdirSync(path.join(home, ".cursor"), { recursive: true });
+    writeFileSync(path.join(home, ".cursor", "hooks.json"), "{nope");
+    const { result, fake } = await herdrBuild({ models: AGENT.replace("gemini", "cursor-agent/auto"), home });
+    expect(result.ok).toBe(false);
+    expect(result.text).toMatch(/Ticket 01 cannot start: .*hooks\.json is not valid JSON/);
+    expect(fake.tabs).toHaveLength(0);
   });
 
   it("ledgers one 'not metered' row for an agent with no reader, which is not an unknown call", async () => {

@@ -77,6 +77,8 @@ Names are letters, digits, `-` and `_`, starting with a letter. Built in (from `
 
 **Cursor.** `agent:cursor-agent/auto` uses Cursor's `auto` model. When `cursor-agent --list-models` lists `auto-smart`, it also takes `agent:cursor-agent/auto-smart[optimize_for=cost]`, `[optimize_for=balanced]` and `[optimize_for=intelligence]`; the herdr panel offers these. Cursor is **not metered**: its runs count $0 and show as "not metered". The `auto-smart` router needs a Teams or Enterprise plan.
 
+cursor-agent never tells herdr whether it is idle, working or blocked (herdr learns that only from the program writing an OSC 7501 sequence to its terminal, which Claude Code and Pi do). So the first time shepherd opens a cursor-agent sub-agent it writes `~/.cursor/shepherd-hc-status.sh` (rewritten whenever it differs) and adds three Cursor hooks to `~/.cursor/hooks.json`, next to any others (herdr's own included): `sessionStart` and `stop` say idle, `beforeSubmitPrompt` says working. The run prints one line when it does this; if `hooks.json` is not valid JSON or has an unexpected shape, shepherd changes nothing and the run stops with the reason. If a cursor-agent tab still reports nothing after 20 seconds, the run stops and asks you to check those entries. Cursor's "blocked" approval prompts are not reported, so an approval waits until the turn timeout (4 hours) instead of showing as blocked.
+
 ## budgets
 
 Hard stops, in USD. A prompt, ticket or review call does not start at the limit.

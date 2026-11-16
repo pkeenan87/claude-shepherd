@@ -65,6 +65,8 @@ export interface FakeHerdrClientOptions {
   failRun?: (run: RunOptions) => string | undefined;
   /** What `read` answers for a tab (the agent's screen). */
   read?: (tab: FakeTab) => string;
+  /** What `reported` answers for a tab (does the program report a status); default true. */
+  reported?: (tab: FakeTab) => boolean | undefined;
 }
 
 /**
@@ -137,6 +139,10 @@ export function fakeHerdrClient(options: FakeHerdrClientOptions = {}) {
     },
     async read(terminal) {
       return options.read?.(find(terminal)) ?? "";
+    },
+    async reported(terminal) {
+      const tab = find(terminal);
+      return options.reported ? options.reported(tab) : true;
     },
     async kill(terminal) {
       find(terminal).killed = true;

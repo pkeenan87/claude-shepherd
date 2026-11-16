@@ -5,11 +5,13 @@ import { isSessionLog } from "./agent-sweep.js";
  * review (`ticket-review-tab.ts`); each says which job, tier and ticket the rows are ledgered under.
  */
 import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { agentCommand, TRUST_PROMPTS, type TicketModel, type TrustPrompt } from "../agents.js";
 import type { CostRecord, Phase } from "../domain.js";
 import { lastAssistantText, ledgerChildSession, readChildSession, type ChildSessionFile } from "../herdr/session-file.js";
 import { redact } from "../redact.js";
 import { createAgentMeter, meteredEntries, notMeteredEntry } from "../runner/agent-usage.js";
+import { CURSOR_SILENT_HINT, cursorHookInstalledLine, ensureCursorStatusHook } from "../runner/cursor-status.js";
 import { readStatus } from "../runner/pi-ticket.js";
 import type { Tab } from "../runner/tab.js";
 import { recordAgentUsage } from "./budget.js";
@@ -22,6 +24,8 @@ export interface Program {
   argv: string[];
   /** The agent's trust prompt to answer, if it has one (`TRUST_PROMPTS`). */
   trust?: TrustPrompt;
+  /** Said when the tab reports no status to herdr (`OpenTabInput.silentHint`). */
+  silentHint?: string;
   readyTimeoutMs?: number;
   /** Ledgers whatever the program spent since the last look and returns the rows added. */
   collect(): CostRecord[];
@@ -63,13 +67,20 @@ export function piProgram(ctx: WorkflowContext, model: Extract<TicketModel, { ki
   };
 }
 
-/** An external agent in a tab, metered from its log (else one "not metered" row). Call before the tab opens: the log is snapshotted here. */
+/** An external agent in a tab, metered from its log (else one "not metered" row). Call before the tab opens: the log is snapshotted here. Throws when cursor-agent's status hook cannot be installed. */
 export function agentProgram(ctx: WorkflowContext, model: Extract<TicketModel, { kind: "agent" }>, input: { home?: string } & ProgramLedger): Program {
+  if (model.name === "cursor-agent") {
+    const home = input.home ?? ctx.agentLogHome ?? homedir();
+    const hook = ensureCursorStatusHook(home);
+    if ("problem" in hook) throw new Error(hook.problem);
+    if (hook.changed) ctx.progress?.(cursorHookInstalledLine(home));
+  }
   // Advancing the watermark keeps the outside-chef sweep from counting this tab again.
   const meter = createAgentMeter(model.name, { cwd: ctx.git.repoRoot, home: input.home ?? ctx.agentLogHome, onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset, input.job).catch(() => undefined), exclude: (file) => isSessionLog(ctx, file) });
   return {
     argv: agentCommand(model, ctx.config),
     ...(TRUST_PROMPTS[model.name] ? { trust: TRUST_PROMPTS[model.name] } : {}),
+    ...(model.name === "cursor-agent" ? { silentHint: CURSOR_SILENT_HINT } : {}),
     collect: () => {
       const calls = meter?.collect() ?? [];
       const entries = calls.length > 0 ? meteredEntries(model.name, calls) : [notMeteredEntry(model.name)];
