@@ -80,6 +80,8 @@ export interface OpenTabInput extends TabTimings {
   blockedNotice: string;
   /** The agent's own "trust this folder?" prompt (`TRUST_PROMPTS`): answered when it shows, before the ready wait. */
   trust?: TrustPrompt;
+  /** Said when the program reports no status by the first nudge, and `hc get` confirms it has never reported one: the wait ends there with this message. Only for a program known never to report (cursor-agent). */
+  silentHint?: string;
   /** The PATH the program is started with. Default: shepherd's own `PATH`. */
   path?: string;
 }
@@ -167,6 +169,7 @@ export async function openTab(input: OpenTabInput): Promise<Tab> {
   }
   let first = await client.waitIdle(address, { timeoutMs: Math.max(1000, Math.min(READY_NUDGE_MS, readyTimeoutMs) - (now() - readyAt)) });
   let readyLimit = readyTimeoutMs;
+  if (first.timedOut && input.silentHint && (await client.reported(address)) === false) throw new Error(`${input.silentHint} (herdr sub-agent ${input.name} is left open)`);
   if (first.timedOut && readyTimeoutMs > READY_NUDGE_MS) {
     input.progress(`${input.blockedNotice} (it has not reported ready; it may be showing a first-run prompt such as "trust this folder")`);
     readyLimit = Math.max(readyTimeoutMs, turnTimeoutMs);

@@ -70,6 +70,7 @@ export async function runFixInTab(ctx: WorkflowContext, input: FixInput): Promis
       cwd: ctx.git.repoRoot,
       argv: program.argv,
       ...(program.trust ? { trust: program.trust } : {}),
+      ...(program.silentHint ? { silentHint: program.silentHint } : {}),
       name,
       labels: { "shepherd.review-fix": name },
       progress,
