@@ -280,6 +280,29 @@ describe("hook prompt: idle warning", () => {
     expect((await noTokens.prompt("hello")).out).toBe("");
   });
 
+  it("lets a background task's notification through: nobody would re-send it", async () => {
+    const t = await idle();
+    const note = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>";
+    expect((await t.prompt(note)).out).toBe("");
+    expect(existsSync(path.join(t.shepherd, "sessions", "sess1.pending.json"))).toBe(false);
+    expect((await t.prompt("proceed")).json?.decision).toBe("block"); // a typed prompt still warns
+  });
+
+  it("stays quiet after /compact: the context is only the summary, and the compaction is the last activity", async () => {
+    const t = await idle();
+    const compactAt = new Date(t.clock.at - 5 * MIN).toISOString();
+    appendFileSync(t.transcript, JSON.stringify({ type: "system", subtype: "compact_boundary", content: "Conversation compacted", compactMetadata: { trigger: "manual", preTokens: 250_000 }, timestamp: compactAt }) + "\n");
+    appendFileSync(t.transcript, JSON.stringify({ type: "user", isCompactSummary: true, timestamp: compactAt, message: { role: "user", content: "summary" } }) + "\n");
+    expect((await t.prompt("hello")).out).toBe("");
+    t.clock.at += 125 * MIN; // idle again, but the context is small
+    expect((await t.prompt("hello")).out).toBe("");
+    // A turn after the compaction counts again.
+    appendFileSync(t.transcript, line("after", usage(10, 10, 150_000), new Date(t.clock.at).toISOString()));
+    await t.stop();
+    t.clock.at += 125 * MIN;
+    expect(String((await t.prompt("hello")).json?.reason)).toContain("150k tokens");
+  });
+
   it("omits the dollar figure with no pricing row", async () => {
     const t = await idle(CONFIG().replace(OPUS, "claude-other"));
     const reason = String((await t.prompt("hello")).json?.reason);

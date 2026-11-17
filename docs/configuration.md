@@ -91,7 +91,7 @@ Budgets count every priced call: your Claude Code session, Pi-worker models (inc
 | `dailyUsd` | `75` | All spend today (> 0). |
 | `softWarningRatio` | `0.8` | Warn at this share of a budget (0 to 1). |
 | `unknownCallUsd` | `0.05` | What a call of unknown cost counts as in budget math only (>= 0). The ledger still stores it as unknown. |
-| `idleWarnMinutes` | `60` | Idle minutes after the last assistant turn before a message is held back, because the prompt cache has probably expired and the whole context is re-sent; send the same message again within 2 minutes to send it (integer >= 0). `0` turns the warning off. |
+| `idleWarnMinutes` | `60` | Idle minutes after the last assistant turn before a message is held back, because the prompt cache has probably expired and the whole context is re-sent; send the same message again within 2 minutes to send it (integer >= 0). `0` turns the warning off. Background-task notifications are never held back, and after `/compact` the context counts as empty until the next reply. |
 | `idleWarnTokens` | `100000` | The idle warning applies only when the context holds at least this many tokens (integer >= 0). `0` turns the warning off. |
 
 ## routing

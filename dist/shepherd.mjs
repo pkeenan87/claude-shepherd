@@ -14591,6 +14591,9 @@ function lastAssistant(file) {
         } catch {
           continue;
         }
+        if (line.type === "system" && line.subtype === "compact_boundary" && line.isSidechain !== true) {
+          return { contextTokens: 0, ...typeof line.timestamp === "string" ? { at: line.timestamp } : {} };
+        }
         const usage2 = line.message?.usage;
         if (line.type !== "assistant" || line.isSidechain === true || !usage2 || !line.message?.model || line.message.model === "<synthetic>") continue;
         const n = (value) => typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -14604,6 +14607,7 @@ function lastAssistant(file) {
   }
 }
 var PENDING_MS = 2 * 6e4;
+var INJECTED = /^<task-notification>/;
 var GUARD_WHY = {
   "git push": "shepherd never pushes while a build runs",
   "git branch change": "a build is running on its branch; switching branches would break it",
@@ -14621,7 +14625,7 @@ async function runHook(kind, input, session) {
     await sweep();
     if (sessionId && input.transcript_path) {
       const last = lastAssistant(input.transcript_path);
-      if (last) writeJson(sessionFile(shepherd, sessionId), { lastTurnEnd: now().toISOString(), contextTokens: last.contextTokens, model: last.model, transcriptPath: input.transcript_path, sessionId });
+      if (last) writeJson(sessionFile(shepherd, sessionId), { lastTurnEnd: now().toISOString(), contextTokens: last.contextTokens, ...last.model ? { model: last.model } : {}, transcriptPath: input.transcript_path, sessionId });
     }
     return void 0;
   }
@@ -14634,7 +14638,7 @@ async function runHook(kind, input, session) {
     if (budget.status === "hard") {
       return { decision: "block", reason: `Budget exhausted: ${budget.text}. Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.` };
     }
-    const idle = idleBlock(session, sessionId, prompt, input.transcript_path);
+    const idle = INJECTED.test(prompt) ? void 0 : idleBlock(session, sessionId, prompt, input.transcript_path);
     if (idle) return { decision: "block", reason: idle };
     if (budget.status === "soft") {
       const open2 = openTask(task);
