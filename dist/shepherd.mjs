@@ -7363,7 +7363,6 @@ var require_dist = __commonJS({
 
 // src/cli/shepherd.ts
 import { execFile as execFile4 } from "node:child_process";
-import { createHash as createHash3 } from "node:crypto";
 import { closeSync as closeSync2, existsSync as existsSync16, fstatSync, mkdirSync as mkdirSync11, openSync as openSync2, writeFileSync as writeFileSync6, readdirSync as readdirSync6, readFileSync as readFileSync17, readSync as readSync2, realpathSync as realpathSync2 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import path27 from "node:path";
@@ -13366,9 +13365,6 @@ function readJson(file) {
 function writeJson(file, value) {
   atomicWrite(file, JSON.stringify(value, null, 2));
 }
-function removeFile(file) {
-  rmSync3(file, { force: true });
-}
 
 // src/cli/bash-guard.ts
 function commandsOf(line) {
@@ -14606,7 +14602,6 @@ function lastAssistant(file) {
     closeSync2(fd);
   }
 }
-var PENDING_MS = 2 * 6e4;
 var INJECTED = /^<task-notification>/;
 var GUARD_WHY = {
   "git push": "shepherd never pushes while a build runs",
@@ -14638,7 +14633,7 @@ async function runHook(kind, input, session) {
     if (budget.status === "hard") {
       return { decision: "block", reason: `Budget exhausted: ${budget.text}. Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.` };
     }
-    const idle = INJECTED.test(prompt) ? void 0 : idleBlock(session, sessionId, prompt, input.transcript_path);
+    const idle = INJECTED.test(prompt) ? void 0 : idleBlock(session, sessionId, input.transcript_path);
     if (idle) return { decision: "block", reason: idle };
     if (budget.status === "soft") {
       const open2 = openTask(task);
@@ -14674,7 +14669,7 @@ async function runHook(kind, input, session) {
   }
   return void 0;
 }
-function idleBlock(session, sessionId, prompt, transcriptPath) {
+function idleBlock(session, sessionId, transcriptPath) {
   const { config, shepherd, now } = session;
   const { idleWarnMinutes, idleWarnTokens } = config.budgets;
   if (!sessionId || idleWarnMinutes <= 0 || idleWarnTokens <= 0) return void 0;
@@ -14692,18 +14687,14 @@ function idleBlock(session, sessionId, prompt, transcriptPath) {
   const at = now();
   const idleMs = at.getTime() - ended;
   if (idleMs < idleWarnMinutes * 6e4 || note.contextTokens < idleWarnTokens) return void 0;
-  const pendingFile = sessionFile(shepherd, sessionId, ".pending");
-  const hash = createHash3("sha256").update(prompt).digest("hex");
-  const pending = readJson(pendingFile);
-  if (pending?.hash === hash && at.getTime() - Date.parse(pending.at ?? "") < PENDING_MS) {
-    removeFile(pendingFile);
-    return void 0;
-  }
-  writeJson(pendingFile, { hash, at: at.toISOString() });
+  const warnedFile = sessionFile(shepherd, sessionId, ".pending");
+  const idleSince = new Date(ended).toISOString();
+  if (readJson(warnedFile)?.idleSince === idleSince) return void 0;
+  writeJson(warnedFile, { idleSince, at: at.toISOString() });
   const row = note.model ? priceFor(config.pricing, "anthropic", note.model, at) : void 0;
   const rate = row ? row.cacheWritePerMillionUsd ?? row.inputPerMillionUsd : void 0;
   const cost2 = rate === void 0 ? "" : ` (\u2248$${(note.contextTokens * rate / 1e6).toFixed(2)} at ${note.model} rates)`;
-  return `This chat holds ${formatTokens(note.contextTokens)} tokens and has been idle ${formatIdle(idleMs)}, so the prompt cache has probably expired: sending re-sends the whole context${cost2}. Send the same message again within 2 minutes to send anyway, or run /clear to start fresh; your shepherd task resumes from the branch.`;
+  return `This chat holds ${formatTokens(note.contextTokens)} tokens and has been idle ${formatIdle(idleMs)}, so the prompt cache has probably expired: sending re-sends the whole context${cost2}. Send it again (or any message) to go ahead, this warning shows once per idle stretch; or run /clear to start fresh; your shepherd task resumes from the branch.`;
 }
 async function hookCommand(kind, io, options) {
   try {

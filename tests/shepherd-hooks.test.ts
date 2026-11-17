@@ -244,21 +244,22 @@ describe("hook prompt: idle warning", () => {
     expect(reason).toContain("idle 2h 5m");
     expect(reason).toContain("probably expired");
     expect(reason).toContain("≈$1.56 at claude-opus-5-5 rates");
-    expect(reason).toContain("Send the same message again within 2 minutes to send anyway, or run /clear");
+    expect(reason).toContain("Send it again (or any message) to go ahead, this warning shows once per idle stretch; or run /clear");
   });
 
-  it("lets the same prompt through within 2 minutes, once, and blocks a different one", async () => {
+  it("warns once per idle stretch: after that any message goes through, however late", async () => {
     const t = await idle();
     expect((await t.prompt("hello")).json?.decision).toBe("block");
-    t.clock.at += 1 * MIN;
+    t.clock.at += 18 * MIN;
+    expect((await t.prompt("proceed")).out).toBe(""); // a different message, long after the warning
+    t.clock.at += 16 * MIN;
+    expect((await t.prompt("can you complete the build")).out).toBe("");
+    // A turn ends; a new idle stretch warns again.
+    appendFileSync(t.transcript, line("m2", usage(10, 10, 250_000), new Date(t.clock.at).toISOString()));
+    await t.stop();
+    t.clock.at += 125 * MIN;
+    expect((await t.prompt("hello")).json?.decision).toBe("block");
     expect((await t.prompt("hello")).out).toBe("");
-    expect(existsSync(path.join(t.shepherd, "sessions", "sess1.pending.json"))).toBe(false);
-    expect((await t.prompt("hello")).json?.decision).toBe("block"); // the pass was used up
-    expect((await t.prompt("something else")).json?.decision).toBe("block");
-    t.clock.at += 1 * MIN;
-    expect((await t.prompt("hello")).json?.decision).toBe("block"); // the pending one is for another prompt
-    t.clock.at += 3 * MIN;
-    expect((await t.prompt("something else")).json?.decision).toBe("block"); // older than 2 minutes
   });
 
   it("stays quiet after the next turn ends, for commands, below either threshold and when disabled", async () => {
