@@ -89,7 +89,7 @@ Reviews what differs from the base (the build's recorded base, else the default 
 
 Spend by model, job and task against the budgets. Claude Code and Codex use in this repo that shepherd did not start (for example `hc run claude` from the chat) is counted first, under the job "outside chef"; it starts counting when the repo is first swept, or when a task is created. A cost that could not be priced shows as unknown, never $0. `shepherd cost --json` prints the same as data.
 
-**Idle warning.** The `UserPromptSubmit` hook holds back a message sent after `budgets.idleWarnMinutes` idle minutes (default 60) into a context of at least `budgets.idleWarnTokens` tokens (default 100000), because the prompt cache has probably expired. It says what re-sending costs at the model's cache-write price when `pricing` has a row for it. Send the same message again within 2 minutes to send it anyway; `/clear` starts fresh and the task resumes from the branch. `/` commands are never held. Set either value to `0` to turn it off.
+**Idle warning.** The `UserPromptSubmit` hook holds back a message sent after `budgets.idleWarnMinutes` idle minutes (default 60) into a context of at least `budgets.idleWarnTokens` tokens (default 100000), because the prompt cache has probably expired. It says what re-sending costs at the model's cache-write price when `pricing` has a row for it. It warns once per idle stretch: send it again, or any message, to go ahead; `/clear` starts fresh and the task resumes from the branch. `/` commands are never held. Set either value to `0` to turn it off.
 
 ## Hooks
 

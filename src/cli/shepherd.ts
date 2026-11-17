@@ -4,7 +4,6 @@
  * JSON output; any internal error is one line on stderr and no stdout. `main` returns the exit code.
  */
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -275,8 +274,6 @@ function lastAssistant(file: string): { contextTokens: number; model?: string; a
   }
 }
 
-const PENDING_MS = 2 * 60_000;
-
 /** Prompts Claude Code submits on its own: the idle warning never holds these back. */
 const INJECTED = /^<task-notification>/;
 
@@ -316,7 +313,7 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
       return { decision: "block", reason: `Budget exhausted: ${budget.text}. Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.` };
     }
     // A message Claude Code injects (a background task finishing) is not typed by anyone, so nobody would re-send it.
-    const idle = INJECTED.test(prompt) ? undefined : idleBlock(session, sessionId, prompt, input.transcript_path);
+    const idle = INJECTED.test(prompt) ? undefined : idleBlock(session, sessionId, input.transcript_path);
     if (idle) return { decision: "block", reason: idle };
     if (budget.status === "soft") {
       const open = openTask(task);
@@ -361,7 +358,7 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
  * The idle-cache warning. The last reply is read from the transcript now, when it is complete: at Stop, Claude Code may
  * not have written it yet, so the Stop note is only the fallback.
  */
-function idleBlock(session: Session, sessionId: string | undefined, prompt: string, transcriptPath?: string): string | undefined {
+function idleBlock(session: Session, sessionId: string | undefined, transcriptPath?: string): string | undefined {
   const { config, shepherd, now } = session;
   const { idleWarnMinutes, idleWarnTokens } = config.budgets;
   if (!sessionId || idleWarnMinutes <= 0 || idleWarnTokens <= 0) return undefined;
@@ -379,18 +376,15 @@ function idleBlock(session: Session, sessionId: string | undefined, prompt: stri
   const at = now();
   const idleMs = at.getTime() - ended;
   if (idleMs < idleWarnMinutes * 60_000 || note.contextTokens < idleWarnTokens) return undefined;
-  const pendingFile = sessionFile(shepherd, sessionId, ".pending");
-  const hash = createHash("sha256").update(prompt).digest("hex");
-  const pending = readJson<{ hash?: string; at?: string }>(pendingFile);
-  if (pending?.hash === hash && at.getTime() - Date.parse(pending.at ?? "") < PENDING_MS) {
-    removeFile(pendingFile);
-    return undefined;
-  }
-  writeJson(pendingFile, { hash, at: at.toISOString() });
+  // Once per idle stretch: after one warning, any message goes through until a turn ends and a new stretch begins.
+  const warnedFile = sessionFile(shepherd, sessionId, ".pending");
+  const idleSince = new Date(ended).toISOString();
+  if (readJson<{ idleSince?: string }>(warnedFile)?.idleSince === idleSince) return undefined;
+  writeJson(warnedFile, { idleSince, at: at.toISOString() });
   const row = note.model ? priceFor(config.pricing, "anthropic", note.model, at) : undefined;
   const rate = row ? (row.cacheWritePerMillionUsd ?? row.inputPerMillionUsd) : undefined;
   const cost = rate === undefined ? "" : ` (≈$${((note.contextTokens * rate) / 1_000_000).toFixed(2)} at ${note.model} rates)`;
-  return `This chat holds ${formatTokens(note.contextTokens)} tokens and has been idle ${formatIdle(idleMs)}, so the prompt cache has probably expired: sending re-sends the whole context${cost}. Send the same message again within 2 minutes to send anyway, or run /clear to start fresh; your shepherd task resumes from the branch.`;
+  return `This chat holds ${formatTokens(note.contextTokens)} tokens and has been idle ${formatIdle(idleMs)}, so the prompt cache has probably expired: sending re-sends the whole context${cost}. Send it again (or any message) to go ahead, this warning shows once per idle stretch; or run /clear to start fresh; your shepherd task resumes from the branch.`;
 }
 
 async function hookCommand(kind: string | undefined, io: CliIo, options: CliOptions): Promise<number> {
