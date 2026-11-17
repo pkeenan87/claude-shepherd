@@ -218,7 +218,7 @@ interface HookInput {
 interface SessionNote {
   lastTurnEnd: string;
   contextTokens: number;
-  model: string;
+  model?: string;
   /** Recorded so a `shepherd cost` run mid-turn can tell this session's log from outside use. */
   transcriptPath: string;
   sessionId: string;
@@ -238,8 +238,11 @@ function knownSessions(shepherd: string): { transcriptPath: string; sessionId: s
   }
 }
 
-/** The usage of the last assistant message in a transcript, reading only its tail; a half-written last line is skipped. */
-function lastAssistant(file: string): { contextTokens: number; model: string; at?: string } | undefined {
+/**
+ * The usage of the last assistant message in a transcript, reading only its tail; a half-written last line is skipped.
+ * A `/compact` boundary after it means the context is now only the summary: 0 tokens, as of the compaction.
+ */
+function lastAssistant(file: string): { contextTokens: number; model?: string; at?: string } | undefined {
   const fd = openSync(file, "r");
   try {
     const size = fstatSync(fd).size;
@@ -250,11 +253,14 @@ function lastAssistant(file: string): { contextTokens: number; model: string; at
       const text = buffer.toString("utf8");
       const rows = (length < size ? text.slice(text.indexOf("\n") + 1) : text).split("\n");
       for (let i = rows.length - 1; i >= 0; i -= 1) {
-        let line: { type?: string; isSidechain?: boolean; timestamp?: string; message?: { model?: string; usage?: Record<string, number> } };
+        let line: { type?: string; subtype?: string; isSidechain?: boolean; timestamp?: string; message?: { model?: string; usage?: Record<string, number> } };
         try {
           line = JSON.parse(rows[i]!);
         } catch {
           continue;
+        }
+        if (line.type === "system" && line.subtype === "compact_boundary" && line.isSidechain !== true) {
+          return { contextTokens: 0, ...(typeof line.timestamp === "string" ? { at: line.timestamp } : {}) };
         }
         const usage = line.message?.usage;
         if (line.type !== "assistant" || line.isSidechain === true || !usage || !line.message?.model || line.message.model === "<synthetic>") continue;
@@ -270,6 +276,9 @@ function lastAssistant(file: string): { contextTokens: number; model: string; at
 }
 
 const PENDING_MS = 2 * 60_000;
+
+/** Prompts Claude Code submits on its own: the idle warning never holds these back. */
+const INJECTED = /^<task-notification>/;
 
 const GUARD_WHY: Record<GuardHit, string> = {
   "git push": "shepherd never pushes while a build runs",
@@ -290,7 +299,7 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
     await sweep();
     if (sessionId && input.transcript_path) {
       const last = lastAssistant(input.transcript_path);
-      if (last) writeJson(sessionFile(shepherd, sessionId), { lastTurnEnd: now().toISOString(), contextTokens: last.contextTokens, model: last.model, transcriptPath: input.transcript_path, sessionId } satisfies SessionNote);
+      if (last) writeJson(sessionFile(shepherd, sessionId), { lastTurnEnd: now().toISOString(), contextTokens: last.contextTokens, ...(last.model ? { model: last.model } : {}), transcriptPath: input.transcript_path, sessionId } satisfies SessionNote);
     }
     return undefined;
   }
@@ -306,7 +315,8 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
     if (budget.status === "hard") {
       return { decision: "block", reason: `Budget exhausted: ${budget.text}. Raise budgets in ~/.claude/shepherd.yaml or wait until tomorrow.` };
     }
-    const idle = idleBlock(session, sessionId, prompt, input.transcript_path);
+    // A message Claude Code injects (a background task finishing) is not typed by anyone, so nobody would re-send it.
+    const idle = INJECTED.test(prompt) ? undefined : idleBlock(session, sessionId, prompt, input.transcript_path);
     if (idle) return { decision: "block", reason: idle };
     if (budget.status === "soft") {
       const open = openTask(task);
