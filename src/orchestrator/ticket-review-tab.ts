@@ -72,12 +72,15 @@ export async function askInTab<T>(ctx: WorkflowContext, input: TabReviewInput<T>
   const label = modelText(model);
   let cost: number | null = 0;
   let tab: Tab | undefined;
-  const failed = (error: string): TabAsked<T> => ({ costUsd: cost, error });
+  const failed = async (error: string): Promise<TabAsked<T>> => {
+    if (input.warmTab && tab !== input.warmTab.tab) await input.warmTab.tab.close().catch(() => undefined);
+    return { costUsd: cost, error };
+  };
   try {
-    if (budgetState(ctx, state.taskId).status === "hard") return failed("the task or daily budget is exhausted");
+    if (budgetState(ctx, state.taskId).status === "hard") return await failed("the task or daily budget is exhausted");
     const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
-    if ("problem" in where) return failed(`${label} reviews in a herdr sub-agent; run from a terminal inside herdr (${where.problem})`);
-    if (model.kind === "pi" && !ctx.ticketModePath) return failed(`${label} is a Pi model and this install does not know where the ticket-mode extension is`);
+    if ("problem" in where) return await failed(`${label} reviews in a herdr sub-agent; run from a terminal inside herdr (${where.problem})`);
+    if (model.kind === "pi" && !ctx.ticketModePath) return await failed(`${label} is a Pi model and this install does not know where the ticket-mode extension is`);
     const at = ctx.now().getTime();
     const taskDir = ctx.store.taskDir(state.taskId);
     const reports = path.join(taskDir, "reports");
@@ -90,6 +93,7 @@ export async function askInTab<T>(ctx: WorkflowContext, input: TabReviewInput<T>
     const branchBefore = await ctx.git.currentBranch().catch(() => undefined);
     const before = fingerprint(await ctx.git.workingDiff("HEAD", exclude));
     const reusing = input.warmTab && input.warmTab.modelKey === label ? input.warmTab : undefined;
+    if (input.warmTab && !reusing) await input.warmTab.tab.close().catch(() => undefined);
     let program: Program;
     if (reusing) {
       tab = reusing.tab;
@@ -138,19 +142,19 @@ export async function askInTab<T>(ctx: WorkflowContext, input: TabReviewInput<T>
     const left = (why: string) => `${why} (the herdr sub-agent ${opened.name} is left open to read)`;
     const branchAfter = await ctx.git.currentBranch().catch(() => undefined);
     const headAfter = await ctx.git.head().catch(() => undefined);
-    if (branchBefore && branchAfter && branchAfter !== branchBefore) return failed(left(`${label} left ${branchBefore} and is on ${branchAfter}; shepherd left HEAD alone`));
+    if (branchBefore && branchAfter && branchAfter !== branchBefore) return await failed(left(`${label} left ${branchBefore} and is on ${branchAfter}; shepherd left HEAD alone`));
     let note = "";
     if (headBefore && headAfter && headAfter !== headBefore) {
       await ctx.git.resetSoft(headBefore);
       note = ` (it committed anyway; shepherd moved HEAD back to ${headBefore.slice(0, 7)})`;
     }
     const reason = failure ?? program.failed?.();
-    if (reason) return failed(left(`${label} did not finish: ${reason}${note}`));
-    if (!existsSync(outFile)) return failed(left(`${label} did not write the findings file ${outFile}${note}`));
+    if (reason) return await failed(left(`${label} did not finish: ${reason}${note}`));
+    if (!existsSync(outFile)) return await failed(left(`${label} did not write the findings file ${outFile}${note}`));
     const parsed = input.parse(readFileSync(outFile, "utf8"));
-    if (parsed === undefined) return failed(left(`the findings file ${outFile} from ${label} is not the JSON asked for${note}`));
+    if (parsed === undefined) return await failed(left(`the findings file ${outFile} from ${label} is not the JSON asked for${note}`));
     if (fingerprint(await ctx.git.workingDiff("HEAD", exclude)) !== before) {
-      return failed(left(`${label} changed the working tree during the review (it was told not to edit files), so the diff it judged is not the one that would be committed${note}`));
+      return await failed(left(`${label} changed the working tree during the review (it was told not to edit files), so the diff it judged is not the one that would be committed${note}`));
     }
     if (input.keepWarm?.(parsed)) {
       tab = undefined;
@@ -160,6 +164,6 @@ export async function askInTab<T>(ctx: WorkflowContext, input: TabReviewInput<T>
     tab = undefined;
     return { parsed, costUsd: cost, by: label };
   } catch (error) {
-    return failed(`${label} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr sub-agent ${tab.name} is left open)` : ""}`);
+    return await failed(`${label} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr sub-agent ${tab.name} is left open)` : ""}`);
   }
 }

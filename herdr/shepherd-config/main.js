@@ -6,7 +6,7 @@
 // Everything is read and written through the shepherd-config CLI named in install.json.
 
 import { View, div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, NumberInput, Select, Popup } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, NumberInput, Select, Popup, Scrollbar, ScrollHandle } from "gpui-base";
 import {
   checking,
   exec,
@@ -53,8 +53,9 @@ const IDLE_ACTIONS = [
   { value: "off", label: "off (silent)" },
 ];
 const REVIEWER_PRESETS = [
-  { label: "Astra + Argon", models: ["agent:codex/gpt-6.2-astra", "agent:agy/gemini-4-argon"] },
-  { label: "Opus + Astra", models: ["agent:claude/opus", "agent:codex/gpt-6.2-astra"] },
+  { label: "Astra + Argon", models: ["agent:codex/gpt-6-astra", "agent:agy/gemini-4-argon-high"] },
+  { label: "Astra + Neon", models: ["agent:codex/gpt-6-astra", "agent:agy/gemini-4-neon-high"] },
+  { label: "Fable + Astra", models: ["agent:claude/fable", "agent:codex/gpt-6-astra"] },
 ];
 const SECTIONS = [
   ["models", "Models"],
@@ -75,6 +76,8 @@ export default class ShepherdConfig extends View {
     this.wanted = new Set();
     this.notes = {};                // note key -> { kind: "ok" | "warn" | "err", text, needsForce? }
     this.busy = new Set();
+    this.busyCounts = new Map();    // note key -> active count (supports duplicate queued writes)
+    this.pendingWrites = 0;         // only active mutations block refresh(), never catalog/detect probes
     this.draft = {};                // model key -> { kind }
     this.detected = null;
     this.detectedFor = null;
@@ -86,6 +89,8 @@ export default class ShepherdConfig extends View {
     this.ticketsOpen = false;
     this.openSelect = null;         // currently open Select id
     this.highlightIdx = 0;
+    this.outClosedId = null;        // flag set by on_mouse_down_out, consumed cleanly by trigger mousedown/click
+    this.suppressTriggerClick = null;
     this.prevTermStatus = new Map();// address -> status (for blocked/done alerts)
     this.writeQueue = Promise.resolve();
     try {
@@ -94,11 +99,11 @@ export default class ShepherdConfig extends View {
       this.collapsed = {};
     }
 
-    // Allocate all InputStates and Select FocusHandle pairs once in init(), never in render().
+    // Allocate all InputStates and Select FocusHandle/ScrollHandle triples once in init(), never in render().
     this.inputs = {};
     this.focusHandles = {};
     const allocSelect = (id) => {
-      this.focusHandles[id] = { trigger: cx.focus_handle(), list: cx.focus_handle() };
+      this.focusHandles[id] = { trigger: cx.focus_handle(), list: cx.focus_handle(), scroll: ScrollHandle.new() };
     };
     for (const k of MODEL_KEYS) {
       this.field(`pi:${k}`, "provider/id");
@@ -226,7 +231,8 @@ export default class ShepherdConfig extends View {
     } catch { /* not a git repo: use the folder itself */ }
     const mine = this.seq;
     const json = await this.call(["show", "--cwd", root]);
-    if (mine !== this.seq || this.busy.size > 0) return;
+    // Gate only on pending writes (not background catalog/detect probes) so project switches never freeze.
+    if (mine !== this.seq || this.pendingWrites > 0) return;
     if (json.ok === false) {
       this.failure = json.error ?? "shepherd-config failed";
       return;
@@ -260,7 +266,12 @@ export default class ShepherdConfig extends View {
       const args = ["agent-models", ...(this.root ? ["--cwd", this.root] : []), ...(forceRefresh ? ["--refresh"] : [])];
       const json = await this.call(args);
       this.busy.delete("catalog");
-      if (json.ok !== false && json.agents) this.catalog = json;
+      if (json.ok !== false && json.agents) {
+        this.catalog = json;
+        delete this.notes.catalog;
+      } else {
+        this.notes.catalog = { kind: "warn", text: json.error ?? "Model discovery failed; using curated list." };
+      }
       cx.notify();
     });
   }
@@ -357,9 +368,10 @@ export default class ShepherdConfig extends View {
       if (this.watches.has(dir)) continue;
       this.watches.set(dir, null);
       cx.spawn(async (cx) => {
+        let handle = null;
         try {
           while (this.wanted.has(dir)) {
-            const handle = watchFolder(dir);
+            handle = watchFolder(dir);
             this.watches.set(dir, handle);
             const changed = await handle;
             if (!this.wanted.has(dir)) break;
@@ -368,7 +380,7 @@ export default class ShepherdConfig extends View {
             if (only === null || changed.some((p) => p === dir || abs(p) === only)) this.refresh(cx);
           }
         } catch { /* timer covers unwatched folders */ }
-        this.watches.delete(dir);
+        if (this.watches.get(dir) === handle) this.watches.delete(dir);
       });
     }
   }
@@ -377,30 +389,53 @@ export default class ShepherdConfig extends View {
 
   mutate(noteKey, argsOrFactory, cx, done) {
     if (!this.root || !this.cli) return;
+    const clickedRoot = this.root;
+    this.pendingWrites += 1;
+    this.busyCounts.set(noteKey, (this.busyCounts.get(noteKey) ?? 0) + 1);
     this.busy.add(noteKey);
     delete this.notes[noteKey];
     cx.notify();
-    const runOne = async (cx) => {
-      const args = typeof argsOrFactory === "function" ? argsOrFactory() : argsOrFactory;
-      const json = await this.call(args);
-      this.seq++;
-      this.busy.delete(noteKey);
-      if (json.ok === false) {
-        this.notes[noteKey] = {
-          kind: "err",
-          text: json.error ?? "shepherd-config refused the change",
-          needsForce: json.needsForce === true,
-        };
-        if (/changed since it was read/.test(json.error ?? "")) this.refresh(cx);
+    const finishBusy = () => {
+      this.pendingWrites = Math.max(0, this.pendingWrites - 1);
+      const next = (this.busyCounts.get(noteKey) ?? 1) - 1;
+      if (next <= 0) {
+        this.busyCounts.delete(noteKey);
+        this.busy.delete(noteKey);
       } else {
-        if (Array.isArray(json.plans)) {
-          this.data = json;
-          this.syncInputs();
-        }
-        this.notes[noteKey] = { kind: json.note ? "warn" : "ok", text: json.note ?? "Saved." };
-        if (done) done(json, cx);
+        this.busyCounts.set(noteKey, next);
       }
-      cx.notify();
+    };
+    const runOne = async (cx) => {
+      try {
+        const args = typeof argsOrFactory === "function" ? argsOrFactory(clickedRoot) : argsOrFactory;
+        const json = await this.call(args);
+        this.seq++;
+        if (json.ok === false) {
+          this.notes[noteKey] = {
+            kind: "err",
+            text: json.error ?? "shepherd-config refused the change",
+            needsForce: json.needsForce === true,
+          };
+          if (noteKey === "budgets") {
+            if (this.inputs.taskUsd) this.inputs.taskUsd.synced = "";
+            if (this.inputs.dailyUsd) this.inputs.dailyUsd.synced = "";
+            this.syncInputs();
+          }
+          if (/changed since it was read/.test(json.error ?? "")) this.refresh(cx);
+        } else {
+          if (Array.isArray(json.plans) && clickedRoot === this.root) {
+            this.data = json;
+            this.syncInputs();
+          }
+          this.notes[noteKey] = { kind: json.note ? "warn" : "ok", text: json.note ?? "Saved." };
+          if (done) done(json, cx);
+        }
+      } catch (e) {
+        this.notes[noteKey] = { kind: "err", text: String(e?.message ?? e) };
+      } finally {
+        finishBusy();
+        cx.notify();
+      }
     };
     // Only the spawned task's own cx stays valid across awaits (the event's cx does not), so done() gets that one.
     const previous = this.writeQueue;
@@ -453,25 +488,25 @@ export default class ShepherdConfig extends View {
       cx.notify();
       return;
     }
-    this.mutate(`m:${key}`, () => setArgv(this.root, `models.${key}`, r.value, this.sha()), cx, () => {
+    this.mutate(`m:${key}`, (root) => setArgv(root, `models.${key}`, r.value, this.sha()), cx, () => {
       delete this.draft[key];
     });
   }
 
   saveReviewers(nextList, cx) {
     const payload = nextList.length > 0 ? JSON.stringify(nextList) : "";
-    this.mutate("reviewers", () => setArgv(this.root, "review.reviewers", payload, this.sha()), cx);
+    this.mutate("reviewers", (root) => setArgv(root, "review.reviewers", payload, this.sha()), cx);
   }
 
   saveIdleAction(action, cx) {
     if (action === this.data?.budgets?.idleAction) return;
-    this.mutate("budgets", () => setArgv(this.root, "budgets.idleAction", action, this.sha()), cx);
+    this.mutate("budgets", (root) => setArgv(root, "budgets.idleAction", action, this.sha()), cx);
   }
 
   toggleAgentBilling(agent, cx) {
     const current = this.data?.agentsBilling?.[agent] ?? "api";
     const next = current === "subscription" ? "api" : "subscription";
-    this.mutate(`billing:${agent}`, () => setArgv(this.root, `agents.${agent}.billing`, next, this.sha()), cx);
+    this.mutate(`billing:${agent}`, (root) => setArgv(root, `agents.${agent}.billing`, next, this.sha()), cx);
   }
 
   saveBudget(name, cx) {
@@ -484,7 +519,7 @@ export default class ShepherdConfig extends View {
       return;
     }
     if (n === saved) return;
-    this.mutate("budgets", () => setArgv(this.root, `budgets.${name}`, String(n), this.sha()), cx);
+    this.mutate("budgets", (root) => setArgv(root, `budgets.${name}`, String(n), this.sha()), cx);
   }
 
   saveBase(cx) {
@@ -495,7 +530,7 @@ export default class ShepherdConfig extends View {
       this.follow("base", d.local.baseUrl);
       return;
     }
-    this.mutate("local", () => setArgv(this.root, "local.baseUrl", url, this.sha()), cx, (_j, cx) => this.detect(cx, true));
+    this.mutate("local", (root) => setArgv(root, "local.baseUrl", url, this.sha()), cx, (_j, cx) => this.detect(cx, true));
   }
 
   preset(url, cx) {
@@ -533,10 +568,10 @@ export default class ShepherdConfig extends View {
     const url = this.detected?.baseUrl || this.text("base").trim();
     this.mutate(
       "local",
-      () => [
+      (root) => [
         "local-add",
         "--cwd",
-        this.root,
+        root,
         "--id",
         m.id,
         "--context-window",
@@ -552,18 +587,18 @@ export default class ShepherdConfig extends View {
   removeLocal(id, cx) {
     this.mutate(
       "local",
-      () => ["local-remove", "--cwd", this.root, "--id", id, ...(this.sha() ? ["--expect", this.sha()] : [])],
+      (root) => ["local-remove", "--cwd", root, "--id", id, ...(this.sha() ? ["--expect", this.sha()] : [])],
       cx,
       (_j, cx) => this.detect(cx, true),
     );
   }
 
   activate(id, cx) {
-    this.mutate(`p:${id}`, () => ["plan-activate", "--cwd", this.root, "--id", id], cx);
+    this.mutate(`p:${id}`, (root) => ["plan-activate", "--cwd", root, "--id", id], cx);
   }
 
   closePlan(id, force, cx) {
-    this.mutate(`p:${id}`, () => ["plan-close", "--cwd", this.root, "--id", id, ...(force ? ["--force"] : [])], cx);
+    this.mutate(`p:${id}`, (root) => ["plan-close", "--cwd", root, "--id", id, ...(force ? ["--force"] : [])], cx);
   }
 
   openDoc(file) {
@@ -579,14 +614,35 @@ export default class ShepherdConfig extends View {
   }
 
   sendToSession(commandText, cx) {
-    const target = focused()?.terminal;
-    if (!target) {
-      notify({ title: "Shepherd", body: `Focus your Claude Code terminal to run ${commandText}`, level: "info" });
+    const foc = focused()?.terminal;
+    const all = (() => { try { return terminals(); } catch { return []; } })();
+    const isShepherdChild = (term) => Object.keys(term?.labels ?? {}).some((k) => k.startsWith("shepherd."));
+    const inRepo = (term) => !this.root || (typeof term?.cwd === "string" && (term.cwd === this.root || term.cwd.startsWith(`${this.root}/`)));
+    const isClaude = (term) => /claude/i.test(String(term?.program?.name ?? term?.agent ?? ""));
+    const focusedTerm = all.find((term) => term.address === foc);
+    const targetTerm =
+      focusedTerm && isClaude(focusedTerm) && !isShepherdChild(focusedTerm) && inRepo(focusedTerm)
+        ? focusedTerm
+        : all.find((term) => isClaude(term) && !isShepherdChild(term) && inRepo(term) && (term.status === "idle" || term.status === "done"));
+    if (!targetTerm) {
+      notify({
+        title: "Shepherd",
+        body: `No idle Claude Code session found in ${this.root ? this.root.split("/").pop() : "this repo"} for ${commandText}`,
+        level: "warning",
+      });
       return;
     }
     cx.spawn(async () => {
       try {
-        await exec("hc", ["send", target, `${commandText}\n`], { timeout: 5000 });
+        // hc send presses Enter automatically; --if idle refuses to interrupt a working or blocked session.
+        const r = await exec("hc", ["send", "--if", "idle", targetTerm.address, "--", commandText], { timeout: 5000 });
+        if (r.code !== 0) {
+          notify({
+            title: "Shepherd action not sent",
+            body: (r.stderr || r.stdout || `exit ${r.code}`).trim().slice(0, 200),
+            level: "warning",
+          });
+        }
       } catch (e) {
         notify({ title: "Shepherd action failed", body: String(e?.message ?? e), level: "error" });
       }
@@ -666,12 +722,31 @@ export default class ShepherdConfig extends View {
       : image(meta.icon).size(12);
   }
 
-  // Native gpui-base Select + Popup dropdown with keyboard navigation and optional icons/sublabels.
+  openDropdown(id, items, currentValue, cx) {
+    this.openSelect = id;
+    const idx = Math.max(0, items.findIndex((item) => item.value === currentValue));
+    this.highlightIdx = idx;
+    const handles = this.focusHandles[id];
+    if (handles) {
+      handles.list.focus();
+      if (items.length > 0) handles.scroll.scroll_to_item(idx);
+    }
+    cx.notify();
+  }
+
+  closeDropdown(id, cx, refocusTrigger = false) {
+    if (this.openSelect === id) this.openSelect = null;
+    if (refocusTrigger) this.focusHandles[id]?.trigger?.focus();
+    cx.notify();
+  }
+
+  // Native gpui-base Select + Popup dropdown with scrollable list, ScrollHandle keyboard tracking, and click-outside dismissal.
   selectDropdown(id, displayLabel, items, currentValue, t, { disabled, onSelect, width }) {
     const handles = this.focusHandles[id];
-    const open = this.openSelect === id;
+    const open = this.openSelect === id && !disabled;
     const trigger = h_flex()
       .id(`sel-trig-${id}`)
+      .track_focus(handles.trigger)
       .h(26)
       .px(8)
       .gap(6)
@@ -683,46 +758,39 @@ export default class ShepherdConfig extends View {
       .text_size(11)
       .text_color(disabled ? t.dim : t.foreground)
       .when(!disabled, (el) =>
-        el.hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
-          this.openSelect = open ? null : id;
-          this.highlightIdx = Math.max(0, items.findIndex((item) => item.value === currentValue));
-          cx.notify();
-        }),
+        el
+          .hover((s) => s.bg(t.hover))
+          .on_mouse_down("left", () => {
+            // If on_mouse_down_out just closed this exact dropdown on this press, consume the follow-up click so it stays closed.
+            if (this.outClosedId === id) {
+              this.suppressTriggerClick = id;
+              this.outClosedId = null;
+            }
+          })
+          .on_click((_e, cx) => {
+            if (this.suppressTriggerClick === id) {
+              this.suppressTriggerClick = null;
+              return;
+            }
+            if (open) this.closeDropdown(id, cx, true);
+            else this.openDropdown(id, items, currentValue, cx);
+          }),
       )
       .child(div().flex_1().min_w(0).truncate().child(displayLabel))
       .child(div().text_size(9).text_color(t.dim).child(open ? "▴" : "▾"));
 
-    const listEl = v_flex()
-      .id(`sel-list-${id}`)
-      .min_w(width ?? 230)
-      .max_w(320)
-      .max_h(230)
-      .overflow_y_scrollbar()
+    // Exact height: sum per-row heights + 2px gaps between rows + 8px vertical padding + 2px borders, capped at 280px.
+    const rowsHeight = items.reduce((sum, item) => sum + (item.sub ? 38 : 26), 0) + Math.max(0, items.length - 1) * 2;
+    const listH = Math.min(280, Math.max(36, rowsHeight + 10));
+    const scrollId = `sel-scroll-${id}`;
+    const scrollEl = v_flex()
+      .id(scrollId)
+      .size_full()
+      .overflow_y_scroll()
+      .track_scroll(handles.scroll)
       .p(4)
+      .pr(10)
       .gap(2)
-      .rounded(6)
-      .bg(t.popover ?? t.raised)
-      .border(1)
-      .border_color(t.border)
-      .shadow_md()
-      .on_key_down((e, cx) => {
-        if (items.length === 0) return;
-        if (e.key === "down") {
-          this.highlightIdx = (this.highlightIdx + 1) % items.length;
-          cx.notify();
-        } else if (e.key === "up") {
-          this.highlightIdx = (this.highlightIdx - 1 + items.length) % items.length;
-          cx.notify();
-        } else if (e.key === "enter") {
-          const chosen = items[this.highlightIdx];
-          this.openSelect = null;
-          if (chosen) onSelect(chosen.value, cx);
-          cx.notify();
-        } else if (e.key === "escape") {
-          this.openSelect = null;
-          cx.notify();
-        }
-      })
       .children(
         items.length === 0
           ? [div().px(6).py(4).text_size(11).text_color(t.dim).child("No options")]
@@ -732,6 +800,7 @@ export default class ShepherdConfig extends View {
               const row = h_flex()
                 .id(`sel-opt-${id}-${idx}`)
                 .role("list_box_option")
+                .flex_none()
                 .gap(6)
                 .px(6)
                 .py(4)
@@ -740,9 +809,9 @@ export default class ShepherdConfig extends View {
                 .when(active || hi, (el) => el.bg(active ? t.selected : t.hover))
                 .hover((s) => s.bg(t.hover))
                 .on_click((_e, cx) => {
-                  this.openSelect = null;
+                  if (disabled) return;
+                  this.closeDropdown(id, cx, true);
                   onSelect(item.value, cx);
-                  cx.notify();
                 });
               if (hi) row.aria_active_descendant();
               if (item.icon) row.child(item.icon);
@@ -750,7 +819,7 @@ export default class ShepherdConfig extends View {
                 v_flex()
                   .flex_1()
                   .min_w(0)
-                  .child(div().truncate().text_size(11).text_color(active ? t.foreground : t.foreground).child(item.label))
+                  .child(div().truncate().text_size(11).text_color(t.foreground).child(item.label))
                   .when(!!item.sub, (el) => el.child(div().truncate().text_size(10).text_color(t.dim).child(item.sub))),
               );
               if (item.badge) {
@@ -760,14 +829,62 @@ export default class ShepherdConfig extends View {
             }),
       );
 
+    const listEl = div()
+      .id(`sel-list-${id}`)
+      .relative()
+      .w(width ?? 270)
+      .h(listH)
+      .rounded(6)
+      .bg(t.popover ?? t.raised)
+      .border(1)
+      .border_color(t.border)
+      .shadow_md()
+      .track_focus(handles.list)
+      .on_mouse_down_out((_e, cx) => {
+        if (this.openSelect === id) {
+          this.outClosedId = id;
+          this.openSelect = null;
+          cx.notify();
+        }
+      })
+      .on_key_down((e, cx) => {
+        if (e.key === "escape") {
+          cx.stop_propagation();
+          this.closeDropdown(id, cx, true);
+          return;
+        }
+        if (items.length === 0) return;
+        if (e.key === "down") {
+          cx.stop_propagation();
+          this.highlightIdx = (this.highlightIdx + 1) % items.length;
+          handles.scroll.scroll_to_item(this.highlightIdx);
+          cx.notify();
+        } else if (e.key === "up") {
+          cx.stop_propagation();
+          this.highlightIdx = (this.highlightIdx - 1 + items.length) % items.length;
+          handles.scroll.scroll_to_item(this.highlightIdx);
+          cx.notify();
+        } else if (e.key === "enter") {
+          cx.stop_propagation();
+          const chosen = items[this.highlightIdx];
+          this.closeDropdown(id, cx, true);
+          if (chosen && !disabled) onSelect(chosen.value, cx);
+        }
+      })
+      .child(scrollEl)
+      .child(Scrollbar.vertical(scrollId).absolute().inset_0());
+
     return Select.new(`sel-${id}`)
       .accessibility_label(displayLabel)
       .open(open)
       .track_focus(handles.trigger)
       .content_focus_handle(handles.list)
       .on_open_change((nextOpen, cx) => {
-        this.openSelect = nextOpen ? id : null;
-        cx.notify();
+        if (nextOpen) {
+          if (!disabled) this.openDropdown(id, items, currentValue, cx);
+        } else if (this.openSelect === id) {
+          this.closeDropdown(id, cx, false);
+        }
       })
       .child(
         Popup.new(`sel-pop-${id}`, trigger)
@@ -811,7 +928,9 @@ export default class ShepherdConfig extends View {
   liveSubAgentsBar(t) {
     let active = [];
     try {
-      active = filterShepherdTerminals(terminals());
+      active = filterShepherdTerminals(terminals()).filter(
+        (term) => !this.root || !term.cwd || term.cwd === this.root || term.cwd.startsWith(`${this.root}/`),
+      );
     } catch {
       return null;
     }
@@ -840,9 +959,11 @@ export default class ShepherdConfig extends View {
             ? `ticket ${term.labels["shepherd.ticket"]}`
             : term.labels?.["shepherd.review"]
               ? "review"
-              : term.labels?.["shepherd.ticket-review"]
-                ? `review #${term.labels["shepherd.ticket-review"]}`
-                : term.name || term.address;
+              : term.labels?.["shepherd.review-fix"]
+                ? "review fix"
+                : term.labels?.["shepherd.ticket-review"]
+                  ? `review #${term.labels["shepherd.ticket-review"]}`
+                  : term.name || term.address;
           return h_flex()
             .id(`subagent-${idx}`)
             .gap(6)

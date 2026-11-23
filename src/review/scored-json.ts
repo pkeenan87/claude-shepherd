@@ -110,15 +110,14 @@ function fuzzyMatch(a: ParsedFinding, b: ParsedFinding): boolean {
   if (!sameFile(a.file, b.file)) return false;
   // Never merge two findings that share any reviewer (prevents collapsing distinct findings from the same reviewer even after a multi-reviewer cluster forms).
   if (a.reviewers?.length && b.reviewers?.length && a.reviewers.some((r) => b.reviewers!.includes(r))) return false;
+  const symsA = codeSymbols(a);
+  const symsB = codeSymbols(b);
+  const sharedSym = [...symsA].some((s) => symsB.has(s));
+  // If both findings explicitly cite code symbols and share none, they are about different symbols/bugs.
+  if (symsA.size > 0 && symsB.size > 0 && !sharedSym) return false;
   const sim = jaccard(messageTokens(a.message), messageTokens(b.message));
   if (sim >= 0.55) return true;
-  if (sim >= 0.3) {
-    const sameCat = a.category.toLowerCase() === b.category.toLowerCase();
-    const symsA = codeSymbols(a);
-    const symsB = codeSymbols(b);
-    const sharedSym = [...symsA].some((s) => symsB.has(s));
-    if (sameCat || sharedSym) return true;
-  }
+  if (sim >= 0.35 && sharedSym) return true;
   return false;
 }
 
@@ -139,20 +138,22 @@ export function dedupe(findings: ParsedFinding[], options: { fuzzy?: boolean } =
   }
   const exact = [...best.values()];
   if (!options.fuzzy) return exact;
-  const clusters: ParsedFinding[] = [];
+  const clusters: { rep: ParsedFinding; members: ParsedFinding[] }[] = [];
   for (const finding of exact) {
-    const hit = clusters.findIndex((existing) => fuzzyMatch(existing, finding));
+    const hit = clusters.findIndex((cluster) => cluster.members.every((member) => fuzzyMatch(member, finding)));
     if (hit < 0) {
-      clusters.push(finding);
+      clusters.push({ rep: finding, members: [finding] });
     } else {
-      const existing = clusters[hit]!;
+      const cluster = clusters[hit]!;
+      const existing = cluster.rep;
       const reviewers = mergeReviewers(existing.reviewers, finding.reviewers);
       const winner = compareRisk(score(finding), score(existing)) < 0 ? finding : existing;
       const evidence = winner.evidence ?? (winner === finding ? existing.evidence : finding.evidence);
-      clusters[hit] = { ...winner, ...(evidence ? { evidence } : {}), ...(reviewers ? { reviewers } : {}) };
+      cluster.rep = { ...winner, ...(evidence ? { evidence } : {}), ...(reviewers ? { reviewers } : {}) };
+      cluster.members.push(finding);
     }
   }
-  return clusters;
+  return clusters.map((c) => c.rep);
 }
 
 /**

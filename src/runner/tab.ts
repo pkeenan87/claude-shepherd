@@ -198,8 +198,9 @@ export async function openTab(input: OpenTabInput): Promise<Tab> {
       const before = waitProblem(quiet, address, minutes(turnTimeoutMs));
       if (before) throw new Error(before);
       // After startup or answering a trust prompt, hc send can briefly report "is still starting: its output has not settled";
-      // retry until the TUI's screen settles instead of failing the turn.
+      // time the settle retry from just before the first send (not before waitIdle) so long idle waits don't starve it.
       const sendRetryMs = input.pollMs ?? 1000;
+      const sendStartedAt = now();
       const maxSettleWaitMs = Math.min(30_000, turnTimeoutMs);
       let sent: WaitResult;
       for (let attempt = 0; ; attempt += 1) {
@@ -208,7 +209,7 @@ export async function openTab(input: OpenTabInput): Promise<Tab> {
           break;
         } catch (error) {
           const msg = messageOf(error);
-          if (!/still starting|output has not settled/i.test(msg) || now() - started >= maxSettleWaitMs || attempt >= 20) {
+          if (!/still starting|output has not settled/i.test(msg) || now() - sendStartedAt >= maxSettleWaitMs || attempt >= 20) {
             throw error;
           }
           await sleep(sendRetryMs);

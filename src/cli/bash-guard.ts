@@ -14,7 +14,8 @@ export type GuardHit =
   | "plan approve"
   | "shepherd switch"
   | "cleanup remote"
-  | "ship remote";
+  | "ship remote"
+  | "build pause";
 
 /** The commands of a line, each as its words with quotes removed. */
 export function commandsOf(line: string): string[][] {
@@ -27,7 +28,7 @@ function shepherdCommandHits(argv: string[], from: number): GuardHit[] {
   const first = verbs[0] ?? "";
   const second = verbs[1] ?? "";
   if (["build", "review", "fix"].includes(first)) {
-    if (first === "build" && second === "pause") return [];
+    if (first === "build" && second === "pause") return ["build pause"];
     return ["shepherd run"];
   }
   if (first === "plan" && second === "approve") return ["plan approve"];
@@ -42,9 +43,9 @@ function hitsForCommand(argv: string[]): GuardHit[] {
   if (!name) return [];
   const call = gitCall(argv);
   if (call) {
-    if (call.sub === "push") return ["git push"];
+    if (call.sub === "push" || call.sub === "send-pack") return ["git push"];
     if (call.sub === "worktree" && call.rest.find((arg) => !arg.startsWith("-")) !== "list") return ["git worktree"];
-    if (call.sub === "switch" || call.sub === "checkout" || call.sub === "symbolic-ref" || call.sub === "update-ref") {
+    if (call.sub === "switch" || call.sub === "checkout" || call.sub === "symbolic-ref" || call.sub === "update-ref" || call.sub === "rebase") {
       if (switchesBranch(argv.join(" "))) return ["git branch change"];
     }
     return [];

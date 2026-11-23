@@ -423,10 +423,20 @@ export class TaskStore {
           return undefined;
         }
         if (held && processAlive(held.pid)) return held;
-        // Dead or corrupt claim: move aside atomically and retry exclusive creation.
+        // Dead or corrupt claim: move aside atomically, verify the moved tombstone does not belong to a live contender, and restore it if it does.
         const tomb = `${file}.stale.${randomUUID()}`;
         try {
           renameSync(file, tomb);
+          const moved = readClaim(tomb);
+          if (moved && moved.pid !== process.pid && processAlive(moved.pid)) {
+            try {
+              linkSync(tomb, file);
+            } catch {
+              /* another contender already claimed */
+            }
+            rmSync(tomb, { force: true });
+            return moved;
+          }
           rmSync(tomb, { force: true });
         } catch {
           /* another contender moved it first; retry */
@@ -436,9 +446,8 @@ export class TaskStore {
       }
     }
     const held = readClaim(file);
-    if (held && held.pid !== process.pid && processAlive(held.pid)) return held;
-    atomicWrite(file, payload);
-    return undefined;
+    if (held && held.pid === process.pid) return undefined;
+    return held ?? { pid: -1, checkout: "" };
   }
 
   /** Drops this process's build claim on the task; another process's claim stays. */

@@ -162,7 +162,9 @@ function modelRow(report: ReviewReport, found: number): string {
   const reviewers = [...new Set((model.parts ?? []).flatMap((part) => (part.reviewedBy ? [part.reviewedBy] : [])))];
   const who = reviewers.length > 0 ? reviewers.join(", ") : ranModelText(model.provider, model.model);
   if (model.error && found === 0) return `${who} · no findings: ${model.error}`;
-  const retried = (model.parts ?? []).filter((part) => part.reviewedBy && part.failures.length > 0).map((part) => `part ${part.index} retried (after ${part.failures.join("; ")})`);
+  const retried = (model.parts ?? [])
+    .filter((part) => part.reviewedBy && part.failures.length > 0 && part.findings > 0)
+    .map((part) => `part ${part.index} retried (after ${part.failures.join("; ")})`);
   return [who, ...(model.chunks && model.chunks > 1 ? [`${model.chunks} parts`] : []), `${plural(found, "finding")}${droppedNote(model.dropped ?? 0)}`, ...retried, ...(model.truncated ? ["part of the diff was not reviewed"] : []), ...(model.error ? [`note: ${model.error}`] : [])].join(" · ");
 }
 

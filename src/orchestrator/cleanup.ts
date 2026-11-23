@@ -3,7 +3,8 @@
  * closed `_plans/*.md` mirrors & ephemeral session/review JSON files, dead build claims, global
  * `$SHEPHERD_HOME` hygiene, and (only with `--remote`, gated by PreToolUse `ask`) merged remote branches.
  */
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, linkSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { CommandResult } from "../domain.js";
 import { pruneMissingRepos, pruneOldSessions, registeredRepos } from "../shepherd-home.js";
@@ -112,7 +113,7 @@ export function runCleanup(ctx: WorkflowContext, options: CleanupOptions = {}): 
           skipped.push({ target: wtPath, reason: `has ${dirty.length} uncommitted change(s) (use --force)` });
           continue;
         }
-        const reason = closedTask ? `closed task ${displayName(closedTask)}` : `merged into ${base} (${merged})`;
+        const reason = `${closedTask ? `closed task ${displayName(closedTask)}` : `merged into ${base} (${merged})`} (removes checkout incl. ignored files)`;
         if (!dryRun) {
           try {
             await ctx.git.worktreeRemove(wtPath, !!options.force);
@@ -183,27 +184,39 @@ export function runCleanup(ctx: WorkflowContext, options: CleanupOptions = {}): 
       if (!hasOrigin) {
         skipped.push({ target: "origin", reason: "no origin remote configured" });
       } else {
+        let fetchOk = true;
         if (!dryRun) {
           const fetched = await ctx.git.fetchPrune("origin");
-          if (fetched.code !== 0) errors.push(`git fetch --prune origin: ${fetched.stderr.trim() || "failed"}`);
-        }
-        const remotes = await ctx.git.listRemoteBranches("origin", ctx.config.branchPrefix);
-        for (const name of remotes) {
-          if (name === base || name === "main" || name === "master") continue;
-          const merged = await ctx.git.remoteBranchMerged(name, base, "origin").catch(() => false);
-          if (!merged) {
-            skipped.push({ target: `origin/${name}`, reason: `not merged into origin/${base}` });
-            continue;
+          if (fetched.code !== 0) {
+            fetchOk = false;
+            errors.push(`git fetch --prune origin failed (${fetched.stderr.trim() || "error"}); aborted remote branch deletion to avoid acting on stale refs`);
           }
-          if (!dryRun) {
-            try {
-              await ctx.git.deleteRemoteBranch(name, "origin");
-              actions.push({ kind: "remote-branch", target: `origin/${name}`, reason: `merged into ${base}` });
-            } catch (error) {
-              errors.push(`origin/${name}: ${(error as Error).message}`);
+        }
+        if (fetchOk) {
+          const remotes = await ctx.git.listRemoteBranches("origin", ctx.config.branchPrefix);
+          for (const name of remotes) {
+            if (name === base || name === "main" || name === "master") continue;
+            const openTask = openByBranch.get(name);
+            const merged = await ctx.git.remoteBranchMerged(name, base, "origin").catch(() => false);
+            if (openTask && !options.force && !(merged && taskFullyBuilt(openTask))) {
+              skipped.push({ target: `origin/${name}`, reason: `open task ${displayName(openTask)} (close task first or use --force)` });
+              continue;
             }
-          } else {
-            actions.push({ kind: "remote-branch", target: `origin/${name}`, reason: `merged into ${base}` });
+            if (!merged) {
+              skipped.push({ target: `origin/${name}`, reason: `not merged into origin/${base}` });
+              continue;
+            }
+            if (!dryRun) {
+              try {
+                const expectedSha = await ctx.git.remoteBranchSha(name, "origin");
+                await ctx.git.deleteRemoteBranch(name, "origin", expectedSha);
+                actions.push({ kind: "remote-branch", target: `origin/${name}`, reason: `merged into origin/${base}` });
+              } catch (error) {
+                errors.push(`origin/${name}: ${(error as Error).message}`);
+              }
+            } else {
+              actions.push({ kind: "remote-branch", target: `origin/${name}`, reason: `merged into origin/${base}` });
+            }
           }
         }
       }
@@ -214,7 +227,35 @@ export function runCleanup(ctx: WorkflowContext, options: CleanupOptions = {}): 
       for (const task of tasks) {
         const claimFile = path.join(ctx.store.taskDir(task.taskId), "build.claim");
         if (existsSync(claimFile) && !ctx.store.liveBuildClaim(task.taskId)) {
-          if (!dryRun) rmSync(claimFile, { force: true });
+          if (!dryRun) {
+            // Atomically move aside and re-verify the moved file is not a freshly written live claim before deleting.
+            const tomb = `${claimFile}.cleanup.${randomUUID()}`;
+            try {
+              renameSync(claimFile, tomb);
+              let live = false;
+              try {
+                const parsed = JSON.parse(readFileSync(tomb, "utf8")) as { pid?: unknown };
+                if (typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0) {
+                  try {
+                    process.kill(parsed.pid, 0);
+                    live = true;
+                  } catch (e) {
+                    live = (e as NodeJS.ErrnoException).code === "EPERM";
+                  }
+                }
+              } catch {
+                /* corrupt */
+              }
+              if (live) {
+                try { linkSync(tomb, claimFile); } catch { /* already replaced */ }
+                rmSync(tomb, { force: true });
+                continue;
+              }
+              rmSync(tomb, { force: true });
+            } catch {
+              continue;
+            }
+          }
           actions.push({ kind: "claim", target: `${displayName(task)}/build.claim`, reason: "stale claim (process no longer running)" });
         }
         if (!isClosed(task)) continue;

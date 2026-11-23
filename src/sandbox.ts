@@ -1,7 +1,8 @@
 import { WorkflowError } from "./domain.js";
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
-const WRAPPERS = new Set(["sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout", "setsid", "stdbuf", "ionice", "chrt", "taskset", "builtin", "busybox"]);
+const RESERVED_PREFIX = new Set(["!", "{", "if", "then", "elif", "else", "while", "until", "do", "coproc"]);
+const WRAPPERS = new Set(["sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout", "setsid", "stdbuf", "ionice", "chrt", "taskset", "builtin", "busybox", "flock", "watch"]);
 /** Wrapper options that consume the next token as their value. */
 const WRAPPER_VALUE_FLAGS = new Set(["-u", "-g"]);
 /** More value-taking options for specific wrappers (`nice -n 5`, `xargs -n 1 -I{}`), which a generic list would get wrong for `sudo -n`. */
@@ -45,11 +46,15 @@ export function splitSegments(line: string, depth = 0): Segment[] {
     tokens = [];
     nextPiped = piped;
   };
+  // Track pending quoted-delimiter heredoc (e.g. `cat <<'EOF'`) so prose lines inside non-shell heredocs are not parsed as commands.
+  let pendingHeredoc: { delim: string; stripTabs: boolean; shellFed: boolean } | undefined;
   for (let i = 0; i < line.length; i += 1) {
     const ch = line[i];
     if (quote) {
       if (ch === quote) quote = null;
-      else if (ch === "\\" && quote === '"' && i + 1 < line.length) current += line[++i];
+      else if (ch === "\\" && quote === '"' && (line[i + 1] === "\n" || (line[i + 1] === "\r" && line[i + 2] === "\n"))) {
+        i += line[i + 1] === "\r" ? 2 : 1;
+      } else if (ch === "\\" && quote === '"' && i + 1 < line.length) current += line[++i];
       else if (quote === '"' && ch === "$" && line[i + 1] === "(" && depth < MAX_NESTING) {
         let paren = 1;
         let j = i + 2;
@@ -74,6 +79,53 @@ export function splitSegments(line: string, depth = 0): Segment[] {
       } else current += ch;
       continue;
     }
+    // Line continuation `\<newline>` outside single quotes joins split tokens like `git pu\<nl>sh`.
+    if (ch === "\\" && (line[i + 1] === "\n" || (line[i + 1] === "\r" && line[i + 2] === "\n"))) {
+      i += line[i + 1] === "\r" ? 2 : 1;
+      continue;
+    }
+    // ANSI-C quoting `$'...'`: decode so `git $'push'` becomes `git push`.
+    if (ch === "$" && line[i + 1] === "'") {
+      has = true;
+      let j = i + 2;
+      for (; j < line.length && line[j] !== "'"; j += 1) {
+        if (line[j] === "\\" && j + 1 < line.length) {
+          current += line[++j];
+        } else {
+          current += line[j];
+        }
+      }
+      i = j;
+      continue;
+    }
+    // Detect quoted-delimiter heredoc (`<<'EOF'`, `<<"EOF"`, `<<\EOF`, `<<-'EOF'`).
+    if (ch === "<" && line[i + 1] === "<" && line[i + 2] !== "<") {
+      let j = i + 2;
+      let stripTabs = false;
+      if (line[j] === "-") {
+        stripTabs = true;
+        j += 1;
+      }
+      while (j < line.length && (line[j] === " " || line[j] === "\t")) j += 1;
+      let delim = "";
+      let quoted = false;
+      if (line[j] === "'" || line[j] === '"') {
+        const q = line[j++];
+        quoted = true;
+        while (j < line.length && line[j] !== q && line[j] !== "\n") delim += line[j++];
+        if (line[j] === q) j += 1;
+      } else if (line[j] === "\\") {
+        quoted = true;
+        j += 1;
+        while (j < line.length && !/[\s;|&()]/.test(line[j]!)) delim += line[j++];
+      }
+      if (quoted && delim) {
+        const headCmd = baseName(tokens[0] ?? current).toLowerCase();
+        pendingHeredoc = { delim, stripTabs, shellFed: SHELLS.has(headCmd) };
+        i = j - 1;
+        continue;
+      }
+    }
     if (ch === "'" || ch === '"') {
       quote = ch;
       has = true;
@@ -91,6 +143,22 @@ export function splitSegments(line: string, depth = 0): Segment[] {
       }
     } else if (ch === ";" || ch === "&" || ch === "\n" || ch === "(" || ch === ")" || ch === "`") {
       endSegment(false);
+      if (ch === "\n" && pendingHeredoc) {
+        const hd = pendingHeredoc;
+        pendingHeredoc = undefined;
+        // Skip quoted heredoc body lines unless fed directly to a shell.
+        if (!hd.shellFed) {
+          let cursor = i + 1;
+          while (cursor < line.length) {
+            const nl = line.indexOf("\n", cursor);
+            const rawLine = (nl < 0 ? line.slice(cursor) : line.slice(cursor, nl)).replace(/\r$/, "");
+            const checkLine = hd.stripTabs ? rawLine.replace(/^\t+/, "") : rawLine;
+            cursor = nl < 0 ? line.length : nl + 1;
+            if (checkLine === hd.delim) break;
+          }
+          i = cursor - 1;
+        }
+      }
     } else if (/\s/.test(ch)) {
       endToken();
     } else {
@@ -118,8 +186,8 @@ function unwrap(input: string[]): { argv: string[]; xargs: boolean; extraSegment
   const extraSegments: Segment[] = [];
   let i = 0;
   for (;;) {
-    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i += 1;
-    const name = i < tokens.length ? baseName(tokens[i]) : "";
+    while (i < tokens.length && (RESERVED_PREFIX.has(tokens[i]!) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]!))) i += 1;
+    const name = i < tokens.length ? baseName(tokens[i]!) : "";
     if (!WRAPPERS.has(name)) break;
     if (name === "xargs") xargs = true;
     const extra = WRAPPER_EXTRA_VALUE_FLAGS[name];
@@ -352,11 +420,12 @@ export function gitCall(argv: string[]): GitCall | undefined {
   return { sub: words[0], rest: [...words.slice(1), ...rest] };
 }
 
-/** True for `git switch`, `git checkout -b|-B|--orphan|--detach|-|<ref>` (a `--` before the paths means a file restore), and `git symbolic-ref HEAD <ref>`. */
+/** True for `git switch`, `git checkout -b|-B|--orphan|--detach|-|<ref>` (a `--` before the paths means a file restore), `git rebase <upstream> <branch>`, and `git symbolic-ref HEAD <ref>`. */
 function movesBranch(call: GitCall): boolean {
   if (call.sub === "switch") return true;
   if (call.sub === "symbolic-ref") return call.rest.filter((arg) => !arg.startsWith("-")).length >= 2;
   if (call.sub === "update-ref") return call.rest.some((arg) => arg === "HEAD");
+  if (call.sub === "rebase") return call.rest.filter((arg) => !arg.startsWith("-")).length >= 2;
   if (call.sub !== "checkout") return false;
   if (call.rest.some((arg) => /^-[A-Za-z]*[bB][A-Za-z]*$/.test(arg) || arg === "--orphan" || arg === "--detach")) return true;
   const dash = call.rest.indexOf("--");
@@ -392,9 +461,9 @@ export function runsGitPush(command: string): boolean {
   return mayRunGit(command, /\bpush\b/, (call) => call.sub === "push");
 }
 
-/** True when the command line switches branches: `git switch`, `git checkout -b|-B|<branch>` (also inside `sh -c`). */
+/** True when the command line switches branches: `git switch`, `git checkout -b|-B|<branch>`, `git rebase <base> <branch>` (also inside `sh -c`). */
 export function switchesBranch(command: string): boolean {
-  return mayRunGit(command, /\b(switch|checkout|symbolic-ref)\b/, movesBranch);
+  return mayRunGit(command, /\b(switch|checkout|symbolic-ref|rebase)\b/, movesBranch);
 }
 
 /** True when the command line changes git's worktrees (`git worktree add|move|remove|prune|repair|lock|unlock`); `list` only reads. */

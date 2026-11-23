@@ -67,7 +67,6 @@ const READERS: Record<string, "claude" | "codex" | "cursor" | "gemini"> = {
   codex: "codex",
   "cursor-agent": "cursor",
   gemini: "gemini",
-  agy: "gemini",
 };
 const PRICING_PROVIDER = { claude: "anthropic", codex: "openai", gemini: "google" } as const;
 
@@ -315,11 +314,14 @@ function geminiChatEvents(file: string, buffer: Buffer, before: Before, tmpRoot:
     if (!isRecord(value) || before(start, value)) continue;
     const usage = isRecord(value.tokens) ? value.tokens : isRecord(value.usage) ? value.usage : undefined;
     if (!usage) continue;
-    const input = num(usage.input_tokens ?? usage.input ?? usage.promptTokenCount);
-    const output = num(usage.output_tokens ?? usage.output ?? usage.candidatesTokenCount) + num(usage.thinking_tokens ?? usage.thoughts ?? usage.thoughtsTokenCount);
     const cacheRead = num(usage.cache_read_tokens ?? usage.cached ?? usage.cachedContentTokenCount);
+    // Gemini's promptTokenCount/input includes cached tokens; subtract cacheRead so cached tokens are not double-billed.
+    const rawInput = num(usage.input_tokens ?? usage.input ?? usage.promptTokenCount);
+    const inclusiveInput = usage.input_tokens === undefined && (usage.input !== undefined || usage.promptTokenCount !== undefined);
+    const input = inclusiveInput ? Math.max(0, rawInput - cacheRead) : rawInput;
+    const output = num(usage.output_tokens ?? usage.output ?? usage.candidatesTokenCount) + num(usage.thinking_tokens ?? usage.thoughts ?? usage.thoughtsTokenCount);
     if (input + output + cacheRead === 0) continue;
-    const rawModel = typeof value.model === "string" && value.model ? value.model : "gemini-4-neon";
+    const rawModel = typeof value.model === "string" && value.model ? value.model : "unknown";
     const id = typeof value.id === "string" && value.id ? value.id : `gemini-${start}-${seq}`;
     found.set(id, {
       provider: PRICING_PROVIDER.gemini,

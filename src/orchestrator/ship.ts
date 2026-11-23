@@ -12,7 +12,7 @@ import { budgetState } from "./budget.js";
 import { done, fail, guard, type WorkflowContext } from "./context.js";
 import { formatUsdShort } from "./format.js";
 import { SPEC_FILE } from "./interview.js";
-import { activeTask, displayName } from "./tasks.js";
+import { activeTask, displayName, listTasks } from "./tasks.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -46,12 +46,12 @@ export interface ShipData {
 
 function buildPrTitle(task: TaskState | undefined, branch: string, commits: { subject: string }[]): string {
   if (task?.plan?.summary) {
-    const first = task.plan.summary.split(/\r?\n/)[0]?.trim() ?? "";
+    const first = redact(task.plan.summary.split(/\r?\n/)[0]?.trim() ?? "");
     if (first.length > 0 && first.length <= 72) return first;
   }
-  if (task?.name) return task.name.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase());
-  if (commits.length === 1 && commits[0]?.subject) return commits[0].subject.slice(0, 72);
-  return branch.replace(/^[^/]+\//, "").replace(/-/g, " ");
+  if (task?.name) return redact(task.name.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase()));
+  if (commits.length === 1 && commits[0]?.subject) return redact(commits[0].subject).slice(0, 72);
+  return redact(branch.replace(/^[^/]+\//, "").replace(/-/g, " "));
 }
 
 function buildPrBody(
@@ -64,13 +64,13 @@ function buildPrBody(
   const spec = task ? ctx.store.readText(task.taskId, SPEC_FILE) : undefined;
   const summary = task?.plan?.summary || (spec ? spec.split(/\r?\n/).find((l) => l.trim() && !l.startsWith("#")) : undefined);
   lines.push("## Summary");
-  lines.push(summary ? redact(summary) : commits.slice(0, 8).map((c) => `- ${c.subject}`).join("\n") || "- Branch changes ready for review.");
+  lines.push(summary ? redact(summary) : commits.slice(0, 8).map((c) => `- ${redact(c.subject)}`).join("\n") || "- Branch changes ready for review.");
   if (task?.plan?.tickets?.length) {
     lines.push("", "## Tickets");
     for (const tk of task.plan.tickets) {
       const run = task.ticketRuns?.[tk.id];
       const mark = run?.status === "done" ? "x" : " ";
-      lines.push(`- [${mark}] **${tk.id}** ${tk.title}${run?.commit ? ` (\`${run.commit.slice(0, 7)}\`)` : ""}`);
+      lines.push(`- [${mark}] **${tk.id}** ${redact(tk.title)}${run?.commit ? ` (\`${run.commit.slice(0, 7)}\`)` : ""}`);
     }
   }
   if (task?.review) {
@@ -103,7 +103,11 @@ export function runShip(ctx: WorkflowContext, options: ShipOptions = {}): Promis
     const commits = branch === "HEAD" ? [] : await ctx.git.commitLog(base);
     if (commits.length === 0) blockers.push(`No commits ahead of \`${base}\`.`);
 
-    const open = task && task.phase !== "COMPLETE" && task.phase !== "IDLE" && (!task.build?.branch || task.build.branch === branch) ? task : undefined;
+    const matchedByBranch =
+      task && task.phase !== "COMPLETE" && task.phase !== "IDLE" && (!task.build?.branch || task.build.branch === branch)
+        ? task
+        : listTasks(ctx).find((t) => t.phase !== "COMPLETE" && t.phase !== "IDLE" && (t.build?.branch === branch || t.worktree?.branch === branch));
+    const open = matchedByBranch;
     if (open && (ctx.store.liveBuildClaim(open.taskId) || ctx.store.buildInProgress(open.taskId))) {
       blockers.push(`A build is currently in progress for task \`${displayName(open)}\`. Finish or pause it before shipping.`);
     }
@@ -112,9 +116,13 @@ export function runShip(ctx: WorkflowContext, options: ShipOptions = {}): Promis
     if (tickets.length > 0 && ticketsDone < tickets.length) {
       warnings.push(`${tickets.length - ticketsDone} of ${tickets.length} plan ticket(s) are not built yet.`);
     }
-    const reviewPassed = open?.review ? open.review.passed : null;
-    if (open && reviewPassed === false) {
+    const headSha = await ctx.git.head().catch(() => undefined);
+    const reviewStale = Boolean(open?.review?.passed && open.review.headSha && headSha && open.review.headSha !== headSha);
+    const reviewPassed = open?.review ? (reviewStale ? null : open.review.passed) : null;
+    if (open && open.review && !open.review.passed) {
       blockers.push("The latest `/shepherd:review` did not pass. Fix blocking findings and re-run review first.");
+    } else if (open && reviewStale) {
+      warnings.push(`The latest passing \`/shepherd:review\` was recorded at \`${open.review!.headSha!.slice(0, 7)}\`, before HEAD \`${headSha!.slice(0, 7)}\`. Re-run \`/shepherd:review\` before shipping.`);
     } else if (open && reviewPassed === null) {
       warnings.push("No `/shepherd:review` has been recorded for this task yet.");
     }

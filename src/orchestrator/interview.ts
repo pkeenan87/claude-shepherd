@@ -111,13 +111,12 @@ export function startPlan(ctx: WorkflowContext, request: string, options: StartP
     if (budgetState(ctx).status === "hard") {
       return fail("BUDGET", "Task or daily budget is exhausted. /plan was not run. Run /cost for details.");
     }
-    // A request always starts a new task. A finished task is closed; any other is parked untouched (/plans switches back).
-    const parked = await retireCurrent(ctx, current);
     // Until `plan spec` saves the planner's rating, the task has the default classification.
     const classification: AcceptedClassification = defaultClassification();
     const fresh = newTask(ctx, safe, at);
     let worktree: WorktreeRecord | undefined;
     const wantWorktree = options.worktree !== undefined ? options.worktree : ctx.config.worktree?.default === "always" && !(await ctx.git.isLinkedWorktree().catch(() => false));
+    // Run git preflight and create any linked worktree BEFORE retiring the previous active task so a failure never leaves the user taskless.
     if (wantWorktree) {
       const gitProblem = await ctx.git.preflight();
       if (gitProblem) return fail("GIT_NOT_READY", gitProblem);
@@ -133,12 +132,25 @@ export function startPlan(ctx: WorkflowContext, request: string, options: StartP
       await ctx.git.worktreeAdd(targetPath, branch, baseSha);
       worktree = { path: targetPath, branch, base, baseSha, createdAt: at };
     }
-    const state = await ctx.store.create({
-      ...fresh,
-      classification,
-      planning: { stage: "interview" },
-      ...(worktree ? { worktree, build: { branch: worktree.branch, base: worktree.base, baseSha: worktree.baseSha } } : {}),
-    });
+    let state: TaskState;
+    let parked: TaskState | undefined;
+    try {
+      // A request always starts a new task. A finished task is closed; any other is parked untouched (/plans switches back).
+      parked = await retireCurrent(ctx, current);
+      state = await ctx.store.create({
+        ...fresh,
+        classification,
+        planning: { stage: "interview" },
+        ...(worktree ? { worktree, build: { branch: worktree.branch, base: worktree.base, baseSha: worktree.baseSha } } : {}),
+      });
+    } catch (error) {
+      // Roll back the freshly created worktree and branch if creating the task state fails.
+      if (worktree) {
+        await ctx.git.worktreeRemove(worktree.path, true).catch(() => undefined);
+        await ctx.git.deleteBranch(worktree.branch, true).catch(() => undefined);
+      }
+      throw error;
+    }
     if (worktree) {
       // Write the per-worktree active-task pointer inside its git dir so sessions opened in that worktree immediately resolve this task.
       try {

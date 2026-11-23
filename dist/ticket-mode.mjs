@@ -7436,13 +7436,11 @@ var ALIASES = {
 };
 function canonicalModelId(provider, model) {
   let clean = model.trim().toLowerCase();
-  clean = clean.replace(/\[[^\]]*\]/g, "").trim();
+  clean = clean.replace(/\[optimize_for=[^\]]*\]/g, "").trim();
   clean = clean.replace(/\s+/g, "-");
   if (clean.startsWith("cursor-") && clean !== "cursor-small") clean = clean.slice("cursor-".length);
   clean = clean.replace(/-(?:20\d{2}-?\d{2}-?\d{2})$/, "");
-  if (clean !== "grok-code-fast") {
-    clean = clean.replace(/-(?:high|medium|low|xhigh|max|fast|thinking)(?:-(?:fast|high|medium|low))?$/, "");
-  }
+  clean = clean.replace(/-(?:high|medium|low|xhigh|max|thinking)$/, "");
   const aliased = ALIASES[clean];
   if (aliased) return aliased;
   if (provider === "anthropic" || clean.startsWith("claude-")) {
@@ -8112,7 +8110,8 @@ function unpricedWarning(config) {
 
 // src/sandbox.ts
 var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
-var WRAPPERS = /* @__PURE__ */ new Set(["sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout", "setsid", "stdbuf", "ionice", "chrt", "taskset", "builtin", "busybox"]);
+var RESERVED_PREFIX = /* @__PURE__ */ new Set(["!", "{", "if", "then", "elif", "else", "while", "until", "do", "coproc"]);
+var WRAPPERS = /* @__PURE__ */ new Set(["sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout", "setsid", "stdbuf", "ionice", "chrt", "taskset", "builtin", "busybox", "flock", "watch"]);
 var WRAPPER_VALUE_FLAGS = /* @__PURE__ */ new Set(["-u", "-g"]);
 var WRAPPER_EXTRA_VALUE_FLAGS = {
   env: /* @__PURE__ */ new Set(["--unset", "-C", "--chdir"]),
@@ -8144,11 +8143,14 @@ function splitSegments(line, depth = 0) {
     tokens = [];
     nextPiped = piped;
   };
+  let pendingHeredoc;
   for (let i = 0; i < line.length; i += 1) {
     const ch = line[i];
     if (quote) {
       if (ch === quote) quote = null;
-      else if (ch === "\\" && quote === '"' && i + 1 < line.length) current += line[++i];
+      else if (ch === "\\" && quote === '"' && (line[i + 1] === "\n" || line[i + 1] === "\r" && line[i + 2] === "\n")) {
+        i += line[i + 1] === "\r" ? 2 : 1;
+      } else if (ch === "\\" && quote === '"' && i + 1 < line.length) current += line[++i];
       else if (quote === '"' && ch === "$" && line[i + 1] === "(" && depth < MAX_NESTING) {
         let paren = 1;
         let j = i + 2;
@@ -8173,6 +8175,50 @@ function splitSegments(line, depth = 0) {
       } else current += ch;
       continue;
     }
+    if (ch === "\\" && (line[i + 1] === "\n" || line[i + 1] === "\r" && line[i + 2] === "\n")) {
+      i += line[i + 1] === "\r" ? 2 : 1;
+      continue;
+    }
+    if (ch === "$" && line[i + 1] === "'") {
+      has = true;
+      let j = i + 2;
+      for (; j < line.length && line[j] !== "'"; j += 1) {
+        if (line[j] === "\\" && j + 1 < line.length) {
+          current += line[++j];
+        } else {
+          current += line[j];
+        }
+      }
+      i = j;
+      continue;
+    }
+    if (ch === "<" && line[i + 1] === "<" && line[i + 2] !== "<") {
+      let j = i + 2;
+      let stripTabs = false;
+      if (line[j] === "-") {
+        stripTabs = true;
+        j += 1;
+      }
+      while (j < line.length && (line[j] === " " || line[j] === "	")) j += 1;
+      let delim = "";
+      let quoted = false;
+      if (line[j] === "'" || line[j] === '"') {
+        const q = line[j++];
+        quoted = true;
+        while (j < line.length && line[j] !== q && line[j] !== "\n") delim += line[j++];
+        if (line[j] === q) j += 1;
+      } else if (line[j] === "\\") {
+        quoted = true;
+        j += 1;
+        while (j < line.length && !/[\s;|&()]/.test(line[j])) delim += line[j++];
+      }
+      if (quoted && delim) {
+        const headCmd = baseName(tokens[0] ?? current).toLowerCase();
+        pendingHeredoc = { delim, stripTabs, shellFed: SHELLS.has(headCmd) };
+        i = j - 1;
+        continue;
+      }
+    }
     if (ch === "'" || ch === '"') {
       quote = ch;
       has = true;
@@ -8189,6 +8235,21 @@ function splitSegments(line, depth = 0) {
       }
     } else if (ch === ";" || ch === "&" || ch === "\n" || ch === "(" || ch === ")" || ch === "`") {
       endSegment(false);
+      if (ch === "\n" && pendingHeredoc) {
+        const hd = pendingHeredoc;
+        pendingHeredoc = void 0;
+        if (!hd.shellFed) {
+          let cursor = i + 1;
+          while (cursor < line.length) {
+            const nl = line.indexOf("\n", cursor);
+            const rawLine = (nl < 0 ? line.slice(cursor) : line.slice(cursor, nl)).replace(/\r$/, "");
+            const checkLine = hd.stripTabs ? rawLine.replace(/^\t+/, "") : rawLine;
+            cursor = nl < 0 ? line.length : nl + 1;
+            if (checkLine === hd.delim) break;
+          }
+          i = cursor - 1;
+        }
+      }
     } else if (/\s/.test(ch)) {
       endToken();
     } else {
@@ -8210,7 +8271,7 @@ function unwrap(input) {
   const extraSegments = [];
   let i = 0;
   for (; ; ) {
-    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i += 1;
+    while (i < tokens.length && (RESERVED_PREFIX.has(tokens[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]))) i += 1;
     const name = i < tokens.length ? baseName(tokens[i]) : "";
     if (!WRAPPERS.has(name)) break;
     if (name === "xargs") xargs = true;
@@ -8388,6 +8449,7 @@ function movesBranch(call) {
   if (call.sub === "switch") return true;
   if (call.sub === "symbolic-ref") return call.rest.filter((arg) => !arg.startsWith("-")).length >= 2;
   if (call.sub === "update-ref") return call.rest.some((arg) => arg === "HEAD");
+  if (call.sub === "rebase") return call.rest.filter((arg) => !arg.startsWith("-")).length >= 2;
   if (call.sub !== "checkout") return false;
   if (call.rest.some((arg) => /^-[A-Za-z]*[bB][A-Za-z]*$/.test(arg) || arg === "--orphan" || arg === "--detach")) return true;
   const dash = call.rest.indexOf("--");
@@ -8413,7 +8475,7 @@ function runsGitPush(command) {
   return mayRunGit(command, /\bpush\b/, (call) => call.sub === "push");
 }
 function switchesBranch(command) {
-  return mayRunGit(command, /\b(switch|checkout|symbolic-ref)\b/, movesBranch);
+  return mayRunGit(command, /\b(switch|checkout|symbolic-ref|rebase)\b/, movesBranch);
 }
 function changesWorktrees(command) {
   return mayRunGit(command, /\bworktree\b/, (call) => call.sub === "worktree" && call.rest.find((arg) => !arg.startsWith("-")) !== "list");
