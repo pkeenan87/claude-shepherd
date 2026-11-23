@@ -1,5 +1,8 @@
 {
-  "place": "right",
-  "size": 520,
-  "focusable": true
+  "place": "none",
+  "focusable": true,
+  "overlay": {
+    "width": 780,
+    "height": 640
+  }
 }
