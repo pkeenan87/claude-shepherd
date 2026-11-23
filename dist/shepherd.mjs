@@ -7653,10 +7653,10 @@ function normalizeReviewerSpec(spec) {
 }
 var DEFAULT_UNKNOWN_CALL_USD = 0.05;
 var DEFAULT_MODELS = {
-  low: "xai/grok-4.7",
-  medium: "anthropic/claude-sonnet-5-5",
-  high: "openai/gpt-6.1-sol",
-  review: "anthropic/claude-opus-5-5"
+  low: "agent:claude/haiku",
+  medium: "agent:claude/sonnet",
+  high: "agent:claude/opus",
+  review: "agent:claude/opus"
 };
 var DEFAULTS = {
   workspaceDir: ".shepherd",

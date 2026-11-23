@@ -68,7 +68,7 @@ describe("loadConfig layering", () => {
     mkdirSync(path.join(project, ".shepherd"));
     writeFileSync(path.join(project, ".shepherd", "config.yaml"), "models: { medium: openai/gpt-6.1-sol }\npricing: [{ provider: openai, model: gpt-6.1-sol, effectiveFrom: '2026-01-01', inputPerMillionUsd: 0, outputPerMillionUsd: 0 }]\n");
     const config = loadConfig(project);
-    expect(config.models).toEqual({ low: "xai/grok-4.7", medium: "openai/gpt-6.1-sol", high: "openai/gpt-6.1-sol", review: "anthropic/claude-opus-5-5" });
+    expect(config.models).toEqual({ low: "agent:claude/haiku", medium: "openai/gpt-6.1-sol", high: "agent:claude/opus", review: "agent:claude/opus" });
     expect(config.local?.models[0]?.id).toBe("Qwen3.8-27B");
     expect(config.pricing.some((row) => row.model === "gpt-6.1-sol" && row.inputPerMillionUsd === 0)).toBe(false);
     expect(config.warnings?.join("\n")).toContain("Ignored project pricing");

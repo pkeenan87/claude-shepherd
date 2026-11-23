@@ -133,12 +133,12 @@ export interface WorkflowConfig {
 /** Default for `budgets.unknownCallUsd`. */
 export const DEFAULT_UNKNOWN_CALL_USD = 0.05;
 
-/** Used for a `models` key the config leaves out. No prices live here: a model without a `pricing` row has an unknown cost. */
+/** Used for a `models` key the config leaves out. Defaults to Claude Code agent slots so fresh installs work without Pi; `local/*` and `provider/id` models run through Pi workers. */
 export const DEFAULT_MODELS: ModelsConfig = {
-  low: "xai/grok-4.7",
-  medium: "anthropic/claude-sonnet-5-5",
-  high: "openai/gpt-6.1-sol",
-  review: "anthropic/claude-opus-5-5",
+  low: "agent:claude/haiku",
+  medium: "agent:claude/sonnet",
+  high: "agent:claude/opus",
+  review: "agent:claude/opus",
 };
 
 const DEFAULTS: WorkflowConfig = {

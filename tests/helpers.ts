@@ -81,10 +81,17 @@ export async function builtWorkflow(extras: Partial<WorkflowOptions> = {}) {
   return { cwd, app };
 }
 
-/** The default `models` (xai low, sonnet medium, sol high, opus review) with test prices. */
+/** A Pi-model tiered config (xai low, sonnet medium, sol high, opus review) with test prices. */
 export function tieredYaml(extraYaml = ""): string {
-  return `
-checks:
+  const modelsBlock = /^models:/m.test(extraYaml)
+    ? ""
+    : `models:
+  low: xai/grok-4.7
+  medium: anthropic/claude-sonnet-5-5
+  high: openai/gpt-6.1-sol
+  review: anthropic/claude-opus-5-5
+`;
+  return `${modelsBlock}checks:
   - { name: unit, command: npm, args: ["test"] }
 pricing:
   - { provider: anthropic, model: claude-sonnet-5-5, effectiveFrom: "2026-01-01", inputPerMillionUsd: 3, outputPerMillionUsd: 15 }

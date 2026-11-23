@@ -46,7 +46,7 @@ import {
 const REFRESH_MS = 8000;
 const AGENT_POLL_MS = 2000;
 const MODEL_KEYS = ["low", "medium", "high", "review"];
-const KINDS = [["pi", "Pi"], ["local", "Local"], ["agent", "Agent"]];
+const KINDS = [["agent", "Agent"], ["local", "Local (Pi)"], ["pi", "Pi"]];
 const IDLE_ACTIONS = [
   { value: "warn", label: "warn (non-blocking)" },
   { value: "block", label: "block (once per idle)" },
@@ -1184,11 +1184,16 @@ export default class ShepherdConfig extends View {
       const localItems = d.local.models.map((m) => ({ value: m.id, label: m.id, sub: `${ctxText(m.contextWindow)} context` }));
       editor =
         ids.length === 0
-          ? div().text_size(11).text_color(t.dim).child("No local models yet: add one under Local model.")
-          : this.selectDropdown(`local:${key}`, row.kind === "local" && row.id ? row.id : "Pick local model…", localItems, row.kind === "local" ? row.id : "", t, {
-              disabled: busy,
-              onSelect: (id, cx) => this.saveModel(key, "local", { localId: id }, cx),
-            });
+          ? div().text_size(11).text_color(t.dim).child("No local models yet: add one under Local model (runs via Pi worker).")
+          : v_flex()
+              .gap(3)
+              .child(
+                this.selectDropdown(`local:${key}`, row.kind === "local" && row.id ? row.id : "Pick local model…", localItems, row.kind === "local" ? row.id : "", t, {
+                  disabled: busy,
+                  onSelect: (id, cx) => this.saveModel(key, "local", { localId: id }, cx),
+                }),
+              )
+              .child(div().text_size(10).text_color(t.dim).child("Runs via Pi worker against your local server."));
     } else {
       const selectedAgent = row.kind === "agent" ? row.agent : "";
       const supportsModelFlag = !selectedAgent || (d.agentsWithModelFlag ?? []).includes(selectedAgent);

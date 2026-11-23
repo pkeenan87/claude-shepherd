@@ -25,7 +25,7 @@ const LOCAL = `local:
 describe("defaults", () => {
   it("uses the default models, escalation count and turn limit when nothing is set", () => {
     const config = parseConfig("");
-    expect(config.models).toEqual({ low: "xai/grok-4.7", medium: "anthropic/claude-sonnet-5-5", high: "openai/gpt-6.1-sol", review: "anthropic/claude-opus-5-5" });
+    expect(config.models).toEqual({ low: "agent:claude/haiku", medium: "agent:claude/sonnet", high: "agent:claude/opus", review: "agent:claude/opus" });
     expect(config.models).toEqual(DEFAULT_MODELS);
     expect(config.routing).toEqual({ maxEscalations: 2, maxTicketTurns: 100 });
     expect(config.local).toBeUndefined();
