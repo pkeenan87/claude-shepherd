@@ -729,7 +729,7 @@ export default class ShepherdConfig extends View {
                 .py(4)
                 .rounded(4)
                 .items_center()
-                .bg(active ? t.selected : hi ? t.hover : "transparent")
+                .when(active || hi, (el) => el.bg(active ? t.selected : t.hover))
                 .hover((s) => s.bg(t.hover))
                 .on_click((_e, cx) => {
                   this.openSelect = null;
@@ -1209,11 +1209,14 @@ export default class ShepherdConfig extends View {
     const current = d.reviewReviewers ?? [];
     const busy = this.busy.has("reviewers");
     const addOptions = [
+      { value: "agent:codex/gpt-6-astra", label: "Codex · GPT-6 Astra", sub: "correctness & edge cases" },
       { value: "agent:codex/gpt-6.2-astra", label: "Codex · GPT-6.2 Astra", sub: "correctness & edge cases" },
-      { value: "agent:agy/gemini-4-argon", label: "AGY · Gemini 4 Argon", sub: "architecture & security" },
-      { value: "agent:claude/opus", label: "Claude · Opus", sub: "deep reasoning" },
+      { value: "agent:agy/gemini-4-neon-high", label: "AGY · Gemini 4 Neon (High)", sub: "reasoning & correctness" },
+      { value: "agent:agy/gemini-4-argon-high", label: "AGY · Gemini 4 Argon (High)", sub: "architecture & security" },
       { value: "agent:claude/fable", label: "Claude · Fable", sub: "high-end advisor" },
+      { value: "agent:claude/opus", label: "Claude · Opus", sub: "deep reasoning" },
       { value: "openai/gpt-6.2-astra", label: "Pi · openai/gpt-6.2-astra" },
+      { value: "google/gemini-4-neon", label: "Pi · google/gemini-4-neon" },
       { value: "google/gemini-4-argon", label: "Pi · google/gemini-4-argon" },
     ];
     return v_flex()

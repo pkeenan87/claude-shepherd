@@ -122,6 +122,12 @@ describe("unified agent model discovery & Herdr panel helpers", () => {
     const codexOut = "gpt-6.2-astra - Flagship Astra\ngpt-6.1-sol\n";
     expect(parseGenericModelList(codexOut).map((i) => i.id)).toEqual(["gpt-6.2-astra", "gpt-6.1-sol"]);
 
+    const agyOut = "\r⠋ Fetching...\rgemini-4-neon-high\tGemini 4 Neon (High)\ngemini-4-argon-high\tGemini 4 Argon (High)\n";
+    expect(parseGenericModelList(agyOut)).toEqual([
+      { id: "gemini-4-neon-high", label: "Gemini 4 Neon (High)" },
+      { id: "gemini-4-argon-high", label: "Gemini 4 Argon (High)" },
+    ]);
+
     const home = mkdtempSync(path.join(tmpdir(), "shep-models-"));
     let runs = 0;
     const cat = await discoverAgentModels({

@@ -8918,6 +8918,7 @@ var CURATED = {
   ],
   codex: [
     { id: "gpt-6.2-astra", label: "GPT-6.2 Astra", note: "flagship review & reasoning" },
+    { id: "gpt-6-astra", label: "GPT-6 Astra", note: "flagship review & reasoning" },
     { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", note: "strong general coding" },
     { id: "gpt-6-luna", label: "GPT-6 Luna", note: "fast & economical" },
     { id: "gpt-5.4", label: "GPT-5.4" },
@@ -8925,13 +8926,18 @@ var CURATED = {
     { id: "o4-mini", label: "o4-mini", note: "compact reasoning" }
   ],
   agy: [
-    { id: "gemini-4-argon", label: "Gemini 4 Argon", note: "flagship review & architecture" },
+    { id: "gemini-4-neon-high", label: "Gemini 4 Neon (High)", note: "flagship coding & reasoning" },
+    { id: "gemini-4-neon-medium", label: "Gemini 4 Neon (Medium)", note: "balanced Neon" },
+    { id: "gemini-4-argon-high", label: "Gemini 4 Argon (High)", note: "flagship review & architecture" },
+    { id: "gemini-4-hydrogen-high", label: "Gemini 4 Hydrogen (High)", note: "fast & economical" },
     { id: "gemini-4-carbon", label: "Gemini 4 Carbon", note: "high-throughput coding" },
     { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
     { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" }
   ],
   gemini: [
+    { id: "gemini-4-neon", label: "Gemini 4 Neon", note: "flagship coding & reasoning" },
     { id: "gemini-4-argon", label: "Gemini 4 Argon", note: "flagship review" },
+    { id: "gemini-4-hydrogen", label: "Gemini 4 Hydrogen", note: "fast & economical" },
     { id: "gemini-4-carbon", label: "Gemini 4 Carbon", note: "balanced coding" },
     { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
     { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "fast & low cost" }
@@ -8983,15 +8989,15 @@ function parseGenericModelList(output) {
   const plain = stripAnsi(output);
   const items = [];
   const seen = /* @__PURE__ */ new Set();
-  for (const raw of plain.split(/\r?\n/)) {
-    const line = raw.trim();
+  for (const raw of plain.split(/\n/)) {
+    const line = (raw.split("\r").pop() ?? "").trim();
     if (!line || /^(available|models|usage|error|warning|---+)/i.test(line)) continue;
-    const dash = /^([A-Za-z0-9][A-Za-z0-9._:/+-]*)\s+(?:-|—)\s+(.+)$/.exec(line);
-    const id = dash ? dash[1] : /^([A-Za-z0-9][A-Za-z0-9._:/+-]*)(?:\s{2,}(.+))?$/.exec(line)?.[1];
+    const sep = /^([A-Za-z0-9][A-Za-z0-9._:/+-]*)(?:\t+| {2,}|\s+(?:-|—)\s+)(.+)$/.exec(line);
+    const id = sep ? sep[1] : /^([A-Za-z0-9][A-Za-z0-9._:/+-]*)$/.exec(line)?.[1];
     if (!id || id.length < 2 || seen.has(id)) continue;
     if (!/[-._/:0-9]/.test(id) && !["auto", "opus", "sonnet", "haiku", "fable", "best"].includes(id)) continue;
     seen.add(id);
-    const label = dash ? dash[2].trim() : /^[A-Za-z0-9._:/+-]+\s{2,}(.+)$/.exec(line)?.[1]?.trim() ?? id;
+    const label = sep ? sep[2].trim() : id;
     items.push({ id, label });
   }
   return items;
