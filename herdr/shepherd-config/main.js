@@ -380,7 +380,7 @@ export default class ShepherdConfig extends View {
     this.busy.add(noteKey);
     delete this.notes[noteKey];
     cx.notify();
-    const runOne = async () => {
+    const runOne = async (cx) => {
       const args = typeof argsOrFactory === "function" ? argsOrFactory() : argsOrFactory;
       const json = await this.call(args);
       this.seq++;
@@ -402,10 +402,18 @@ export default class ShepherdConfig extends View {
       }
       cx.notify();
     };
-    this.writeQueue = this.writeQueue.then(
-      () => new Promise((resolve) => { cx.spawn(async () => { try { await runOne(); } finally { resolve(); } }); }),
-      () => new Promise((resolve) => { cx.spawn(async () => { try { await runOne(); } finally { resolve(); } }); }),
-    );
+    // Only the spawned task's own cx stays valid across awaits (the event's cx does not), so done() gets that one.
+    const previous = this.writeQueue;
+    let release;
+    this.writeQueue = new Promise((resolve) => { release = resolve; });
+    cx.spawn(async (cx) => {
+      try {
+        await previous;
+        await runOne(cx);
+      } finally {
+        release();
+      }
+    });
   }
 
   note(key, kind, text, cx) {
