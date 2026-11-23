@@ -21,10 +21,10 @@ Which model builds a ticket of each difficulty, and which reviews. The session y
 
 | Key | Default | Meaning |
 |---|---|---|
-| `low` | `xai/grok-4.7` | Builds `low` tickets (mechanical, well specified). |
-| `medium` | `anthropic/claude-sonnet-5-5` | Builds `medium` tickets (typical feature work). |
-| `high` | `openai/gpt-6.1-sol` | Builds `high` tickets (cross-cutting, tricky, risky). |
-| `review` | `anthropic/claude-opus-5-5` | Reviews each ticket in `/shepherd:build` and runs the model pass of `/shepherd:review`. |
+| `low` | `agent:claude/haiku` | Builds `low` tickets (mechanical, well specified). |
+| `medium` | `agent:claude/sonnet` | Builds `medium` tickets (typical feature work). |
+| `high` | `agent:claude/opus` | Builds `high` tickets (cross-cutting, tricky, risky). |
+| `review` | `agent:claude/opus` | Reviews each ticket in `/shepherd:build` and runs the model pass of `/shepherd:review`. |
 
 A value is one of:
 

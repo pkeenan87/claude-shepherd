@@ -9,7 +9,17 @@ const LOCAL = `local:
 `;
 
 describe("modelFor and escalate", () => {
-  it("routes each difficulty to its model, from the defaults when models is unset", () => {
+  it("routes each difficulty to its default agent model when models is unset", () => {
+    const config = parseConfig("");
+    expect(["low", "medium", "high"].map((d) => modelFor(config, d as never))).toEqual([
+      { kind: "agent", name: "claude", model: "haiku" },
+      { kind: "agent", name: "claude", model: "sonnet" },
+      { kind: "agent", name: "claude", model: "opus" },
+    ]);
+    expect(reviewModel(config)).toEqual({ kind: "agent", name: "claude", model: "opus" });
+  });
+
+  it("routes each difficulty to its Pi model when configured", () => {
     const config = tieredConfig();
     expect(["low", "medium", "high"].map((d) => modelFor(config, d as never))).toEqual([
       { kind: "pi", provider: "xai", id: "grok-4.7" },

@@ -35,8 +35,8 @@ describe("shepherd-config CLI", () => {
     it("with no files: the defaults, no plans, the presets", () => {
       const r = show(project) as Doc;
       expect(r.ok).toBe(true);
-      expect(r.models.low).toMatchObject({ value: "xai/grok-4.7", source: "default", kind: "pi", provider: "xai", id: "grok-4.7" });
-      expect(r.models.review.value).toBe("anthropic/claude-opus-5-5");
+      expect(r.models.low).toMatchObject({ value: "agent:claude/haiku", source: "default", kind: "agent", agent: "claude", agentModel: "haiku" });
+      expect(r.models.review.value).toBe("agent:claude/opus");
       expect(r.local).toMatchObject({ configured: false, baseUrl: "", models: [] });
       expect(r.local.presets.map((p: Doc) => p.baseUrl)).toEqual(["http://127.0.0.1:8080/v1", "http://127.0.0.1:11434/v1", "http://127.0.0.1:1234/v1"]);
       expect(r.agents).toEqual(["claude", "codex", "cursor-agent", "grok", "agy", "gemini", "opencode"]);
