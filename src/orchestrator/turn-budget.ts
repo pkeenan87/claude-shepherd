@@ -20,23 +20,29 @@ export function turnLimitNotice(maxTurns: number): string {
  */
 export function turnBudget(limits: ChunkLimits | undefined, steer: (text: string) => unknown, abort: () => void): { count: () => void; stopped: () => boolean } {
   let turns = 0;
+  let steered = false;
   let stopped = false;
-  const safely = (action: () => unknown) => {
+  let aborted = false;
+  const safely = (action: () => unknown): boolean => {
     try {
       const result = action();
       if (result && typeof (result as Promise<unknown>).catch === "function") (result as Promise<unknown>).catch(() => undefined);
+      return true;
     } catch {
       /* the next turn tries again: the limit check is >= */
+      return false;
     }
   };
   return {
     count() {
-      if (!limits || stopped) return;
+      if (!limits || aborted) return;
       turns += 1;
-      if (turns === limits.maxTurns) safely(() => steer(turnLimitNotice(limits.maxTurns)));
+      if (!steered && turns >= limits.maxTurns && turns < limits.maxTurns + TURN_GRACE) {
+        if (safely(() => steer(turnLimitNotice(limits.maxTurns)))) steered = true;
+      }
       if (turns >= limits.maxTurns + TURN_GRACE) {
         stopped = true;
-        safely(abort);
+        if (safely(abort)) aborted = true;
       }
     },
     stopped: () => stopped,

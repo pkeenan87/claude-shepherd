@@ -3,20 +3,22 @@ import { loadConfig, type WorkflowConfig } from "../config.js";
 import { type CommandResult, type CostRecord, type TicketRun, type TokenUsage } from "../domain.js";
 import { GitWorkspace } from "../git/workspace.js";
 import { TaskStore } from "../storage/store.js";
-import { buildReport, finishChunk, nextChunk, peekNextTicket, startBuild, unstartChunk } from "./build.js";
+import { buildReport, buildStatus, finishChunk, nextChunk, pauseBuild, peekNextTicket, startBuild, unstartChunk } from "./build.js";
 import { budgetState, observeUsage, recordAgentUsage, recordPiUsage } from "./budget.js";
+import { runCleanup, type CleanupOptions } from "./cleanup.js";
 import { active, fail, guard, type WorkflowContext } from "./context.js";
 import { ledgerChildSession, sweepTicketSessions } from "../herdr/session-file.js";
 import { activeTask, displayName } from "./tasks.js";
 import { isSessionLog, sweepAgentLogs, type SweepOptions } from "./agent-sweep.js";
 import { cachingRunner, defaultRunner } from "./exec.js";
-import { requestPlanChanges, savePlanSpec, startPlan, activePlanning } from "./interview.js";
+import { requestPlanChanges, savePlanSpec, startPlan, activePlanning, type StartPlanOptions } from "./interview.js";
 import { checkTickets, commitTickets, requireTicketStage } from "./ticket-plan.js";
 import { plans } from "./plans.js";
 import { approveDraft, showPlan } from "./planning.js";
 import { review } from "./review.js";
 import { fixList, fixLatestInTab, fixModel, latestReview } from "./review-latest.js";
 import { cost } from "./reports.js";
+import { runShip, type ShipOptions } from "./ship.js";
 import type { WorkflowOptions } from "./types.js";
 
 export type { WorkflowOptions } from "./types.js";
@@ -43,7 +45,12 @@ export class Workflow {
       git: this.git,
       now: options.now ?? (() => new Date()),
       id: options.id ?? (() => `id-${Math.random().toString(16).slice(2, 10)}`),
-      checkRunner: cachingRunner(this.git, options.runner ?? defaultRunner),
+      checkRunner: cachingRunner(
+        this.git,
+        options.runner ?? defaultRunner,
+        options.runner ? undefined : path.join(this.store.root, "cache", "checks.json"),
+        () => (options.now ?? (() => new Date()))().getTime(),
+      ),
       warned: new Set(),
       confirm: options.confirm ?? (async () => false),
       notify: options.notify ?? ((message) => this.store.notify(message)),
@@ -75,8 +82,8 @@ export class Workflow {
   }
 
   /** `shepherd plan start`: starts or resumes the plan being drafted. */
-  startPlan(request: string): Promise<CommandResult> {
-    return startPlan(this.ctx, request);
+  startPlan(request: string, options?: StartPlanOptions): Promise<CommandResult> {
+    return startPlan(this.ctx, request, options);
   }
 
   /** The stage of the /plan being drafted ("interview" until the spec is saved, then "tickets"), else undefined. */
@@ -146,6 +153,21 @@ export class Workflow {
     return startBuild(this.ctx);
   }
 
+  /** `shepherd build pause`: clears the build-in-progress marker and pauses IMPLEMENTING cleanly. */
+  pauseBuild(): Promise<CommandResult> {
+    return pauseBuild(this.ctx);
+  }
+
+  /** `shepherd cleanup`: audits/removes stale worktrees, merged branches, closed plan files, and expired sessions. */
+  cleanup(options?: CleanupOptions): Promise<CommandResult> {
+    return runCleanup(this.ctx, options);
+  }
+
+  /** `shepherd ship`: branch preflight, PR body generator, and opt-in push / PR creation. */
+  ship(options?: ShipOptions): Promise<CommandResult> {
+    return runShip(this.ctx, options);
+  }
+
   /** The first ticket not done, in build order. */
   peekTicket(): ReturnType<typeof peekNextTicket> {
     return peekNextTicket(this.ctx);
@@ -180,6 +202,11 @@ export class Workflow {
   /** The build's ticket table and next step, as markdown. */
   buildReport(stopped?: string): string {
     return buildReport(this.ctx, stopped);
+  }
+
+  /** Ticket progress counts and budget spend for the active task. */
+  buildStatus() {
+    return buildStatus(this.ctx);
   }
 
   /** The branch /build made for the active task, while it has a build. */

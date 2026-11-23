@@ -7,14 +7,14 @@
  * With `--json` stdout is exactly one JSON document whose `text` carries the progress lines and the result line; the lines
  * are not streamed. The build claim is released on every exit path; SIGINT and SIGTERM release it, clear the build-in-progress marker, kill the open tabs and exit 130.
  */
-import type { CommandResult } from "../domain.js";
+import { rungOf, type CommandResult, type Difficulty } from "../domain.js";
 import { createHerdrClient, type HerdrClient } from "../herdr/client.js";
 import { modelFor } from "../orchestrator/routing.js";
 import { runBuild } from "../orchestrator/build.js";
+import { closeAllWarmTicketReviews } from "../orchestrator/ticket-review.js";
 import { redact } from "../redact.js";
 import { piOnPath } from "../runner/pi-path.js";
 import { modelText } from "../agents.js";
-import type { Difficulty } from "../domain.js";
 import { createBuildDriver, ticketModePath } from "./build-host.js";
 import { cliText } from "./plan.js";
 import type { Workflow, WorkflowOptions } from "../orchestrator/service.js";
@@ -22,10 +22,10 @@ import type { WorkflowConfig } from "../config.js";
 import type { CliIo, CliOptions } from "./shepherd.js";
 import { NO_PI } from "../runner/pi-path.js";
 
-export const BUILD_USAGE = "Usage: shepherd build [--once] [--json]";
+export const BUILD_USAGE = "Usage: shepherd build [--once] [--json]\n       shepherd build pause [--json]";
 
 /** What the CLI needs from `open()`; passed in so this file does not import shepherd.ts. */
-export type OpenSession = (extras: Partial<WorkflowOptions>) => Promise<{ workflow: Workflow; root: string; config: WorkflowConfig } | { problem: string }>;
+export type OpenSession = (extras: Partial<WorkflowOptions>) => Promise<{ workflow: Workflow; root: string; config: WorkflowConfig } | { problem: string; code?: string }>;
 
 /** Wraps a client to remember which tabs this build opened and has not closed, so a signal can close them. */
 export function tracked(inner: HerdrClient): { client: HerdrClient; open: Set<string> } {
@@ -61,13 +61,34 @@ export function words(text: string): string {
 
 export async function buildCommand(rest: string[], io: CliIo, options: CliOptions, open: OpenSession): Promise<number> {
   const json = rest.includes("--json");
+  if (rest[0] === "pause") {
+    const strayPause = rest.slice(1).filter((word) => word !== "--json");
+    if (strayPause.length > 0) {
+      if (json) io.out(`${JSON.stringify({ ok: false, code: "USAGE", text: BUILD_USAGE }, null, 2)}\n`);
+      else io.err(`${BUILD_USAGE}\n`);
+      return 1;
+    }
+    const opened = await open({});
+    if ("problem" in opened) {
+      const msg = opened.problem;
+      if (json) io.out(`${JSON.stringify({ ok: false, code: opened.code ?? "NO_REPO", text: msg }, null, 2)}\n`);
+      else io.err(`${msg}\n`);
+      return 1;
+    }
+    const res = await opened.workflow.pauseBuild();
+    if (json) io.out(`${JSON.stringify({ ok: res.ok, ...(res.code ? { code: res.code } : {}), text: words(res.text), ...(res.data ? { data: res.data } : {}) }, null, 2)}\n`);
+    else (res.ok ? io.out : io.err)(`${words(res.text)}\n`);
+    return res.ok ? 0 : 1;
+  }
   const once = rest.includes("--once");
   const stray = rest.filter((word) => word !== "--json" && word !== "--once");
   const lines: string[] = [];
   const reports: string[] = [];
   const emitResult = (result: CommandResult): number => {
     const text = words(result.text);
-    const data = once ? (result.data ?? { outcome: "stopped", done: false, stopped: text }) : { done: result.ok, ...(result.ok ? {} : { stopped: text }) };
+    const data = once
+      ? (result.data ?? { outcome: "stopped", done: false, stopped: text })
+      : { done: result.ok, ...(result.ok ? {} : { stopped: text }), ...(reports.length ? { report: words(reports.join("\n\n")) } : {}) };
     if (json) {
       io.out(`${JSON.stringify({ ok: result.ok, ...(result.code ? { code: result.code } : {}), text: [...lines, text].join("\n"), data }, null, 2)}\n`);
     } else (result.ok ? io.out : io.err)(`${text}\n`);
@@ -89,7 +110,7 @@ export async function buildCommand(rest: string[], io: CliIo, options: CliOption
   const piAvailable = options.piAvailable ?? (() => piOnPath(env));
   const modePath = options.ticketModePath ?? ticketModePath();
   const opened = await open({ progress, report, herdr: client, piAvailable, ticketModePath: modePath, ...(options.runner ? { runner: options.runner } : {}), ...(options.herdrTimings ? { herdrTimings: options.herdrTimings } : {}) });
-  if ("problem" in opened) return emitResult({ ok: false, code: "NO_REPO", text: opened.problem });
+  if ("problem" in opened) return emitResult({ ok: false, code: opened.code ?? "NO_REPO", text: opened.problem });
   const { workflow, root } = opened;
 
   const driver = createBuildDriver({ getWorkflow: () => workflow, client, cwd: root, ticketModePath: modePath, home: options.home, piAvailable, ...(options.herdrTimings ? { timings: options.herdrTimings } : {}) });
@@ -99,7 +120,10 @@ export async function buildCommand(rest: string[], io: CliIo, options: CliOption
     if (leaving) return;
     leaving = true;
     void (async () => {
-      await Promise.allSettled([...openTabs].map((address) => inner.kill(address)));
+      await Promise.race([
+        Promise.allSettled([closeAllWarmTicketReviews(), ...[...openTabs].map((address) => inner.kill(address))]),
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ]);
       try {
         workflow.releaseBuild();
         workflow.endBuild();
@@ -124,6 +148,7 @@ export async function buildCommand(rest: string[], io: CliIo, options: CliOption
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
+    await closeAllWarmTicketReviews().catch(() => undefined);
     // runBuild releases the claim itself; this covers a throw before or around it.
     try {
       workflow.releaseBuild();
@@ -139,7 +164,10 @@ function firstTicketNeedsPi(workflow: Workflow, piAvailable: () => boolean): str
   try {
     const next = workflow.peekTicket();
     if (!next) return undefined;
-    const model = modelFor(workflow.config, next.difficulty as Difficulty);
+    const taskId = workflow.activeTaskId();
+    const run = taskId ? workflow.store.load(taskId)?.ticketRuns?.[next.id] : undefined;
+    const tier = rungOf(run?.tier, next.difficulty as Difficulty);
+    const model = modelFor(workflow.config, tier);
     return model.kind === "pi" ? `Ticket ${next.id} starts on ${modelText(model)}: ${NO_PI}. No branch was made.` : undefined;
   } catch {
     return undefined;

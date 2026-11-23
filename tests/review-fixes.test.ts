@@ -68,9 +68,9 @@ describe("R4/R5 budget accounting", () => {
     const app = workflow(await tempRepo());
     const spent = () => { const { daily } = budgetState(contextOf(app)); return daily.knownUsd + daily.estimatedUnknownUsd; };
     expect(spent()).toBe(0);
-    // an unpriced model from a priced provider: unknown cost, estimated at the provider's dearest price ($3 per 1M input)
+    // an unpriced model from a priced provider: unknown cost, estimated at the provider's dearest price ($8 per 1M input in default 2026 pricing)
     app.observeUsage({ provider: "anthropic", model: "unpriced-model", usage: { input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0, requests: 1 } });
-    expect(spent()).toBe(3);
+    expect(spent()).toBe(8);
   });
 
   it("R5: an interactive turn with no task is ledgered under the session pseudo-task and counts toward the daily limit", async () => {

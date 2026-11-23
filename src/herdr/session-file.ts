@@ -107,7 +107,18 @@ export function ledgerChildSession(ctx: WorkflowContext, files: readonly ChildSe
       if (message?.role === "assistant" && typeof message.provider === "string" && typeof message.model === "string" && message.provider && message.model) preceding = { provider: message.provider, id: message.model };
       if (entry.type === "message") continue;
       const model = options.model ?? preceding;
-      out.push(...recordPiUsage(ctx, { sessionId: file.sessionId, entries: [entry], ...(model ? { model } : {}), ...(options.ticketId ? { ticketId: options.ticketId } : {}) }));
+      out.push(
+        ...recordPiUsage(ctx, {
+          sessionId: file.sessionId,
+          entries: [entry],
+          ...(model ? { model } : {}),
+          ...(options.ticketId ? { ticketId: options.ticketId } : {}),
+          ...(options.taskId ? { taskId: options.taskId } : {}),
+          ...(options.phase ? { phase: options.phase } : {}),
+          ...(options.tier ? { tier: options.tier } : {}),
+          ...(options.job ? { job: options.job } : {}),
+        }),
+      );
     }
   }
   return out;

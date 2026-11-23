@@ -1,6 +1,6 @@
 import path from "node:path";
 import { AGENT_PROVIDER, parseTicketModel, ranModelText, type TicketModel } from "../agents.js";
-import { fromMicroUsd, toMicroUsd } from "../config.js";
+import { fromMicroUsd, normalizeReviewerSpec, toMicroUsd, type NormalizedReviewer } from "../config.js";
 import { ticketDifficulty, WorkflowError, type CommandResult, type ModelReview, type PlanDocument, type ReviewStage, type TaskState } from "../domain.js";
 import { reviewDiff } from "../review/review.js";
 import { redact } from "../redact.js";
@@ -14,7 +14,7 @@ import { costLabel, reviewLabel } from "./build.js";
 import { announce, reviewModel, routeFor, type Route } from "./routing.js";
 import { carriedFindings } from "./ticket-review.js";
 import { sweepAgentLogs } from "./agent-sweep.js";
-import { runAgentReview } from "./agent-review.js";
+import { runMultiAgentReview, type MultiReviewerEntry } from "./agent-review.js";
 import { splitCheckLine } from "./tickets.js";
 
 export { reviewItems, reviewMarkdown, type ReviewItem };
@@ -29,31 +29,68 @@ export function reviewChecks(ctx: WorkflowContext, plan?: PlanDocument): { name:
   return lines.map((line) => ({ name: line, ...splitCheckLine(line) }));
 }
 
-/** The model that runs the /review model pass: `models.review`, or `override` (`--with`). It always runs in a herdr sub-agent that reads the repository itself (`agent-review.ts`). */
-function passModel(ctx: WorkflowContext, override?: TicketModel): { route: Route; model: TicketModel } {
-  const model = override ?? reviewModel(ctx.config);
-  return { route: routeFor(ctx, "review", model), model };
+/** Resolves the reviewer list: `--with` overrides, else `review.reviewers` (if configured), else `[models.review]`. */
+function passModels(ctx: WorkflowContext, overrides?: TicketModel[]): { route: Route; model: TicketModel; name?: string; focus?: string }[] {
+  if (overrides && overrides.length > 0) {
+    return overrides.map((model) => ({ route: routeFor(ctx, "review", model), model }));
+  }
+  const configured: NormalizedReviewer[] = (ctx.config.review.reviewers ?? []).map(normalizeReviewerSpec);
+  if (configured.length > 0) {
+    return configured.map((spec) => {
+      const model = parseTicketModel(spec.model, ctx.config);
+      return { route: routeFor(ctx, "review", model), model, ...(spec.name ? { name: spec.name } : {}), ...(spec.focus ? { focus: spec.focus } : {}) };
+    });
+  }
+  const model = reviewModel(ctx.config);
+  return [{ route: routeFor(ctx, "review", model), model }];
 }
 
-/** `--with <ref>` from the arguments: the review model for this run. Throws a `USAGE`/`CONFIG_INVALID` error for anything else. */
-export function parseReviewArgs(ctx: WorkflowContext, args: string): TicketModel | undefined {
+/** `--with <ref>` (repeatable or comma-separated) from the arguments: reviewer model(s) for this run. Throws USAGE/CONFIG_INVALID for anything else. */
+export function parseReviewArgs(ctx: WorkflowContext, args: string): TicketModel[] | undefined {
   const words = args.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return undefined;
-  if (words[0] !== "--with" || words.length !== 2) throw new WorkflowError("USAGE", "Use /review, or /review --with <provider/id | agent:name[/model]> to review with another model for this run.");
-  return parseTicketModel(words[1]!, ctx.config);
+  const refs: string[] = [];
+  for (let i = 0; i < words.length; i += 2) {
+    if (words[i] !== "--with" || !words[i + 1]) {
+      throw new WorkflowError("USAGE", "Use /review, or /review --with <provider/id | agent:name[/model]> (repeatable or comma-separated) to review with specific models.");
+    }
+    for (const part of words[i + 1]!.split(",").map((s) => s.trim()).filter(Boolean)) refs.push(part);
+  }
+  if (refs.length === 0) throw new WorkflowError("USAGE", "Use /review --with <provider/id | agent:name[/model]>.");
+  return refs.map((ref) => parseTicketModel(ref, ctx.config));
 }
 
 /**
- * The model pass: the review model runs in a herdr sub-agent, reads the checkout and lists advisory findings. Budget-gated
- * first, each call ledgered under REVIEWING with reason "model review", and never a reason for the review to pass or fail.
+ * The model pass: one or more review models run in herdr sub-agents, read the checkout and list advisory findings.
+ * Budget-gated first, each call ledgered under REVIEWING with reason "model review", and never a reason for the review to pass or fail.
  * Returns undefined when the pass is off: `review.model: false`, unless `--with` names a model.
  */
-async function modelPass(ctx: WorkflowContext, taskId: string, plan: PlanDocument, picked: ReturnType<typeof passModel>, enabled: boolean, agentInput: Omit<Parameters<typeof runAgentReview>[1], "taskId" | "plan" | "model">): Promise<ModelReview | undefined> {
-  if (!enabled) return undefined;
-  if (picked.route.blocked) return { provider: "none", model: picked.route.label, findings: [], truncated: false, error: picked.route.blocked };
+async function modelPass(
+  ctx: WorkflowContext,
+  taskId: string,
+  plan: PlanDocument,
+  picked: ReturnType<typeof passModels>,
+  enabled: boolean,
+  agentInput: Omit<Parameters<typeof runMultiAgentReview>[2], "taskId" | "plan">,
+): Promise<ModelReview | undefined> {
+  if (!enabled || picked.length === 0) return undefined;
+  const first = picked[0]!;
+  if (picked.length === 1 && first.route.blocked) {
+    return { provider: "none", model: first.route.label, findings: [], truncated: false, error: first.route.blocked };
+  }
   const exhausted = budgetState(ctx, taskId).status === "hard" ? "the task or daily budget is exhausted." : undefined;
-  if (exhausted) return picked.model.kind === "agent" ? { provider: AGENT_PROVIDER, model: picked.model.name, findings: [], truncated: false, error: exhausted } : { provider: picked.model.provider, model: picked.model.id, findings: [], truncated: false, error: exhausted };
-  return runAgentReview(ctx, { ...agentInput, taskId, plan, model: picked.model }, (line) => ctx.progress?.(`Review: ${line}`));
+  if (exhausted) {
+    return first.model.kind === "agent"
+      ? { provider: AGENT_PROVIDER, model: first.model.name, findings: [], truncated: false, error: exhausted }
+      : { provider: first.model.provider, model: first.model.id, findings: [], truncated: false, error: exhausted };
+  }
+  const entries: MultiReviewerEntry[] = picked.map((p) => ({
+    model: p.model,
+    ...(p.name ? { name: p.name } : {}),
+    ...(p.focus ? { focus: p.focus } : {}),
+    ...(p.route.blocked ? { blocked: p.route.blocked } : {}),
+  }));
+  return runMultiAgentReview(ctx, entries, { ...agentInput, taskId, plan }, (line) => ctx.progress?.(`Review: ${line}`));
 }
 
 /**
@@ -64,7 +101,8 @@ function modelCost(ctx: WorkflowContext, taskId: string, sinceMs: number): Revie
   let sum: number | null | undefined;
   let metered = false;
   for (const entry of ctx.store.readLedger()) {
-    if (entry.taskId !== taskId || new Date(entry.at).getTime() < sinceMs || entry.reason !== "model review") continue;
+    if (entry.taskId !== taskId || new Date(entry.at).getTime() < sinceMs) continue;
+    if (entry.reason !== "model review" && !entry.reason.startsWith("model review ")) continue;
     // A subscription agent's "not metered" row is no dollar figure: the stage reads "not metered" unless something else billed.
     if (entry.meter !== "not-metered") metered = true;
     sum = sum === null || entry.actualUsd === null ? null : (sum ?? 0) + toMicroUsd(entry.actualUsd);
@@ -141,12 +179,17 @@ export function review(ctx: WorkflowContext, args = ""): Promise<CommandResult> 
   return guard(() => runReview(ctx, parseReviewArgs(ctx, args)));
 }
 
-async function runReview(ctx: WorkflowContext, override?: TicketModel): Promise<CommandResult> {
+async function runReview(ctx: WorkflowContext, overrides?: TicketModel[]): Promise<CommandResult> {
   const found = await activeTask(ctx);
-  const state = found && found.phase !== "COMPLETE" && found.phase !== "IDLE" ? found : undefined;
+  const branch = await ctx.git.currentBranch();
+  // Only associate the review with an open task when on its branch (or before it has a build branch);
+  // reviewing an unrelated manual branch must never overwrite the open task's state.review.
+  const state =
+    found && found.phase !== "COMPLETE" && found.phase !== "IDLE" && (!found.build?.branch || found.build.branch === branch)
+      ? found
+      : undefined;
   const taskId = state?.taskId ?? SESSION_TASK_ID;
   const base = state?.build?.base ?? (await ctx.git.defaultBranch());
-  const branch = await ctx.git.currentBranch();
   const ref = await baseRef(ctx, base, branch === base);
   // Workflow state is not the user's code: it stays out of the review and out of every model packet.
   const rawDiff = await ctx.git.workingDiff(ref, excludedPaths(ctx));
@@ -156,14 +199,20 @@ async function runReview(ctx: WorkflowContext, override?: TicketModel): Promise<
   if (exhausted) return exhausted;
 
   const plan = state?.plan;
-  const picked = passModel(ctx, override);
+  const picked = passModels(ctx, overrides);
   // `--with` asks for the model pass by name, so it runs even when `review.model` is off.
-  const modelOn = ctx.config.review.model || override !== undefined;
-  await announce(ctx, state?.taskId, "review", picked.route);
+  const modelOn = ctx.config.review.model || (overrides !== undefined && overrides.length > 0);
+  for (const p of picked) await announce(ctx, state?.taskId, "review", p.route);
   const started = ctx.now().getTime();
+  const runStamp = stamp(ctx);
   const progress = (line: string) => ctx.progress?.(`Review: ${line}`);
   const checks = reviewChecks(ctx, plan);
-  progress(`started · ${branch} against ${ref} · ${ctx.config.setup.length} setup step(s), ${checks.length} check(s) · model ${modelOn ? (picked.route.blocked ? `unavailable (${picked.route.blocked})` : picked.route.label) : "off"}`);
+  const modelLabel = !modelOn
+    ? "off"
+    : picked
+        .map((p) => (p.route.blocked ? `unavailable (${p.route.blocked})` : p.name ? `${p.name} (${p.route.label})` : p.route.label))
+        .join(" + ");
+  progress(`started · ${branch} against ${ref} · ${ctx.config.setup.length} setup step(s), ${checks.length} check(s) · model ${modelLabel}`);
   const report = await reviewDiff({
     diff: rawDiff,
     checks,
@@ -176,7 +225,7 @@ async function runReview(ctx: WorkflowContext, override?: TicketModel): Promise<
   });
   const reviewPlan: PlanDocument = plan ?? { version: 0, createdAt: iso(ctx), summary: `Ad-hoc changes on ${branch}.`, risks: [], acceptance: [], groups: [], overlap: [], securitySensitive: false };
   const mergeBase = await ctx.git.mergeBase(ref).catch(() => ref);
-  const modelReview = await modelPass(ctx, taskId, reviewPlan, picked, modelOn, { hasTask: !!state, base: { ref, sha: mergeBase }, exclude: excludedPaths(ctx), stamp: stamp(ctx) });
+  const modelReview = await modelPass(ctx, taskId, reviewPlan, picked, modelOn, { hasTask: !!state, base: { ref, sha: mergeBase }, exclude: excludedPaths(ctx), stamp: runStamp });
   report.modelReview = modelReview;
   const carried = carriedFindings(state, modelReview?.findings);
   if (carried.length > 0) report.carried = carried;
@@ -188,7 +237,7 @@ async function runReview(ctx: WorkflowContext, override?: TicketModel): Promise<
     ...(modelReview ? { model: { elapsedMs: modelReview.elapsedMs, ...modelCost(ctx, taskId, started) } } : {}),
   };
   const setupConfigured = ctx.config.setup.length > 0;
-  const saved = state ? `.shepherd/tasks/${state.taskId}/reports/review.md` : `.shepherd/reports/review-${stamp(ctx)}.md`;
+  const saved = state ? `.shepherd/tasks/${state.taskId}/reports/review.md` : `.shepherd/reports/review-${runStamp}.md`;
   const markdown = reviewMarkdown(report, { setupConfigured, savedAs: saved, tickets: ticketRows(state) });
   ctx.report?.(markdown);
   if (state) {
@@ -196,7 +245,7 @@ async function runReview(ctx: WorkflowContext, override?: TicketModel): Promise<
     ctx.store.writeText(state.taskId, "reports/review.md", markdown);
     await ctx.store.update(state.taskId, "review", (task) => ({ ...task, review: report, updatedAt: iso(ctx) }));
   } else {
-    const name = path.join(ctx.store.root, "reports", `review-${stamp(ctx)}`);
+    const name = path.join(ctx.store.root, "reports", `review-${runStamp}`);
     atomicWrite(`${name}.json`, JSON.stringify(report, null, 2));
     atomicWrite(`${name}.md`, markdown);
   }

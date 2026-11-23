@@ -3,7 +3,7 @@
  * methods. Claude Code's main session drafts the spec and tickets; every rule (validation, redaction, ticket sizing,
  * phases, approval) stays in the orchestrator. Nothing here throws: a failure is a failed CommandResult.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { WorkflowConfig } from "../config.js";
 import { ticketDifficulty, WorkflowError, type CommandResult, type TaskState } from "../domain.js";
@@ -14,9 +14,10 @@ import { CLOUD_TICKET_TOKENS, localLimits } from "../orchestrator/routing.js";
 import type { Workflow } from "../orchestrator/service.js";
 import { displayName } from "../orchestrator/tasks.js";
 import { redact } from "../redact.js";
+import { atomicWrite } from "../storage/store.js";
 
 export const PLAN_USAGE = `Usage:
-  shepherd plan start "<request>"     (or "-" to read the request from stdin)
+  shepherd plan start [--worktree [dir]] [--base <branch>] "<request>"   (or "-" for stdin)
   shepherd plan spec <file|->         the spec as JSON
   shepherd plan tickets <file|->      the tickets as JSON
   shepherd plan show
@@ -87,9 +88,9 @@ const PLANS_IGNORE = "# Written by shepherd. Plans stay out of git, so they neve
  * when there is no plan. The folder ignores itself (its own `.gitignore` is `*`) unless it already has a `.gitignore`.
  * Never throws: the file is a convenience, and a failed write must not fail the command that saved the plan.
  */
-export async function writePlanFile(workflow: Workflow): Promise<string | undefined> {
+export async function writePlanFile(workflow: Workflow, preloaded?: CommandResult): Promise<string | undefined> {
   try {
-    const shown = await workflow.showPlan();
+    const shown = preloaded ?? (await workflow.showPlan());
     const task = workflow.activeTaskId() ? workflow.store.load(workflow.activeTaskId()!) : undefined;
     if (!shown.ok || !task) return undefined;
     const dir = path.join(workflow.cwd, PLANS_DIR);
@@ -98,9 +99,7 @@ export async function writePlanFile(workflow: Workflow): Promise<string | undefi
     if (!existsSync(ignore)) writeFileSync(ignore, PLANS_IGNORE);
     const name = displayName(task).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+/, "") || task.taskId;
     const file = path.join(dir, `${name}.md`);
-    const temp = `${file}.${process.pid}.tmp`;
-    writeFileSync(temp, `${shown.text}\n`);
-    renameSync(temp, file);
+    atomicWrite(file, `${shown.text}\n`);
     return path.relative(workflow.cwd, file);
   } catch {
     return undefined;
@@ -120,9 +119,10 @@ export function cliText(text: string): string {
     .replace(/plan_spec/g, "`shepherd plan spec`")
     .replace(/\/show-plan/g, "`shepherd plan show`")
     .replace(/\/plan <request>/g, '`shepherd plan start "<request>"`')
-    .replace(/\/plans/g, "`shepherd plans`")
+    .replace(/(?<![\w.])\/plans\b/g, "`shepherd plans`")
     .replace(/Run \/build\./g, "/shepherd:build runs it.")
-    .replace(/\/build/g, "/shepherd:build");
+    .replace(/(?<![\w.])\/build\b/g, "/shepherd:build")
+    .replace(/(?<![\w.])\/review\b/g, "/shepherd:review");
 }
 
 function asResult(error: unknown): CommandResult {
@@ -186,13 +186,39 @@ export async function planCommand({ workflow, config, args, stdin, cwd }: PlanIn
   try {
     switch (sub) {
       case "start": {
-        const request = rest.length === 1 && rest[0] === "-" ? stdin.trim() : rest.join(" ").trim();
-        const started = await workflow.startPlan(request);
+        let worktree: boolean | string | undefined;
+        let base: string | undefined;
+        const words: string[] = [];
+        for (let i = 0; i < rest.length; i++) {
+          const w = rest[i]!;
+          if (w === "--worktree" || w === "-w") {
+            const next = rest[i + 1];
+            // Treat the next token as a custom path only when it looks like a path (starts with /, ., ~) and there is still a request word after it.
+            if (next && /^(?:\/|\.\.?\/|~\/)/.test(next) && rest.length > i + 2) {
+              worktree = next;
+              i += 1;
+            } else {
+              worktree = true;
+            }
+          } else if (w.startsWith("--worktree=")) {
+            worktree = w.slice("--worktree=".length) || true;
+          } else if (w === "--base" && rest[i + 1]) {
+            base = rest[++i];
+          } else if (w.startsWith("--base=")) {
+            base = w.slice("--base=".length);
+          } else {
+            words.push(w);
+          }
+        }
+        const request = words.length === 1 && words[0] === "-" ? stdin.trim() : words.join(" ").trim();
+        const started = await workflow.startPlan(request, { ...(worktree !== undefined ? { worktree } : {}), ...(base ? { base } : {}) });
         if (!started.ok) return fail(started.code ?? "ERROR", cliText(started.text));
         const task = workflow.activeTaskId() ? workflow.store.load(workflow.activeTaskId()!) : undefined;
         const name = task ? displayName(task) : "";
         const stage = workflow.planningStage();
-        const head = `${(started.data as { resumed?: boolean } | undefined)?.resumed ? "Resuming" : "Planning"} task ${name}. Do not edit the repository while planning.`;
+        const wt = task?.worktree;
+        const wtLine = wt ? `\nWorktree: ${wt.path} (branch ${wt.branch}, base ${wt.base}). Open a Herdr space there or cd into it to build independently.` : "";
+        const head = `${(started.data as { resumed?: boolean } | undefined)?.resumed ? "Resuming" : "Planning"} task ${name}. Do not edit the repository while planning.${wtLine}`;
         return done(`${head}\n\n${stage === "tickets" ? ticketsGuide(config) : `${specGuide()}\n\nSaving the spec prints the ticket rules and schema.`}`, { ...(started.data as object), name, stage });
       }
       case "spec": {
@@ -216,8 +242,9 @@ export async function planCommand({ workflow, config, args, stdin, cwd }: PlanIn
       case "show": {
         const shown = await workflow.showPlan();
         if (!shown.ok) return fail(shown.code ?? "ERROR", cliText(shown.text));
-        const planFile = await writePlanFile(workflow);
-        return planFile ? { ...shown, text: `${planLine(planFile)}\n\n${shown.text}`, data: { ...(shown.data as object), planFile } } : shown;
+        const planFile = await writePlanFile(workflow, shown);
+        const body = cliText(shown.text);
+        return planFile ? { ...shown, text: `${planLine(planFile)}\n\n${body}`, data: { ...(shown.data as object), planFile } } : { ...shown, text: body };
       }
       case "revise": {
         const changes = rest.length === 1 && rest[0] === "-" ? stdin.trim() : rest.join(" ").trim();
@@ -257,7 +284,8 @@ export async function taskCommand(workflow: Workflow, args: string[]): Promise<C
     if (sub === "list") return plansCommand(workflow, rest);
     if (sub === "use") return rest.length ? plansCommand(workflow, rest) : fail("USAGE", "Usage: shepherd task use <name>");
     if (sub === "close") {
-      const name = rest.length ? rest.join(" ") : (await workflow.activeTask()) ? displayName((await workflow.activeTask())!) : "";
+      const current = rest.length ? undefined : await workflow.activeTask();
+      const name = rest.length ? rest.join(" ") : current ? displayName(current) : "";
       return name ? plansCommand(workflow, ["close", name]) : fail("NO_TASK", "No active task to close.");
     }
     return fail("USAGE", PLAN_USAGE);

@@ -6,6 +6,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { modelText, parseTicketModel, type TicketModel } from "../agents.js";
 import type { CommandResult, ReviewReport } from "../domain.js";
+import { NO_PI } from "../runner/pi-path.js";
 import { herdrSpace } from "../runner/ticket.js";
 import { gateBudget, SESSION_TASK_ID } from "./budget.js";
 import { done, fail, type WorkflowContext } from "./context.js";
@@ -22,14 +23,25 @@ export interface LatestReview {
   taskName: string;
 }
 
-/** The report of the open task, else the newest ad-hoc one; undefined when there is none. */
+/** The report of the open task (when on its branch, matching `runReview`), else the newest ad-hoc one; undefined when there is none. */
 export async function latestReview(ctx: WorkflowContext): Promise<LatestReview | undefined> {
   const found = await activeTask(ctx);
-  const state = found && found.phase !== "COMPLETE" && found.phase !== "IDLE" ? found : undefined;
+  const branch = await ctx.git.currentBranch().catch(() => undefined);
+  const state =
+    found && found.phase !== "COMPLETE" && found.phase !== "IDLE" && (!found.build?.branch || !branch || found.build.branch === branch)
+      ? found
+      : undefined;
   if (state) {
     const dir = path.join(ctx.store.taskDir(state.taskId), "reports");
     const json = path.join(dir, "review.json");
-    const report = state.review ?? (existsSync(json) ? (JSON.parse(readFileSync(json, "utf8")) as ReviewReport) : undefined);
+    let report = state.review;
+    if (!report && existsSync(json)) {
+      try {
+        report = JSON.parse(readFileSync(json, "utf8")) as ReviewReport;
+      } catch {
+        report = undefined;
+      }
+    }
     return report ? { report, file: path.join(dir, "review.md"), taskId: state.taskId, taskName: displayName(state) } : undefined;
   }
   const dir = path.join(ctx.store.root, "reports");
@@ -48,7 +60,7 @@ export function findingsData(report: ReviewReport): { n: number; title: string; 
 }
 
 /** `models.medium` when it can fix in a tab here (inside herdr; a Pi model also needs the worker extension and `pi`), else why not. */
-export async function fixModel(ctx: WorkflowContext): Promise<{ model: TicketModel } | { problem: string }> {
+export async function fixModel(ctx: WorkflowContext): Promise<{ model: TicketModel } | { problem: string; code?: string }> {
   let model: TicketModel;
   try {
     model = parseTicketModel(ctx.config.models.medium, ctx.config);
@@ -56,8 +68,9 @@ export async function fixModel(ctx: WorkflowContext): Promise<{ model: TicketMod
     return { problem: `models.medium is not usable: ${(error as Error).message}` };
   }
   const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
-  if ("problem" in where) return { problem: `fixing in a tab needs herdr (${where.problem})` };
-  if (model.kind === "pi" && !ctx.ticketModePath) return { problem: `${modelText(model)} is a Pi model and this install does not know where the ticket-mode extension is` };
+  if ("problem" in where) return { problem: `fixing in a tab needs herdr (${where.problem})`, code: "NEEDS_HERDR" };
+  if (model.kind === "pi" && !ctx.ticketModePath) return { problem: `${modelText(model)} is a Pi model and this install does not know where the ticket-mode extension is`, code: "REVIEW_FIX_FAILED" };
+  if (model.kind === "pi" && ctx.piAvailable && !ctx.piAvailable()) return { problem: `${modelText(model)} cannot run: ${NO_PI}`, code: "REVIEW_FIX_FAILED" };
   return { model };
 }
 
@@ -72,8 +85,8 @@ export async function fixLatestInTab(ctx: WorkflowContext): Promise<CommandResul
   const exhausted = gateBudget(ctx, latest.taskId);
   if (exhausted) return exhausted;
   const picked = await fixModel(ctx);
-  if ("problem" in picked) return fail("NEEDS_HERDR", `Cannot fix in a tab: ${picked.problem}.`);
-  const found = await activeTask(ctx);
+  if ("problem" in picked) return fail(picked.code ?? "NEEDS_HERDR", `Cannot fix in a tab: ${picked.problem}.`);
+  const found = latest.taskId !== SESSION_TASK_ID ? await activeTask(ctx) : undefined;
   const checks = reviewChecks(ctx, found?.plan);
   const fixed = await runFixInTab(ctx, { prompt: fixMessage(items, checks, undefined, true), model: picked.model, taskId: latest.taskId, taskName: latest.taskName });
   return fixed.ok ? done(fixed.text, { report: latest.file, findings: items.length }) : fail("REVIEW_FIX_FAILED", fixed.text);
@@ -85,6 +98,6 @@ export async function fixList(ctx: WorkflowContext): Promise<CommandResult> {
   if (!latest) return nothing();
   const items = reviewItems(latest.report);
   if (items.length === 0) return done("The latest review has no findings to fix.");
-  const found = await activeTask(ctx);
+  const found = latest.taskId !== SESSION_TASK_ID ? await activeTask(ctx) : undefined;
   return done(fixMessage(items, reviewChecks(ctx, found?.plan)), { report: latest.file, findings: findingsData(latest.report) });
 }

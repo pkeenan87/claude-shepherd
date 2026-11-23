@@ -17,16 +17,20 @@
  *
  * Both formats were read off files on this machine (2026-11-08); they are the agents' internal logs, not a documented API.
  */
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { TokenUsage } from "../domain.js";
+import { inferProviderForModel } from "../pricing-defaults.js";
 
-/** Usage of one model since the last `collect()`. `provider` is the pricing provider (`anthropic`, `openai`). */
+/** Usage of one model since the last `collect()`. `provider` is the pricing provider (`anthropic`, `openai`, `google`, `xai`, `cursor`). */
 export interface AgentCall {
   provider: string;
   model: string;
   usage: TokenUsage;
+  /** True when Cursor routed to a first-party Cursor subscription pool model (Composer / Cursor-hosted Grok). */
+  firstPartyCursor?: boolean;
 }
 
 /** What the ledger records for an agent: metered calls, or the single "not metered" row of an agent with no reader. */
@@ -36,6 +40,7 @@ export interface AgentLedgerEntry {
   provider: string;
   model: string;
   usage: TokenUsage;
+  firstPartyCursor?: boolean;
 }
 
 export interface AgentMeter {
@@ -52,11 +57,19 @@ export interface AgentMeterOptions {
   onConsumed?: (file: string, offset: number) => void;
   /** Files never read: the main session's own transcripts, which grow while a tab runs. */
   exclude?: (file: string) => boolean;
+  /** Per-run JSONL log written by shepherd's Cursor stop hook (`SHEPHERD_CURSOR_USAGE_LOG`). */
+  cursorUsageFile?: string;
 }
 
 /** The agents that have a reader, with the provider their usage is priced under. */
-const READERS: Record<string, "claude" | "codex"> = { claude: "claude", codex: "codex" };
-const PRICING_PROVIDER = { claude: "anthropic", codex: "openai" } as const;
+const READERS: Record<string, "claude" | "codex" | "cursor" | "gemini"> = {
+  claude: "claude",
+  codex: "codex",
+  "cursor-agent": "cursor",
+  gemini: "gemini",
+  agy: "gemini",
+};
+const PRICING_PROVIDER = { claude: "anthropic", codex: "openai", gemini: "google" } as const;
 
 interface Totals {
   input: number;
@@ -70,6 +83,7 @@ interface Found {
   provider: string;
   model: string;
   totals: Totals;
+  firstPartyCursor?: boolean;
 }
 
 type Snapshot = Map<string, number>;
@@ -140,31 +154,56 @@ const isRecord = (value: unknown): value is Record<string, unknown> => !!value &
 /** Whether a line is already accounted for: it takes the line's start offset and its parsed value. */
 type Before = (start: number, value: Record<string, unknown>) => boolean;
 
-/** Claude Code messages in a file whose lines are not `before`, by message id (the largest value per field). */
+/**
+ * Claude Code messages in a file after the `before` boundary, by message id. When a streamed message straddles an
+ * offset boundary (partial line before `before`, final line after), only the positive token delta past what was seen
+ * before the boundary is returned so tokens are neither double-counted nor dropped.
+ */
 function claudeMessages(buffer: Buffer, before: Before): Map<string, Found> {
-  const earlier = new Set<string>();
-  const found = new Map<string, Found>();
+  const earlierMax = new Map<string, Totals>();
+  const afterMax = new Map<string, Found>();
+  const maxTotals = (a: Totals, b: Totals): Totals => ({
+    input: Math.max(a.input, b.input),
+    output: Math.max(a.output, b.output),
+    cacheRead: Math.max(a.cacheRead, b.cacheRead),
+    cacheWrite: Math.max(a.cacheWrite, b.cacheWrite),
+    requests: 1,
+  });
   for (const { start, value } of lines(buffer)) {
     if (!isRecord(value) || value.type !== "assistant" || !isRecord(value.message)) continue;
     const message = value.message;
+    if (message.model === "<synthetic>") continue;
     const id = typeof message.id === "string" ? message.id : undefined;
     if (!id) continue;
-    if (before(start, value)) {
-      earlier.add(id);
-      continue;
-    }
-    if (earlier.has(id)) continue;
     const usage = isRecord(message.usage) ? message.usage : {};
     const totals: Totals = { input: num(usage.input_tokens), output: num(usage.output_tokens), cacheRead: num(usage.cache_read_input_tokens), cacheWrite: num(usage.cache_creation_input_tokens), requests: 1 };
+    if (before(start, value)) {
+      const prev = earlierMax.get(id);
+      earlierMax.set(id, prev ? maxTotals(prev, totals) : totals);
+      continue;
+    }
     const model = typeof message.model === "string" && message.model ? message.model : "unknown";
-    const seen = found.get(id);
-    if (!seen) found.set(id, { provider: PRICING_PROVIDER.claude, model, totals });
-    else
-      found.set(id, {
-        provider: seen.provider,
-        model: seen.model === "unknown" ? model : seen.model,
-        totals: { input: Math.max(seen.totals.input, totals.input), output: Math.max(seen.totals.output, totals.output), cacheRead: Math.max(seen.totals.cacheRead, totals.cacheRead), cacheWrite: Math.max(seen.totals.cacheWrite, totals.cacheWrite), requests: 1 },
-      });
+    const seen = afterMax.get(id);
+    if (!seen) afterMax.set(id, { provider: PRICING_PROVIDER.claude, model, totals });
+    else afterMax.set(id, { provider: seen.provider, model: seen.model === "unknown" ? model : seen.model, totals: maxTotals(seen.totals, totals) });
+  }
+  const found = new Map<string, Found>();
+  for (const [id, item] of afterMax) {
+    const prev = earlierMax.get(id);
+    if (!prev) {
+      found.set(id, item);
+      continue;
+    }
+    const delta: Totals = {
+      input: Math.max(0, item.totals.input - prev.input),
+      output: Math.max(0, item.totals.output - prev.output),
+      cacheRead: Math.max(0, item.totals.cacheRead - prev.cacheRead),
+      cacheWrite: Math.max(0, item.totals.cacheWrite - prev.cacheWrite),
+      requests: 0,
+    };
+    if (delta.input + delta.output + delta.cacheRead + delta.cacheWrite > 0) {
+      found.set(id, { provider: item.provider, model: item.model, totals: delta });
+    }
   }
   return found;
 }
@@ -195,9 +234,100 @@ function codexSession(buffer: Buffer, before: Before, repos: string[]): Found | 
   return { provider: PRICING_PROVIDER.codex, model: model ?? "unknown", totals };
 }
 
-function samePath(a: string, b: string): boolean {
-  const strip = (p: string) => path.resolve(p);
-  return strip(a) === strip(b);
+function samePath(repo: string, cwd: string): boolean {
+  const norm = (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const a = norm(repo);
+  const b = norm(cwd);
+  return b === a || b.startsWith(a + path.sep);
+}
+
+/** Parses Cursor stop-hook JSONL payloads (`SHEPHERD_CURSOR_USAGE_LOG`) into per-generation usage rows. */
+function cursorStopEvents(buffer: Buffer, before: Before): Map<string, Found> {
+  const found = new Map<string, Found>();
+  let seq = 0;
+  for (const { start, value } of lines(buffer)) {
+    seq += 1;
+    if (!isRecord(value) || before(start, value)) continue;
+    const rawModel = typeof value.model_id === "string" && value.model_id ? value.model_id : typeof value.model === "string" && value.model ? value.model : "";
+    const input = num(value.input_tokens);
+    const output = num(value.output_tokens);
+    const cacheRead = num(value.cache_read_tokens);
+    const cacheWrite = num(value.cache_write_tokens);
+    if (input + output + cacheRead + cacheWrite === 0) continue;
+    const inferred = inferProviderForModel(rawModel || "unknown");
+    const id = typeof value.generation_id === "string" && value.generation_id ? value.generation_id : `cursor-${start}-${seq}`;
+    found.set(id, {
+      provider: inferred.provider,
+      model: inferred.model,
+      totals: { input, output, cacheRead, cacheWrite, requests: 1 },
+      firstPartyCursor: inferred.firstPartyCursor,
+    });
+  }
+  return found;
+}
+
+/** Checks whether a Gemini/AGY log under `~/.gemini/tmp/<project>/...` belongs to one of `repos`. */
+function geminiLogMatchesRepo(file: string, buffer: Buffer, tmpRoot: string, repos: string[]): boolean {
+  const rel = path.relative(tmpRoot, file);
+  const topDir = rel && !rel.startsWith("..") ? rel.split(path.sep)[0] : undefined;
+  if (topDir) {
+    const projectDir = path.join(tmpRoot, topDir);
+    // 1. Gemini CLI writes `.project_root` containing the repo path.
+    const marker = path.join(projectDir, ".project_root");
+    if (existsSync(marker)) {
+      try {
+        const root = readFileSync(marker, "utf8").trim();
+        if (root) return repos.some((repo) => samePath(repo, root));
+      } catch {
+        /* fall through */
+      }
+    }
+    // 2. Gemini CLI project directory hashes are sha256(repoPath).
+    const hashes = new Set(repos.map((r) => createHash("sha256").update(r).digest("hex")));
+    if (hashes.has(topDir.toLowerCase())) return true;
+  }
+  // 3. Fall back to cwd/projectRoot/workspace metadata inside the JSONL session itself.
+  for (const { value } of lines(buffer)) {
+    if (!isRecord(value)) continue;
+    for (const key of ["cwd", "projectRoot", "workspace", "repoRoot"]) {
+      const candidate = value[key];
+      if (typeof candidate === "string" && candidate) {
+        return repos.some((repo) => samePath(repo, candidate));
+      }
+    }
+  }
+  return false;
+}
+
+/** Best-effort reader for Gemini / Antigravity CLI chat JSONL logs (`~/.gemini/tmp/<hash>/chats/*.jsonl`). Skips sessions belonging to other repos. */
+function geminiChatEvents(file: string, buffer: Buffer, before: Before, tmpRoot: string, repos: string[]): Map<string, Found> {
+  const found = new Map<string, Found>();
+  if (!geminiLogMatchesRepo(file, buffer, tmpRoot, repos)) return found;
+  let seq = 0;
+  for (const { start, value } of lines(buffer)) {
+    seq += 1;
+    if (!isRecord(value) || before(start, value)) continue;
+    const usage = isRecord(value.tokens) ? value.tokens : isRecord(value.usage) ? value.usage : undefined;
+    if (!usage) continue;
+    const input = num(usage.input_tokens ?? usage.input ?? usage.promptTokenCount);
+    const output = num(usage.output_tokens ?? usage.output ?? usage.candidatesTokenCount) + num(usage.thinking_tokens ?? usage.thoughts ?? usage.thoughtsTokenCount);
+    const cacheRead = num(usage.cache_read_tokens ?? usage.cached ?? usage.cachedContentTokenCount);
+    if (input + output + cacheRead === 0) continue;
+    const rawModel = typeof value.model === "string" && value.model ? value.model : "gemini-4-neon";
+    const id = typeof value.id === "string" && value.id ? value.id : `gemini-${start}-${seq}`;
+    found.set(id, {
+      provider: PRICING_PROVIDER.gemini,
+      model: rawModel,
+      totals: { input, output, cacheRead, cacheWrite: 0, requests: 1 },
+    });
+  }
+  return found;
 }
 
 /** The agent's log files for the repo (its path forms `repos`) with their sizes; a missing directory is no files. */
@@ -262,11 +392,29 @@ export function readAgentLog(reader: "claude" | "codex", file: string, from: { o
 export function createAgentMeter(agent: string, options: AgentMeterOptions): AgentMeter | undefined {
   const reader = READERS[agent];
   if (!reader) return undefined;
+  if (reader === "cursor" && !options.cursorUsageFile) return undefined;
   const home = options.home ?? homedir();
   const repos = pathForms(options.cwd);
-  const list = (): Snapshot => listAgentLogs(reader, home, repos);
+  const list = (): Snapshot => {
+    if (reader === "cursor") {
+      const out: Snapshot = new Map();
+      const file = options.cursorUsageFile;
+      if (file) {
+        try {
+          out.set(file, statSync(file).size);
+        } catch {
+          /* not written yet */
+        }
+      }
+      return out;
+    }
+    if (reader === "gemini") {
+      return jsonlFiles(path.join(home, ".gemini", "tmp"), (name) => name.endsWith(".jsonl"), 4);
+    }
+    return listAgentLogs(reader, home, repos);
+  };
   const snapshot = list();
-  /** Spend per message id (Claude) or per rollout file (Codex) already handed out. */
+  /** Spend per message id (Claude/Cursor/Gemini) or per rollout file (Codex) already handed out. */
   const reported = new Map<string, Totals>();
   return {
     collect() {
@@ -283,12 +431,22 @@ export function createAgentMeter(agent: string, options: AgentMeterOptions): Age
           } catch {
             continue;
           }
+          const end = buffer.length > 0 && buffer[buffer.length - 1] !== 10 ? buffer.lastIndexOf(10) + 1 : buffer.length;
+          buffer = buffer.subarray(0, end);
           const from = was ?? 0;
-          options.onConsumed?.(file, buffer.length);
-          if (reader === "claude") for (const [id, found] of claudeMessages(buffer, (start) => start < from)) current.set(`${id}`, found);
-          else {
+          if (reader === "claude") {
+            options.onConsumed?.(file, end);
+            for (const [id, found] of claudeMessages(buffer, (start) => start < from)) current.set(`${id}`, found);
+          } else if (reader === "cursor") {
+            for (const [id, found] of cursorStopEvents(buffer, (start) => start < from)) current.set(`${file}:${id}`, found);
+          } else if (reader === "gemini") {
+            for (const [id, found] of geminiChatEvents(file, buffer, (start) => start < from, path.join(home, ".gemini", "tmp"), repos)) current.set(`${file}:${id}`, found);
+          } else {
             const found = codexSession(buffer, (start) => start < from, repos);
-            if (found) current.set(file, found);
+            if (found) {
+              options.onConsumed?.(file, end);
+              current.set(file, found);
+            }
           }
         }
         const merged = new Map<string, AgentCall>();
@@ -303,12 +461,12 @@ export function createAgentMeter(agent: string, options: AgentMeterOptions): Age
           };
           reported.set(key, found.totals);
           if (delta.input + delta.output + delta.cacheRead + delta.cacheWrite === 0) continue;
-          const name = `${found.provider}/${found.model}`;
+          const name = `${found.provider}/${found.model}${found.firstPartyCursor ? ":1p" : ""}`;
           const sum = merged.get(name);
           const usage: TokenUsage = sum
             ? { input: sum.usage.input! + delta.input, output: sum.usage.output! + delta.output, cacheRead: sum.usage.cacheRead! + delta.cacheRead, cacheWrite: sum.usage.cacheWrite! + delta.cacheWrite, requests: sum.usage.requests + delta.requests }
             : { input: delta.input, output: delta.output, cacheRead: delta.cacheRead, cacheWrite: delta.cacheWrite, requests: delta.requests };
-          merged.set(name, { provider: found.provider, model: found.model, usage });
+          merged.set(name, { provider: found.provider, model: found.model, usage, ...(found.firstPartyCursor ? { firstPartyCursor: true } : {}) });
         }
         return [...merged.values()].map((call) => ({ ...call, usage: { ...call.usage, requests: Math.max(1, call.usage.requests) } }));
       } catch {
@@ -325,5 +483,5 @@ export function notMeteredEntry(agent: string): AgentLedgerEntry {
 
 /** Ledger entries for metered calls. */
 export function meteredEntries(agent: string, calls: readonly AgentCall[]): AgentLedgerEntry[] {
-  return calls.map((call) => ({ agent, meter: "agent-log", provider: call.provider, model: call.model, usage: call.usage }));
+  return calls.map((call) => ({ agent, meter: "agent-log", provider: call.provider, model: call.model, usage: call.usage, ...(call.firstPartyCursor ? { firstPartyCursor: true } : {}) }));
 }

@@ -15,6 +15,16 @@
         "matcher": "Bash",
         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/shepherd.mjs\" hook pretool", "timeout": 30 }]
       }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/shepherd.mjs\" hook precompact", "timeout": 15 }]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/shepherd.mjs\" hook postcompact", "timeout": 15 }]
+      }
     ]
   }
 }

@@ -68,25 +68,105 @@ export function readFinding(raw: Record<string, unknown>, textKeys: string[], ma
   return { ...(likelihood !== undefined ? { likelihood } : {}), ...(severity !== undefined ? { severity } : {}), category: field("category", 40) ?? "general", message, ...(file ? { file } : {}), ...(evidence ? { evidence } : {}) };
 }
 
+/** Normalized word tokens of a finding message for fuzzy cross-model similarity. */
+function messageTokens(text: string): Set<string> {
+  const stop = new Set(["the", "and", "for", "that", "this", "with", "from", "into", "when", "does", "not", "are", "was", "has", "have", "can", "will", "should", "must", "may", "only", "also"]);
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9_]+/)
+      .filter((w) => w.length >= 3 && !stop.has(w)),
+  );
+}
+
+/** Code symbols mentioned in backticks or camelCase/snake_case identifiers. */
+function codeSymbols(finding: ParsedFinding): Set<string> {
+  const src = `${finding.message} ${finding.evidence ?? ""}`;
+  const out = new Set<string>();
+  for (const m of src.matchAll(/`([^`]{2,60})`/g)) out.add(m[1]!.toLowerCase());
+  for (const m of src.matchAll(/\b([a-z][a-z0-9]*[A-Z][A-Za-z0-9]*|[a-z][a-z0-9]*_[a-z0-9_]+)\b/g)) out.add(m[1]!.toLowerCase());
+  return out;
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+function sameFile(a?: string, b?: string): boolean {
+  if (!a || !b) return false;
+  const norm = (f: string) => f.trim().replace(/^\.\//, "").toLowerCase();
+  return norm(a) === norm(b);
+}
+
+function mergeReviewers(a?: string[], b?: string[]): string[] | undefined {
+  const merged = [...new Set([...(a ?? []), ...(b ?? [])])];
+  return merged.length > 0 ? merged : undefined;
+}
+
+function fuzzyMatch(a: ParsedFinding, b: ParsedFinding): boolean {
+  if (!sameFile(a.file, b.file)) return false;
+  // Never merge two findings that share any reviewer (prevents collapsing distinct findings from the same reviewer even after a multi-reviewer cluster forms).
+  if (a.reviewers?.length && b.reviewers?.length && a.reviewers.some((r) => b.reviewers!.includes(r))) return false;
+  const sim = jaccard(messageTokens(a.message), messageTokens(b.message));
+  if (sim >= 0.55) return true;
+  if (sim >= 0.3) {
+    const sameCat = a.category.toLowerCase() === b.category.toLowerCase();
+    const symsA = codeSymbols(a);
+    const symsB = codeSymbols(b);
+    const sharedSym = [...symsA].some((s) => symsB.has(s));
+    if (sameCat || sharedSym) return true;
+  }
+  return false;
+}
+
 /** Same file and message across parts: one finding, the one with the higher risk (then severity); an unscored one loses to a scored one. */
-export function dedupe(findings: ParsedFinding[]): ParsedFinding[] {
+export function dedupe(findings: ParsedFinding[], options: { fuzzy?: boolean } = {}): ParsedFinding[] {
   const score = (finding: ParsedFinding) => ({ likelihood: finding.likelihood ?? 0, severity: finding.severity ?? 0 });
   const best = new Map<string, ParsedFinding>();
   for (const finding of findings) {
     const key = findingKey(finding.file, finding.message);
     const current = best.get(key);
-    if (!current || compareRisk(score(finding), score(current)) < 0) best.set(key, finding);
+    if (!current) {
+      best.set(key, finding);
+    } else {
+      const reviewers = mergeReviewers(current.reviewers, finding.reviewers);
+      const winner = compareRisk(score(finding), score(current)) < 0 ? finding : current;
+      best.set(key, { ...winner, ...(reviewers ? { reviewers } : {}) });
+    }
   }
-  return [...best.values()];
+  const exact = [...best.values()];
+  if (!options.fuzzy) return exact;
+  const clusters: ParsedFinding[] = [];
+  for (const finding of exact) {
+    const hit = clusters.findIndex((existing) => fuzzyMatch(existing, finding));
+    if (hit < 0) {
+      clusters.push(finding);
+    } else {
+      const existing = clusters[hit]!;
+      const reviewers = mergeReviewers(existing.reviewers, finding.reviewers);
+      const winner = compareRisk(score(finding), score(existing)) < 0 ? finding : existing;
+      const evidence = winner.evidence ?? (winner === finding ? existing.evidence : finding.evidence);
+      clusters[hit] = { ...winner, ...(evidence ? { evidence } : {}), ...(reviewers ? { reviewers } : {}) };
+    }
+  }
+  return clusters;
 }
 
 /**
- * Redacts, dedupes, applies the risk filter once, sorts highest risk first and caps: the findings a review reports and how
- * many were dropped (below the risk threshold, or missing a score).
+ * Redacts, dedupes, applies the risk filter once, sorts highest risk first (consensus breaks ties) and caps:
+ * the findings a review reports and how many were dropped (below the risk threshold, or missing a score).
  */
-export function keepBest(parsed: ParsedFinding[], cap: number): { findings: ModelFinding[]; dropped: number } {
-  const unique = dedupe(parsed.map((finding) => ({ ...finding, message: redact(finding.message), ...(finding.evidence ? { evidence: redact(finding.evidence) } : {}) })));
-  const kept = unique.filter(keepFinding).sort(compareRisk);
+export function keepBest(parsed: ParsedFinding[], cap: number, options: { fuzzy?: boolean } = {}): { findings: ModelFinding[]; dropped: number } {
+  const unique = dedupe(
+    parsed.map((finding) => ({ ...finding, message: redact(finding.message), ...(finding.evidence ? { evidence: redact(finding.evidence) } : {}) })),
+    options,
+  );
+  const kept = unique
+    .filter(keepFinding)
+    .sort((a, b) => compareRisk(a, b) || (b.reviewers?.length ?? 0) - (a.reviewers?.length ?? 0));
   return { findings: kept.slice(0, cap), dropped: unique.length - kept.length };
 }
 

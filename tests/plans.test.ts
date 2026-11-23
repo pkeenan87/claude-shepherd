@@ -30,13 +30,13 @@ describe("/plans", () => {
     const t = await setup();
     const result = await t.app.plans("");
     expect(result.ok).toBe(true);
-    expect(result.text).toBe("2 open task(s) (1 closed; /plans --all). Active: beta · planning (interview) · tickets 0/0 done · $0.00 of $20. /plans <name> switches.");
+    expect(result.text).toBe("2 open task(s) (1 closed; /plans --all). Active: beta · planning (interview) · tickets - done · $0.00 of $20. /plans <name> switches.");
     const table = t.reports[0]!;
-    expect(table).toContain("|  | Name | State | Tickets | Branch | Updated |");
+    expect(table).toContain("|  | Name | State | Tickets | Spend | Branch | Updated |");
     const rows = table.split("\n").filter((line) => /^\| (●)? ?\| (alpha|beta|gamma) /.test(line));
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatch(/^\| ● \| beta \| planning \(interview\) \| 0\/0 \| - \| \d\d:\d\d \|$/);
-    expect(rows[1]).toMatch(/^\|  \| alpha \| .* \| 0\/0 \| shepherd\/alpha \| \d{4}-\d\d-\d\d \|$/);
+    expect(rows[0]).toMatch(/^\| ● \| beta \| planning \(interview\) \| - \| \$0\.00 \| - \| \d\d:\d\d \|$/);
+    expect(rows[1]).toMatch(/^\|  \| alpha \| .* \| 0\/0 \| \$0\.00 \| shepherd\/alpha \| \d{4}-\d\d-\d\d \|$/);
     expect(table).not.toContain("gamma");
   });
 

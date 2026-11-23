@@ -1,6 +1,9 @@
 import path from "node:path";
+import { fromMicroUsd, toMicroUsd } from "../config.js";
 import type { CommandResult, TaskState } from "../domain.js";
+import { budgetState } from "./budget.js";
 import { done, fail, guard, iso, type WorkflowContext } from "./context.js";
+import { formatUsdShort } from "./format.js";
 import { assertGraph, PLAN_FILE, renderPlanReview } from "./plan.js";
 import { SPEC_FILE } from "./interview.js";
 import { closeTask, displayName, isFinished, nameForNewTask, requireActiveTask, stateText } from "./tasks.js";
@@ -45,8 +48,9 @@ export function announceParked(ctx: WorkflowContext, parked: TaskState | undefin
   ctx.progress?.(`Parked ${name} (${stateText(parked)}). /plans ${name} switches back.`);
 }
 
-/** The plan document for a task as it is shown for review: `plan.md`, or rendered from the stored plan. */
+/** The plan document for a task as it is shown for review: freshly rendered from the stored plan so live model settings show, else `plan.md`. */
 export function planMarkdown(ctx: WorkflowContext, task: TaskState): string {
+  if (task.plan?.tickets?.length) return renderPlanReview(task.plan, ctx.store.readText(task.taskId, SPEC_FILE), ctx.config);
   return ctx.store.readText(task.taskId, PLAN_FILE) ?? renderPlanReview(task.plan!, ctx.store.readText(task.taskId, SPEC_FILE), ctx.config);
 }
 
@@ -56,7 +60,13 @@ export async function freezeApproval(ctx: WorkflowContext, state: TaskState): Pr
   const body = `${JSON.stringify(plan, null, 2)}\n`;
   ctx.store.writeOnceText(state.taskId, `plan.v${plan.version}.approved.json`, body);
   const at = iso(ctx);
-  return ctx.store.update(state.taskId, "plan approved", (task) => ({ ...task, approvedVersion: task.plan?.version, approvedAt: at, updatedAt: at }));
+  return ctx.store.update(state.taskId, "plan approved", (task) => ({
+    ...task,
+    approvedVersion: task.plan?.version,
+    lastApprovedVersion: Math.max(task.plan?.version ?? 0, task.lastApprovedVersion ?? 0),
+    approvedAt: at,
+    updatedAt: at,
+  }));
 }
 
 /** Approves the active draft (the choice was already made on a review screen). */
@@ -82,7 +92,14 @@ export function showPlan(ctx: WorkflowContext): Promise<CommandResult> {
 /** One task's plan as markdown, under a header that names the task and its state. Shared by `plan show` and `/plans <name>`. */
 export async function showTaskPlan(ctx: WorkflowContext, current: TaskState): Promise<CommandResult> {
   if (!current.plan) return fail("NO_PLAN", `${displayName(current)} has no plan yet. Run /plan <request>.`);
-  const header = `**Task ${displayName(current)}** · ${stateText(current)}`;
+  const tickets = current.plan.tickets ?? [];
+  const runs = Object.values(current.ticketRuns ?? {});
+  const doneCount = runs.filter((run) => run.status === "done").length;
+  const failedCount = runs.filter((run) => run.status === "failed").length;
+  const { task: spend } = budgetState(ctx, current.taskId);
+  const spent = `${spend.unknownRecords > 0 ? "≈" : ""}${formatUsdShort(fromMicroUsd(toMicroUsd(spend.knownUsd) + toMicroUsd(spend.estimatedUnknownUsd)))}`;
+  const progress = tickets.length > 0 ? ` · ${doneCount}/${tickets.length} done${failedCount > 0 ? ` (${failedCount} failed)` : ""}` : "";
+  const header = `**Task ${displayName(current)}** · ${stateText(current)}${progress} · spend ${spent}/$${ctx.config.budgets.taskUsd}`;
   const markdown = `${header}\n\n${planMarkdown(ctx, current)}`;
   const where = path.join(ctx.store.taskDir(current.taskId), PLAN_FILE);
   return done(markdown, { taskId: current.taskId, file: where });

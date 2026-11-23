@@ -7,10 +7,11 @@
  * An existing status line that is not shepherd's is never replaced without `--force`; the old settings are kept in
  * `settings.json.shepherd.bak`.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { done, fail } from "../orchestrator/context.js";
 import type { CommandResult } from "../domain.js";
+import { atomicWrite } from "../storage/store.js";
 
 export const STATUSLINE_USAGE = `Usage: shepherd statusline-install [--force]
 Shows "shepherd · <plan> · plan $spent/$budget · today $spent/$budget" in Claude Code's status line by setting
@@ -23,9 +24,8 @@ export function launcherText(entry: string): string {
 }
 
 function writeAtomic(file: string, text: string, mode?: number): void {
-  const temp = `${file}.${process.pid}.tmp`;
-  writeFileSync(temp, text, mode === undefined ? undefined : { mode });
-  renameSync(temp, file);
+  atomicWrite(file, text);
+  if (mode !== undefined) chmodSync(file, mode);
 }
 
 /** Points the launcher at `entry` if the launcher exists and points elsewhere. Never throws. */
@@ -71,9 +71,10 @@ export function installStatusLine({ home, shepherd, entry, force = false }: Stat
   }
   mkdirSync(shepherd, { recursive: true });
   writeAtomic(launcher, launcherText(entry), 0o755);
-  if (!ours) {
+  const needsSettingsWrite = !ours || current?.command !== command;
+  if (needsSettingsWrite) {
     mkdirSync(path.dirname(settingsFile), { recursive: true });
-    if (existsSync(settingsFile)) copyFileSync(settingsFile, `${settingsFile}.shepherd.bak`);
+    if (!ours && existsSync(settingsFile)) copyFileSync(settingsFile, `${settingsFile}.shepherd.bak`);
     writeAtomic(settingsFile, `${JSON.stringify({ ...settings, statusLine: { type: "command", command, padding: 0 } }, null, 2)}\n`);
   }
   return done(`${ours ? "The status line was already shepherd's; refreshed its launcher" : `Set statusLine in ${settingsFile}`}. It shows the active plan, what it has spent and today's spend. It appears after the next message.`, { settings: settingsFile, launcher });

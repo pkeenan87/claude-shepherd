@@ -91,13 +91,23 @@ function readLockRaw(lockPath: string): string | undefined {
 function breakStaleLock(lockPath: string, staleMs: number): void {
   const raw = readLockRaw(lockPath);
   if (raw === undefined) return;
-  let current: LockRecord;
+  let stale = false;
   try {
-    current = JSON.parse(raw) as LockRecord;
+    const current = JSON.parse(raw) as Partial<LockRecord>;
+    if (typeof current.pid === "number" && typeof current.at === "number") {
+      stale = !pidAlive(current.pid) && Date.now() - current.at > staleMs;
+    } else {
+      stale = Date.now() - statSync(lockPath).mtimeMs > staleMs;
+    }
   } catch {
-    return;
+    // A 0-byte or truncated lock file (holder crashed mid-write) heals once older than staleMs.
+    try {
+      stale = Date.now() - statSync(lockPath).mtimeMs > staleMs;
+    } catch {
+      return;
+    }
   }
-  if (pidAlive(current.pid) || Date.now() - current.at <= staleMs) return;
+  if (!stale) return;
   const tomb = `${lockPath}.stale.${randomUUID()}`;
   try {
     renameSync(lockPath, tomb);
@@ -308,6 +318,7 @@ function readClaim(file: string): { pid: number; checkout: string } | undefined 
 
 /** True while a process with this pid runs (EPERM: it runs as another user). */
 function processAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -330,10 +341,10 @@ export class TaskStore {
   private ledgerCache?: { sig: FileSig; records: CostRecord[] };
   private seqCache = new Map<string, { size: number; seq: number }>();
 
-  constructor(readonly root: string) {}
+  constructor(readonly root: string, private readonly activeOverride?: string) {}
 
   private activePath(): string {
-    return path.join(this.root, "active-task.json");
+    return this.activeOverride ?? path.join(this.root, "active-task.json");
   }
 
   taskDir(taskId: string): string {
@@ -376,14 +387,57 @@ export class TaskStore {
   }
 
   /**
-   * Claims the task's build for this process: refused (returns who holds it) while another live process holds it, so
-   * two builds never run on one task at once. A claim whose process is gone is taken over.
+   * Claims the task's build for this process atomically: refused (returns who holds it) while another live process holds
+   * it, so two builds never run on one task at once. A claim whose process is gone is taken over via atomic tombstone.
    */
   claimBuild(taskId: string, checkout: string, at: string): { pid: number; checkout: string } | undefined {
     const file = path.join(this.taskDir(taskId), "build.claim");
+    mkdirSync(path.dirname(file), { recursive: true });
+    const payload = JSON.stringify({ pid: process.pid, checkout, at }, null, 2);
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const tmp = `${file}.tmp.${randomUUID()}`;
+      try {
+        // Write full payload to a temp file, then linkSync atomically so no contender can ever read an empty claim file.
+        writeFileSync(tmp, payload, { flag: "wx" });
+        try {
+          linkSync(tmp, file);
+          return undefined;
+        } catch (linkErr) {
+          const code = (linkErr as NodeJS.ErrnoException).code;
+          if (code === "EPERM" || code === "ENOTSUP" || code === "EXDEV") {
+            const fd = openSync(file, "wx");
+            try {
+              writeFileSync(fd, payload);
+            } finally {
+              closeSync(fd);
+            }
+            return undefined;
+          }
+          throw linkErr;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const held = readClaim(file);
+        if (held && held.pid === process.pid) {
+          atomicWrite(file, payload);
+          return undefined;
+        }
+        if (held && processAlive(held.pid)) return held;
+        // Dead or corrupt claim: move aside atomically and retry exclusive creation.
+        const tomb = `${file}.stale.${randomUUID()}`;
+        try {
+          renameSync(file, tomb);
+          rmSync(tomb, { force: true });
+        } catch {
+          /* another contender moved it first; retry */
+        }
+      } finally {
+        rmSync(tmp, { force: true });
+      }
+    }
     const held = readClaim(file);
     if (held && held.pid !== process.pid && processAlive(held.pid)) return held;
-    atomicWrite(file, JSON.stringify({ pid: process.pid, checkout, at }, null, 2));
+    atomicWrite(file, payload);
     return undefined;
   }
 
@@ -563,7 +617,7 @@ export class TaskStore {
     const dir = path.join(this.taskDir(taskId), relative);
     mkdirSync(dir, { recursive: true });
     for (const [name, data] of Object.entries(files)) atomicWrite(path.join(dir, name), data);
-    for (const name of readdirSync(dir)) if (!(name in files)) rmSync(path.join(dir, name), { force: true });
+    for (const name of readdirSync(dir)) if (!(name in files)) rmSync(path.join(dir, name), { recursive: true, force: true });
     return Object.keys(files).map((name) => path.join(dir, name));
   }
 
@@ -582,12 +636,22 @@ export class TaskStore {
     return readFileSync(file, "utf8");
   }
 
+  /** Held around concurrent ledger read-modify-append sequences (such as Pi session sweeps). */
+  withLedgerLock<T>(fn: () => Promise<T> | T): Promise<T> {
+    return withLock(path.join(this.root, "cost", "ledger.lock"), fn);
+  }
+
   appendLedger(record: CostRecord): void {
+    this.appendLedgerBatch([record]);
+  }
+
+  appendLedgerBatch(records: readonly CostRecord[]): void {
+    if (records.length === 0) return;
     const file = path.join(this.root, "cost", "ledger.jsonl");
     mkdirSync(path.dirname(file), { recursive: true });
-    const clean = redactUnknown(record) as CostRecord;
+    const lines = records.map((record) => `${JSON.stringify(redactUnknown(record) as CostRecord)}\n`).join("");
     repairTail(file);
-    appendFileSync(file, `${JSON.stringify(clean)}\n`);
+    appendFileSync(file, lines);
   }
 
   /** Appends one line to `metrics/tickets.jsonl`, the per-ticket log of /build. Append-only: never rewritten or truncated. */
@@ -633,6 +697,6 @@ export class TaskStore {
   notify(message: string): void {
     const file = path.join(this.root, "notifications.jsonl");
     mkdirSync(this.root, { recursive: true });
-    writeFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), message })}\n`, { flag: "a" });
+    writeFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), message: redactUnknown(message) })}\n`, { flag: "a" });
   }
 }

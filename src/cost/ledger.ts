@@ -1,4 +1,4 @@
-import { DEFAULT_UNKNOWN_CALL_USD, estimateUsd, priceFor, type PricingRow } from "../config.js";
+import { DEFAULT_UNKNOWN_CALL_USD, estimateUsd, isBuiltinPriceRow, priceFor, type PricingRow } from "../config.js";
 import type { CostRecord, Phase, TokenUsage } from "../domain.js";
 
 export interface UsageInput {
@@ -42,11 +42,21 @@ export function buildCostRecord(input: UsageInput, pricing: PricingRow[], at: Da
   };
 }
 
+export interface TokenTotals {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
 export interface SpendBucket {
   knownUsd: number;
   unknown: number;
   /** Estimated spend for unknown-cost entries in this bucket (additive field). */
   estimatedUnknownUsd?: number;
+  /** API-equivalent list value (useful when subscription-billed agents record actualUsd = 0). */
+  apiEquivalentUsd?: number;
+  tokens?: TokenTotals;
 }
 
 /** provider/model pairs in the ledger that have no pricing row, in first-seen order. */
@@ -66,14 +76,19 @@ export function unpricedModels(records: CostRecord[], pricing: PricingRow[]): st
 
 export interface SpendSummary {
   knownUsd: number;
+  /** API-equivalent value across records (equals knownUsd + estimated for API calls, plus listPriceUsd for subscription-billed calls). */
+  apiEquivalentUsd: number;
+  /** Aggregate token counts across all records in this summary. */
+  tokens: TokenTotals;
   unknownRecords: number;
   /** Same as unknownRecords; named to match budget callers. */
   unknownCount: number;
   /** Rows of external agents that are not metered (subscriptions): $0 and never an unknown-cost estimate. */
   notMeteredRecords: number;
   /**
-   * Budget-only estimate for unknown-cost entries: tokens x the most expensive configured price for the provider, or
-   * the flat `budgets.unknownCallUsd` for an entry with nothing to price it from. The ledger entries stay null.
+   * Budget-only estimate for unknown-cost entries: tokens x the model's matching pricing row (if added since) or the
+   * most expensive configured price for the provider, or the flat `budgets.unknownCallUsd` for an entry with nothing to
+   * price it from. The ledger entries stay null.
    */
   estimatedUnknownUsd: number;
   /** Unknown entries that were counted at the flat `unknownCallUsd` (no token counts or no configured price for the provider). */
@@ -103,7 +118,12 @@ function estimateUnknownMicro(record: CostRecord, pricing: PricingRow[]): number
   // Pi's own price for the call, when it gave one, is the next best thing to a pricing row.
   const listed = typeof record.listPriceUsd === "number" && record.listPriceUsd > 0 ? toMicro(record.listPriceUsd) : null;
   if (record.inputTokens === null && record.outputTokens === null) return listed;
-  const rows = pricing.filter((row) => row.provider === record.provider);
+  // Ignore built-in $0 rows (e.g. Cursor's included composer-2) so unknown models never estimate to $0 unless the user explicitly configured a $0 subscription row.
+  const rows = pricing.filter(
+    (row) =>
+      row.provider === record.provider &&
+      !(isBuiltinPriceRow(row) && row.inputPerMillionUsd === 0 && row.outputPerMillionUsd === 0 && (row.cacheReadPerMillionUsd ?? 0) === 0 && (row.cacheWritePerMillionUsd ?? 0) === 0),
+  );
   if (rows.length === 0) return listed;
   let worst = 0;
   for (const row of rows) {
@@ -123,20 +143,33 @@ interface MicroBucket {
   known: number;
   unknown: number;
   estimated: number;
+  apiEquiv: number;
+  tokens: TokenTotals;
 }
 
-function bump(bucket: Record<string, MicroBucket>, key: string, known: number, unknown: number, estimated: number): void {
-  const current = bucket[key] ?? { known: 0, unknown: 0, estimated: 0 };
+function bump(bucket: Record<string, MicroBucket>, key: string, known: number, unknown: number, estimated: number, apiEquiv: number, rec: CostRecord): void {
+  const current = bucket[key] ?? { known: 0, unknown: 0, estimated: 0, apiEquiv: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
   current.known += known;
   current.unknown += unknown;
   current.estimated += estimated;
+  current.apiEquiv += apiEquiv;
+  current.tokens.input += rec.inputTokens ?? 0;
+  current.tokens.output += rec.outputTokens ?? 0;
+  current.tokens.cacheRead += rec.cacheReadTokens ?? 0;
+  current.tokens.cacheWrite += rec.cacheWriteTokens ?? 0;
   bucket[key] = current;
 }
 
 function finish(bucket: Record<string, MicroBucket>): Record<string, SpendBucket> {
   const out: Record<string, SpendBucket> = {};
   for (const [key, value] of Object.entries(bucket)) {
-    out[key] = { knownUsd: fromMicro(value.known), unknown: value.unknown, estimatedUnknownUsd: fromMicro(value.estimated) };
+    out[key] = {
+      knownUsd: fromMicro(value.known),
+      unknown: value.unknown,
+      estimatedUnknownUsd: fromMicro(value.estimated),
+      apiEquivalentUsd: fromMicro(value.apiEquiv),
+      tokens: { ...value.tokens },
+    };
   }
   return out;
 }
@@ -149,10 +182,12 @@ export function summarize(records: CostRecord[], options: { pricing?: PricingRow
   const pricing = options.pricing ?? [];
   const flat = toMicro(options.unknownCallUsd ?? DEFAULT_UNKNOWN_CALL_USD);
   let known = 0;
+  let apiEquiv = 0;
   let unknown = 0;
   let estimated = 0;
   let unestimated = 0;
   let notMetered = 0;
+  const tokens: TokenTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const phase: Record<string, MicroBucket> = {};
   const provider: Record<string, MicroBucket> = {};
   const model: Record<string, MicroBucket> = {};
@@ -161,6 +196,7 @@ export function summarize(records: CostRecord[], options: { pricing?: PricingRow
     let k = 0;
     let u = 0;
     let e = 0;
+    let eq = 0;
     if (record.meter === "not-metered") notMetered += 1;
     if (record.actualUsd === null) {
       u = 1;
@@ -171,17 +207,26 @@ export function summarize(records: CostRecord[], options: { pricing?: PricingRow
         e = flat;
       } else e = guess;
       estimated += e;
+      eq = e;
     } else {
       k = toMicro(record.actualUsd);
       known += k;
+      eq = typeof record.listPriceUsd === "number" && Number.isFinite(record.listPriceUsd) && record.listPriceUsd > 0 ? Math.max(k, toMicro(record.listPriceUsd)) : k;
     }
-    bump(phase, record.phase, k, u, e);
-    bump(provider, record.provider, k, u, e);
-    bump(model, record.model, k, u, e);
-    bump(task, record.taskId, k, u, e);
+    apiEquiv += eq;
+    tokens.input += record.inputTokens ?? 0;
+    tokens.output += record.outputTokens ?? 0;
+    tokens.cacheRead += record.cacheReadTokens ?? 0;
+    tokens.cacheWrite += record.cacheWriteTokens ?? 0;
+    bump(phase, record.phase, k, u, e, eq, record);
+    bump(provider, record.provider, k, u, e, eq, record);
+    bump(model, record.model, k, u, e, eq, record);
+    bump(task, record.taskId, k, u, e, eq, record);
   }
   return {
     knownUsd: fromMicro(known),
+    apiEquivalentUsd: fromMicro(apiEquiv),
+    tokens,
     unknownRecords: unknown,
     unknownCount: unknown,
     notMeteredRecords: notMetered,

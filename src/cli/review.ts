@@ -21,7 +21,7 @@ import { tracked, words, type OpenSession } from "./build.js";
 import { ticketModePath } from "./build-host.js";
 import type { CliIo, CliOptions } from "./shepherd.js";
 
-export const REVIEW_USAGE = "Usage: shepherd review [--with <provider/id | agent:name[/model]>] [--json]";
+export const REVIEW_USAGE = "Usage: shepherd review [--with <provider/id | agent:name[/model]>]... [--json]";
 export const FIX_USAGE = "Usage: shepherd fix --tab [--json]   (fix the latest review's findings with models.medium in a herdr sub-agent; never commits)\n       shepherd fix --list [--json]   (print the findings and rules, to fix them in this chat)";
 
 /** Runs a command that may open herdr tabs: binds the fakeable seams, closes the tabs on a signal, prints the result. */
@@ -44,13 +44,16 @@ async function run(rest: string[], io: CliIo, options: CliOptions, open: OpenSes
     if (!json) io.out(`${clean}\n`);
   };
   const opened = await open({ progress, herdr: client, piAvailable, ticketModePath: options.ticketModePath ?? ticketModePath(), ...(options.runner ? { runner: options.runner } : {}), ...(options.herdrTimings ? { herdrTimings: options.herdrTimings } : {}) });
-  if ("problem" in opened) return emit({ ok: false, code: "NO_REPO", text: opened.problem });
+  if ("problem" in opened) return emit({ ok: false, code: opened.code ?? "NO_REPO", text: opened.problem });
   const exit = options.exit ?? ((code: number) => process.exit(code));
   let leaving = false;
   const onSignal = () => {
     if (leaving) return;
     leaving = true;
-    void Promise.allSettled([...openTabs].map((address) => inner.kill(address))).then(() => exit(130));
+    void Promise.race([
+      Promise.allSettled([...openTabs].map((address) => inner.kill(address))),
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ]).then(() => exit(130));
   };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
@@ -72,9 +75,13 @@ export async function reviewCommand(rest: string[], io: CliIo, options: CliOptio
     else io.err(`${REVIEW_USAGE}\n`);
     return 1;
   };
-  if (args.length > 0 && (args[0] !== "--with" || args.length !== 2)) return usage();
+  const withArgs: string[] = [];
+  for (let i = 0; i < args.length; i += 2) {
+    if (args[i] !== "--with" || !args[i + 1]) return usage();
+    withArgs.push(`--with ${args[i + 1]}`);
+  }
   return run(rest, io, options, open, async (workflow) => {
-    const result = await workflow.review(args.length > 0 ? `--with ${args[1]}` : "");
+    const result = await workflow.review(withArgs.join(" "));
     const report = result.data as ReviewReport | undefined;
     // Not a review that ran (nothing to review, no repo, a budget stop): no report.
     if (!report || typeof report !== "object" || !("checks" in report)) return { result, data: { report: null, findings: [], passed: result.ok, fixTab: null } };

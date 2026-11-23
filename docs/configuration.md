@@ -53,6 +53,8 @@ External coding agents run in herdr sub-agents. User file only. Each entry overr
 |---|---|
 | `run` | Argv list that starts the agent. Replaces the built-in command entirely, flags included. |
 | `modelFlag` | Flag that selects its model for `agent:<name>/<model>`; must start with `-`. |
+| `billing` | `"api"` (default) or `"subscription"`. Subscription agents record `$0` billed against budget caps while preserving API-equivalent `listPriceUsd` in `/shepherd:cost`. |
+| `routingFeePerMillionUsd` | Optional USD/1M surcharge for routed third-party models (e.g. Cursor Teams/Enterprise router; first-party Cursor pool models are exempt). |
 
 Names are letters, digits, `-` and `_`, starting with a letter. Built in (from `src/agents.ts`):
 
@@ -75,7 +77,7 @@ Names are letters, digits, `-` and `_`, starting with a letter. Built in (from `
 
 **Folder trust.** An agent's first run in a folder may ask "trust this folder?". shepherd builds in the repo you run it from, so it trusts that folder for the agent: cursor-agent through `--trust`; agy, grok and codex, which have no such flag, by answering their prompt (only when it shows with "yes" selected; the build prints a line when it does). Claude Code needs nothing: its sub-agents run in the repo your Claude Code session already trusts. Its prompt is never answered for you, since its default is "No, exit".
 
-**Cursor.** `agent:cursor-agent/auto` uses Cursor's `auto` model. When `cursor-agent --list-models` lists `auto-smart`, it also takes `agent:cursor-agent/auto-smart[optimize_for=cost]`, `[optimize_for=balanced]` and `[optimize_for=intelligence]`; the herdr panel offers these. Cursor is **not metered**: its runs count $0 and show as "not metered". The `auto-smart` router needs a Teams or Enterprise plan.
+**Cursor.** `agent:cursor-agent/auto` uses Cursor's `auto` model. When `cursor-agent --list-models` lists `auto-smart`, it also takes `agent:cursor-agent/auto-smart[optimize_for=cost]`, `[optimize_for=balanced]` and `[optimize_for=intelligence]`; the herdr panel offers these. By default `cursor-agent` uses `billing: subscription`: shepherd's stop hook captures actual routed models and tokens as API-equivalent `listPriceUsd` (visible in `/shepherd:cost` and the panel) while billing `$0` against budgets so subscribers are never hard-stopped. Set `agents.cursor-agent.billing: api` (and optional `routingFeePerMillionUsd: 0.25` for third-party routed models) to count Cursor usage against budgets. The `auto-smart` router needs a Teams or Enterprise plan.
 
 cursor-agent never tells herdr whether it is idle, working or blocked (herdr learns that only from the program writing an OSC 7501 sequence to its terminal, which Claude Code and Pi do). So the first time shepherd opens a cursor-agent sub-agent it writes `~/.cursor/shepherd-hc-status.sh` (rewritten whenever it differs) and adds three Cursor hooks to `~/.cursor/hooks.json`, next to any others (herdr's own included): `sessionStart` and `stop` say idle, `beforeSubmitPrompt` says working. The run prints one line when it does this; if `hooks.json` is not valid JSON or has an unexpected shape, shepherd changes nothing and the run stops with the reason. If a cursor-agent tab still reports nothing after 20 seconds, the run stops and asks you to check those entries. Cursor's "blocked" approval prompts are not reported, so an approval waits until the turn timeout (4 hours) instead of showing as blocked.
 
@@ -91,8 +93,10 @@ Budgets count every priced call: your Claude Code session, Pi-worker models (inc
 | `dailyUsd` | `75` | All spend today (> 0). |
 | `softWarningRatio` | `0.8` | Warn at this share of a budget (0 to 1). |
 | `unknownCallUsd` | `0.05` | What a call of unknown cost counts as in budget math only (>= 0). The ledger still stores it as unknown. |
-| `idleWarnMinutes` | `60` | Idle minutes after the last assistant turn before a message is held back, because the prompt cache has probably expired and the whole context is re-sent; it warns once per idle stretch, so the next message goes through (integer >= 0). `0` turns the warning off. Background-task notifications are never held back, and after `/compact` the context counts as empty until the next reply. |
-| `idleWarnTokens` | `100000` | The idle warning applies only when the context holds at least this many tokens (integer >= 0). `0` turns the warning off. |
+| `idleWarnMinutes` | `60` | Idle minutes after the last assistant turn before the idle-cache check fires (integer >= 0). `0` turns it off. Injected notifications are never held back, and after `/compact` the context counts as empty until the next reply. |
+| `idleWarnTokens` | `100000` | The idle-cache check applies only when the context holds at least this many tokens (integer >= 0). `0` turns it off. |
+| `idleAction` | `"warn"` | `"warn"` (non-blocking notice once per idle stretch), `"block"` (hold the prompt once per idle stretch), or `"off"`. |
+| `timeZone` | UTC | Optional IANA timezone for daily budget rollovers (e.g. `"America/New_York"`). |
 
 ## routing
 
@@ -108,6 +112,8 @@ Budgets count every priced call: your Claude Code session, Pi-worker models (inc
 | `tickets` | `true` | `false` turns off the per-ticket review in `/shepherd:build`. |
 | `model` | `true` | `false` makes `/shepherd:review` run only setup, checks and the static scan. |
 | `timeoutMs` | `300000` | How long one per-ticket review turn may take (>= 1000), but never less than 15 minutes. The `/shepherd:review` model pass and a fix run have no limit of their own beyond herdr's turn cap. |
+| `reviewers` | unset | Optional list of reviewers for multi-model `/shepherd:review` (strings or `{ model, name?, focus? }`). Distinct providers run in parallel; cross-model findings are fuzzy-deduped with consensus badges. |
+| `highRiskReviewers` | unset | Optional reviewer list used to escalate per-ticket reviews on `high`-difficulty or security-sensitive tickets. |
 
 ## checks and setup
 
@@ -127,7 +133,7 @@ checks:
 
 ## pricing
 
-User file only. A list of rows, USD per million tokens. A model with no row has an unknown cost, which budgets count as spend (never as $0); `local/` models are a known $0.
+User file only. Official 2026 API list prices for Anthropic (Claude 5.5 Haiku/Sonnet/Opus, Claude Fable 5.2, Claude 4.6/4.5), OpenAI/Codex (GPT-6.2/6 Astra, GPT-6.2/6.1/6 Sol, GPT-6.1 Terra, GPT-6 Luna, GPT-5.4, GPT-5.3 Codex), Google/Gemini/AGY (Gemini 4 Neon/Hydrogen/Argon/Carbon including Dec 1, 2026 rollover, Gemini 2.5 Pro/Flash), xAI/Grok (Grok 4.7/4.6/4.3/4.20/Code Fast/Build 0.1), and Cursor included models (Composer 2/1, cursor-small) are built in by default. Rows you add here always override the defaults for matching models (regardless of effective date). A model with no row has an unknown cost, which budgets count as spend (never as $0); `local/` models are a known $0.
 
 | Field | Meaning |
 |---|---|
@@ -144,4 +150,6 @@ Two rows for the same provider, model and date are an error. Subscription logins
 |---|---|---|
 | `branchPrefix` | `shepherd` | `shepherd build` names its branch `<branchPrefix>/<task name>` (`-2`, `-3` when taken). Letters, digits, `.`, `_`, `-`, `/`; no trailing `/`, no `..`. |
 | `build.visibleTabs` | `false` | `shepherd build`, a review and a fix run each ticket and review as a paneless herdr sub-agent of the terminal they were started from (it shows in herdr's agents list). `true` opens each in its own labelled tab (`herdr.space`, `herdr.tab`) beside that terminal; the terminal then needs a `herdr.space` label. |
+| `worktree.default` | `"ask"` | `"ask"`, `"always"`, or `"never"` for creating a linked git worktree during `shepherd plan start`. User file only. |
+| `worktree.dir` | Herdr's `worktrees.directory` (`~/.herdr/worktrees`) | Base directory for shepherd worktrees (`<dir>/<repo>/<branch-with-dashes>`), aligned with Herdr's Spaces sidebar. User file only. |
 | `workspaceDir` | `.shepherd` | Where task state, the ledger and reports live in each project. User file only. |

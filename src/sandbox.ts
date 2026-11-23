@@ -1,21 +1,23 @@
 import { WorkflowError } from "./domain.js";
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
-const WRAPPERS = new Set(["sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout", "setsid", "stdbuf", "ionice", "chrt", "taskset"]);
+const WRAPPERS = new Set(["sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout", "setsid", "stdbuf", "ionice", "chrt", "taskset", "builtin", "busybox"]);
 /** Wrapper options that consume the next token as their value. */
 const WRAPPER_VALUE_FLAGS = new Set(["-u", "-g"]);
 /** More value-taking options for specific wrappers (`nice -n 5`, `xargs -n 1 -I{}`), which a generic list would get wrong for `sudo -n`. */
 const WRAPPER_EXTRA_VALUE_FLAGS: Record<string, Set<string>> = {
+  env: new Set(["--unset", "-C", "--chdir"]),
+  sudo: new Set(["-p", "-C", "-T", "-r", "-t"]),
   nice: new Set(["-n"]),
   xargs: new Set(["-n", "-I", "-P", "-L", "-s", "-d", "-a", "-E"]),
-  timeout: new Set(["-s", "-k"]),
+  timeout: new Set(["-s", "--signal", "-k", "--kill-after"]),
   stdbuf: new Set(["-i", "-o", "-e"]),
   ionice: new Set(["-c", "-n", "-p"]),
 };
 /** Wrappers that take positional words before the command (`timeout 60 cmd`, `chrt 10 cmd`, `taskset 3 cmd`). */
 const WRAPPER_POSITIONALS: Record<string, number> = { timeout: 1, chrt: 1, taskset: 1 };
 /** git global options that consume the next token as their value. */
-export const GIT_VALUE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+export const GIT_VALUE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"]);
 
 export interface Segment {
   tokens: string[];
@@ -23,9 +25,10 @@ export interface Segment {
   piped: boolean;
 }
 
-/** Minimal shell-ish splitter: honours quotes, splits on unquoted | ; & and newlines. */
-export function splitSegments(line: string): Segment[] {
+/** Minimal shell-ish splitter: honours quotes, extracts `$(...)` / backticks inside double quotes, and splits on unquoted | ; & and newlines. */
+export function splitSegments(line: string, depth = 0): Segment[] {
   const segments: Segment[] = [];
+  const embedded: string[] = [];
   let tokens: string[] = [];
   let current = "";
   let has = false;
@@ -47,7 +50,28 @@ export function splitSegments(line: string): Segment[] {
     if (quote) {
       if (ch === quote) quote = null;
       else if (ch === "\\" && quote === '"' && i + 1 < line.length) current += line[++i];
-      else current += ch;
+      else if (quote === '"' && ch === "$" && line[i + 1] === "(" && depth < MAX_NESTING) {
+        let paren = 1;
+        let j = i + 2;
+        for (; j < line.length && paren > 0; j += 1) {
+          if (line[j] === "\\" && j + 1 < line.length) j += 1;
+          else if (line[j] === "(") paren += 1;
+          else if (line[j] === ")") paren -= 1;
+        }
+        const inner = line.slice(i + 2, paren === 0 ? j - 1 : j);
+        if (inner.trim()) embedded.push(inner);
+        current += line.slice(i, j);
+        i = j - 1;
+      } else if (quote === '"' && ch === "`" && depth < MAX_NESTING) {
+        let j = i + 1;
+        for (; j < line.length && line[j] !== "`"; j += 1) {
+          if (line[j] === "\\" && j + 1 < line.length) j += 1;
+        }
+        const inner = line.slice(i + 1, j);
+        if (inner.trim()) embedded.push(inner);
+        current += line.slice(i, Math.min(line.length, j + 1));
+        i = j;
+      } else current += ch;
       continue;
     }
     if (ch === "'" || ch === '"') {
@@ -75,6 +99,7 @@ export function splitSegments(line: string): Segment[] {
     }
   }
   endSegment(false);
+  for (const sub of embedded) segments.push(...splitSegments(sub, depth + 1));
   return segments;
 }
 
@@ -87,9 +112,10 @@ export function baseName(token: string): string {
  * Drops leading VAR=value assignments and wrapper commands such as sudo/env/timeout. `env -S "a b"` is split into
  * words. `xargs` is true when a wrapper was xargs, whose arguments come from stdin and so cannot be inspected.
  */
-function unwrap(input: string[]): { argv: string[]; xargs: boolean } {
+function unwrap(input: string[]): { argv: string[]; xargs: boolean; extraSegments: Segment[] } {
   let tokens = input;
   let xargs = false;
+  const extraSegments: Segment[] = [];
   let i = 0;
   for (;;) {
     while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i += 1;
@@ -108,13 +134,15 @@ function unwrap(input: string[]): { argv: string[]; xargs: boolean } {
     }
     if (tokens[i] === "--") i += 1;
     if (split !== undefined) {
-      tokens = [...(splitSegments(split)[0]?.tokens ?? []), ...tokens.slice(i)];
+      const parts = splitSegments(split);
+      if (parts.length > 1) extraSegments.push(...parts.slice(1));
+      tokens = [...(parts[0]?.tokens ?? []), ...tokens.slice(i)];
       i = 0;
       continue;
     }
     i += WRAPPER_POSITIONALS[name] ?? 0;
   }
-  return { argv: tokens.slice(i), xargs };
+  return { argv: tokens.slice(i), xargs, extraSegments };
 }
 
 export function stripWrappers(tokens: string[]): string[] {
@@ -142,27 +170,36 @@ function shellScript(args: string[]): string | undefined {
 }
 
 function commandsOfArgv(tokens: string[], piped: boolean, depth: number): SimpleCommand[] {
-  const { argv, xargs } = unwrap(tokens);
-  if (argv.length === 0) return [];
-  const out: SimpleCommand[] = [{ argv, xargs, piped }];
-  const name = baseName(argv[0]).toLowerCase();
-  const args = argv.slice(1);
-  const nested = (script: string) => {
-    if (depth + 1 >= MAX_NESTING) out.push({ argv: [], xargs: false, piped: false, opaque: script });
-    else out.push(...commandsIn(script, depth + 1));
-  };
-  if (SHELLS.has(name)) {
-    const script = shellScript(args);
-    if (script !== undefined) nested(script);
-  } else if (name === "eval") nested(args.join(" "));
-  else if (name === "find") {
-    for (let i = 0; i < args.length; i += 1) {
-      if (!/^-(exec|execdir|ok|okdir)$/.test(args[i])) continue;
-      const end = args.findIndex((arg, j) => j > i && (arg === ";" || arg === "+"));
-      const inner = args.slice(i + 1, end < 0 ? undefined : end);
-      if (depth + 1 < MAX_NESTING) out.push(...commandsOfArgv(inner, false, depth + 1));
-      else out.push({ argv: [], xargs: false, piped: false, opaque: inner.join(" ") });
+  const { argv, xargs, extraSegments } = unwrap(tokens);
+  const out: SimpleCommand[] = [];
+  if (argv.length > 0) {
+    out.push({ argv, xargs, piped });
+    const name = baseName(argv[0]).toLowerCase();
+    const args = argv.slice(1);
+    const nested = (script: string) => {
+      if (depth + 1 >= MAX_NESTING) out.push({ argv: [], xargs: false, piped: false, opaque: script });
+      else out.push(...commandsIn(script, depth + 1));
+    };
+    if (SHELLS.has(name)) {
+      const script = shellScript(args);
+      if (script !== undefined) nested(script);
+    } else if (name === "eval") nested(args.join(" "));
+    else if (name === "git") {
+      const call = gitCall(argv);
+      if (call?.shellAlias) nested(call.shellAlias);
+    } else if (name === "find") {
+      for (let i = 0; i < args.length; i += 1) {
+        if (!/^-(exec|execdir|ok|okdir)$/.test(args[i])) continue;
+        const end = args.findIndex((arg, j) => j > i && (arg === ";" || arg === "+"));
+        const inner = args.slice(i + 1, end < 0 ? undefined : end);
+        if (depth + 1 < MAX_NESTING) out.push(...commandsOfArgv(inner, false, depth + 1));
+        else out.push({ argv: [], xargs: false, piped: false, opaque: inner.join(" ") });
+      }
     }
+  }
+  for (const seg of extraSegments) {
+    if (depth + 1 < MAX_NESTING) out.push(...commandsOfArgv(seg.tokens, seg.piped, depth + 1));
+    else out.push({ argv: [], xargs: false, piped: false, opaque: seg.tokens.join(" ") });
   }
   return out;
 }
@@ -182,7 +219,11 @@ function shortFlags(args: string[]): string {
 }
 
 function longFlag(args: string[], name: string): boolean {
-  return args.some((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`));
+  for (const arg of args) {
+    if (arg === "--") break;
+    if (arg === `--${name}` || arg.startsWith(`--${name}=`)) return true;
+  }
+  return false;
 }
 
 function deniedArgv(tokens: string[]): boolean {
@@ -216,7 +257,11 @@ function deniedArgv(tokens: string[]): boolean {
         /^:\S/.test(arg),
     );
   }
-  if (call?.sub === "reset") return call.rest.includes("--hard");
+  if (call?.sub === "reset") {
+    const dash = call.rest.indexOf("--");
+    const flags = dash < 0 ? call.rest : call.rest.slice(0, dash);
+    return flags.includes("--hard");
+  }
   return false;
 }
 
@@ -228,7 +273,7 @@ function isDownloader(tokens: string[]): boolean {
 
 /** True when the command line (shell syntax allowed) contains a destructive operation. */
 export function isDeniedCommand(line: string): boolean {
-  if (/<\(\s*(curl|wget)\b/i.test(line) || /\b(curl|wget)\b[^\n]*\|\s*(sudo\s+)?(\S*\/)?(sh|bash|zsh|dash|ksh)\b/i.test(line)) {
+  if (/<\(\s*(curl|wget)\b/i.test(line) || /\b(curl|wget)\b[^\n]*\|\s*(sudo\s+)?(\S*\/)?(sh|bash|zsh|dash|ksh|fish)\b/i.test(line)) {
     return true;
   }
   const commands = commandsIn(line);
@@ -261,28 +306,48 @@ const GIT_PUSH = /(^|[;&|(\n`]|\$\()\s*(\S*\/)?git(\s+(-[cC]\s+\S+|--[\w-]+(=\S+
 interface GitCall {
   sub: string | undefined;
   rest: string[];
+  /** Present when an inline `-c alias.<x>=!...` expanded to a shell command. */
+  shellAlias?: string;
 }
 
 /**
  * The git subcommand and its arguments for a stripped argv, or undefined when it is not git. An alias defined inline
- * (`git -c alias.p=push p`, `-c alias.p='!git push'`) is expanded.
+ * (`git -c alias.p=push p`, `-c alias.p='!git push'`, `-calias.p=push p`) is expanded.
  */
-function gitCall(argv: string[]): GitCall | undefined {
+export function gitCall(argv: string[]): GitCall | undefined {
   const first = argv[0];
   if (!first || baseName(first).toLowerCase() !== "git") return undefined;
   const args = argv.slice(1);
   const aliases = new Map<string, string>();
   let i = 0;
   while (i < args.length && args[i]!.startsWith("-")) {
-    const alias = args[i] === "-c" ? /^alias\.([^=]+)=(.*)$/i.exec(args[i + 1] ?? "") : null;
-    if (alias) aliases.set(alias[1]!.toLowerCase(), alias[2]!);
-    i += GIT_VALUE_FLAGS.has(args[i]!) ? 2 : 1;
+    const opt = args[i]!;
+    if (opt === "-c") {
+      const alias = /^alias\.([^=]+)=(.*)$/i.exec(args[i + 1] ?? "");
+      if (alias) aliases.set(alias[1]!.toLowerCase(), alias[2]!);
+      i += 2;
+      continue;
+    }
+    if (opt.startsWith("-c") && opt.length > 2) {
+      const alias = /^alias\.([^=]+)=(.*)$/i.exec(opt.slice(2));
+      if (alias) aliases.set(alias[1]!.toLowerCase(), alias[2]!);
+      i += 1;
+      continue;
+    }
+    i += GIT_VALUE_FLAGS.has(opt) ? 2 : 1;
   }
   const sub = args[i];
   const rest = args.slice(i + 1);
   const expansion = sub === undefined ? undefined : aliases.get(sub.toLowerCase());
   if (expansion === undefined) return { sub, rest };
-  const words = expansion.replace(/^!\s*/, "").trim().split(/\s+/);
+  const trimmed = expansion.trim();
+  if (trimmed.startsWith("!")) {
+    const shellCmd = trimmed.slice(1).trim();
+    const words = shellCmd.split(/\s+/);
+    if (words[0] === "git") words.shift();
+    return { sub: words[0], rest: [...words.slice(1), ...rest], shellAlias: shellCmd };
+  }
+  const words = trimmed.split(/\s+/);
   if (words[0] === "git") words.shift();
   return { sub: words[0], rest: [...words.slice(1), ...rest] };
 }
@@ -291,10 +356,11 @@ function gitCall(argv: string[]): GitCall | undefined {
 function movesBranch(call: GitCall): boolean {
   if (call.sub === "switch") return true;
   if (call.sub === "symbolic-ref") return call.rest.filter((arg) => !arg.startsWith("-")).length >= 2;
+  if (call.sub === "update-ref") return call.rest.some((arg) => arg === "HEAD");
   if (call.sub !== "checkout") return false;
   if (call.rest.some((arg) => /^-[A-Za-z]*[bB][A-Za-z]*$/.test(arg) || arg === "--orphan" || arg === "--detach")) return true;
   const dash = call.rest.indexOf("--");
-  return dash < 0 && call.rest.some((arg) => arg === "-" || !arg.startsWith("-"));
+  return dash < 0 && call.rest.some((arg) => (arg === "-" || !arg.startsWith("-")) && arg !== ".");
 }
 
 /**

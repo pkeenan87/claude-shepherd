@@ -6,6 +6,7 @@ import { isSessionLog } from "./agent-sweep.js";
  */
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
+import path from "node:path";
 import { agentCommand, TRUST_PROMPTS, type TicketModel, type TrustPrompt } from "../agents.js";
 import type { CostRecord, Phase } from "../domain.js";
 import { lastAssistantText, ledgerChildSession, readChildSession, type ChildSessionFile } from "../herdr/session-file.js";
@@ -68,17 +69,30 @@ export function piProgram(ctx: WorkflowContext, model: Extract<TicketModel, { ki
 }
 
 /** An external agent in a tab, metered from its log (else one "not metered" row). Call before the tab opens: the log is snapshotted here. Throws when cursor-agent's status hook cannot be installed. */
-export function agentProgram(ctx: WorkflowContext, model: Extract<TicketModel, { kind: "agent" }>, input: { home?: string } & ProgramLedger): Program {
+export function agentProgram(ctx: WorkflowContext, model: Extract<TicketModel, { kind: "agent" }>, input: { home?: string; cwd?: string } & ProgramLedger): Program {
+  const cwd = input.cwd ?? ctx.git.repoRoot;
+  let cursorUsageFile: string | undefined;
   if (model.name === "cursor-agent") {
     const home = input.home ?? ctx.agentLogHome ?? homedir();
     const hook = ensureCursorStatusHook(home);
     if ("problem" in hook) throw new Error(hook.problem);
     if (hook.changed) ctx.progress?.(cursorHookInstalledLine(home));
+    const sessionsDir = path.join(ctx.store.root, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    cursorUsageFile = path.resolve(sessionsDir, `cursor-usage-${ctx.now().getTime()}-${ctx.id()}.jsonl`);
   }
   // Advancing the watermark keeps the outside-chef sweep from counting this tab again.
-  const meter = createAgentMeter(model.name, { cwd: ctx.git.repoRoot, home: input.home ?? ctx.agentLogHome, onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset, input.job).catch(() => undefined), exclude: (file) => isSessionLog(ctx, file) });
+  const meter = createAgentMeter(model.name, {
+    cwd,
+    home: input.home ?? ctx.agentLogHome,
+    ...(cursorUsageFile ? { cursorUsageFile } : {}),
+    onConsumed: (file, offset) => void ctx.store.advanceAgentLog(file, offset, input.job).catch(() => undefined),
+    exclude: (file) => isSessionLog(ctx, file),
+  });
+  const baseArgv = agentCommand(model, ctx.config);
+  const argv = cursorUsageFile ? ["env", `SHEPHERD_CURSOR_USAGE_LOG=${cursorUsageFile}`, ...baseArgv] : baseArgv;
   return {
-    argv: agentCommand(model, ctx.config),
+    argv,
     ...(TRUST_PROMPTS[model.name] ? { trust: TRUST_PROMPTS[model.name] } : {}),
     ...(model.name === "cursor-agent" ? { silentHint: CURSOR_SILENT_HINT } : {}),
     collect: () => {

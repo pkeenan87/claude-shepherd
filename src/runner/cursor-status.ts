@@ -11,12 +11,21 @@ import { atomicWrite } from "../storage/store.js";
 
 export const CURSOR_STATUS_FILE = "shepherd-hc-status.sh";
 
-/** A Cursor hook process has no controlling tty, so the script walks up its ancestors to the first one that has a terminal. */
+/** A Cursor hook process has no controlling tty, so the script walks up its ancestors to the first one that has a terminal. On `stop` hooks, when `SHEPHERD_CURSOR_USAGE_LOG` is set, it also records Cursor's stdin token-usage JSON payload for local metering. */
 export const CURSOR_STATUS_SCRIPT = `#!/bin/sh
 # Written by shepherd (claude-shepherd) and overwritten by it: edit nothing here.
 # Tells herdr (hc) the status of the terminal cursor-agent runs in: OSC 7501, which cursor-agent does not send itself.
+# Also logs Cursor stop-hook token payloads to $SHEPHERD_CURSOR_USAGE_LOG when set by shepherd.
 # Usage (Cursor hook): shepherd-hc-status.sh idle|working|blocked
-cat >/dev/null
+payload="$(cat 2>/dev/null)"
+if [ -n "\${SHEPHERD_CURSOR_USAGE_LOG:-}" ] && [ -n "$payload" ]; then
+  case "$payload" in
+    *"input_tokens"*|*"output_tokens"*)
+      mkdir -p "$(dirname "$SHEPHERD_CURSOR_USAGE_LOG")" 2>/dev/null
+      printf '%s\\n' "$(printf '%s' "$payload" | tr '\\r\\n' '  ')" >>"$SHEPHERD_CURSOR_USAGE_LOG" 2>/dev/null
+      ;;
+  esac
+fi
 [ -n "\${HC_TERMINAL_ID:-}" ] || exit 0
 state="\${1:-}"
 case "$state" in
@@ -72,7 +81,7 @@ export function ensureCursorStatusHook(home: string): { changed: boolean } | { p
     for (const [event, state] of EVENTS) {
       const list = hooks[event];
       if (list !== undefined && !Array.isArray(list)) return { problem: `hooks.${event} in ${hooksFile} is not a list; shepherd did not change it` };
-      const command = `sh '${script}' ${state}`;
+      const command = `sh '${script.replace(/'/g, "'\\''")}' ${state}`;
       const entries = (list ?? []) as unknown[];
       if (entries.some((entry) => isRecord(entry) && entry.command === command)) continue;
       hooks[event] = [...entries, { command } satisfies Hook];

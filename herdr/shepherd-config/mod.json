@@ -1,1 +1,11 @@
-{"place":"right","size":340}
+{
+  "place": "right",
+  "size": 360,
+  "focusable": true,
+  "link_handlers": [
+    {
+      "kind": "file",
+      "pattern": "(?:\\.shepherd/(?:tasks/[^/]+/)?reports/review[^\\s]*\\.md|_plans/[^\\s]+\\.md)$"
+    }
+  ]
+}

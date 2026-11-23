@@ -173,7 +173,7 @@ describe("Codex meter", () => {
 
 describe("agents with no reader", () => {
   it("have no meter, and their attempt is one 'not metered' entry", () => {
-    for (const name of ["gemini", "cursor-agent", "grok", "agy", "opencode", "mine"]) expect(createAgentMeter(name, { cwd: "/work/app", home: dir() })).toBeUndefined();
+    for (const name of ["cursor-agent", "grok", "opencode", "mine"]) expect(createAgentMeter(name, { cwd: "/work/app", home: dir() })).toBeUndefined();
     expect(notMeteredEntry("gemini")).toMatchObject({ agent: "gemini", meter: "not-metered", provider: "agent", model: "gemini", usage: { input: 0, output: 0, requests: 1 } });
     expect(meteredEntries("claude", [{ provider: "anthropic", model: "m", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, requests: 1 } }])).toEqual([{ agent: "claude", meter: "agent-log", provider: "anthropic", model: "m", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, requests: 1 } }]);
   });

@@ -8,6 +8,10 @@ const PATTERNS: RegExp[] = [
   /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9_]{10,}/g,
   /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{10,}/g,
   /(?<![A-Za-z0-9])npm_[A-Za-z0-9]{20,}/g,
+  /(?<![A-Za-z0-9])hf_[A-Za-z0-9]{20,}/g,
+  /(?<![A-Za-z0-9])glpat-[A-Za-z0-9_-]{16,}/g,
+  /(?<![A-Za-z0-9])xapp-[A-Za-z0-9-]{16,}/g,
+  /(?<![A-Za-z0-9])pypi-[A-Za-z0-9_-]{20,}/g,
   /(?<![A-Za-z0-9])xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])/g,
   /(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{35}/g,
@@ -24,9 +28,9 @@ const PATTERNS: RegExp[] = [
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"']+:[^\s@/"']+@/gi,
 ];
 
-// key = value / key: value / "key": "value", with optional prefix such as DB_ or client_. Groups: key and separator,
-// opening quote, value. Handled apart from PATTERNS because a value that is code, not a literal, stays.
-const KEY_VALUE = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?[A-Za-z0-9_.-]{0,40}${KEY_WORD}["']?\s*[:=]\s*)(["']?)([^\s"',}]+)`, "gi");
+// key = value / key: value / "key": "value", with optional prefix such as DB_ or client_.
+// Matches full quoted contents (including spaces inside quotes, leaving the closing quote intact) or unquoted non-whitespace tokens.
+const KEY_VALUE = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?[A-Za-z0-9_.-]{0,40}${KEY_WORD}["']?\s*[:=]\s*)(?:"([^"\r\n]*)|'([^'\r\n]*)|([^\s"',}]+))`, "gi");
 
 /** An unquoted value that is a structure, an environment lookup, a call, a keyword, or a number: code, not a secret. */
 function isNotLiteral(value: string): boolean {
@@ -49,21 +53,26 @@ export function redact(value: string): string {
     next = next.replace(pattern, replacement);
   }
   KEY_VALUE.lastIndex = 0;
-  return next.replace(KEY_VALUE, (match: string, _key: string, quote: string, value: string) => (!quote && isNotLiteral(value) ? match : "[REDACTED]"));
+  return next.replace(KEY_VALUE, (match: string, _key: string, dq: string | undefined, sq: string | undefined, bare: string | undefined) => {
+    if (bare !== undefined) return isNotLiteral(bare) ? match : "[REDACTED]";
+    const quoted = dq ?? sq ?? "";
+    if (quoted === "") return match;
+    return "[REDACTED]";
+  });
 }
 export function containsSecret(value: string): boolean {
   return redact(value) !== value;
 }
 
-export function redactUnknown(value: unknown): unknown {
+export function redactUnknown(value: unknown, seen = new WeakSet<object>()): unknown {
   if (typeof value === "string") return redact(value);
-  if (Array.isArray(value)) return value.map((item) => redactUnknown(item));
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [key, inner] of Object.entries(value)) {
-      out[key] = redactUnknown(inner);
-    }
-    return out;
+  if (!value || typeof value !== "object") return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((item) => redactUnknown(item, seen));
+  const out: Record<string, unknown> = {};
+  for (const [key, inner] of Object.entries(value)) {
+    out[key] = redactUnknown(inner, seen);
   }
-  return value;
+  return out;
 }

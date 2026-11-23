@@ -16,7 +16,7 @@ import { assertGraph, waves } from "./plan.js";
 import { ticketPrompt } from "./prompts.js";
 import { TURN_GRACE, type ChunkLimits } from "./turn-budget.js";
 import { climbed, modelFor, nextRung, routeFor } from "./routing.js";
-import { reviewFailureDetail, reviewTicket, type TicketReviewOutcome } from "./ticket-review.js";
+import { closeWarmTicketReview, reviewFailureDetail, reviewTicket, type TicketReviewOutcome } from "./ticket-review.js";
 import { groupId, parseCriteriaMet, setTicketStatus, splitCheckLine, tickCriteria, ticketFileName, ticketsToGroups } from "./tickets.js";
 
 /** Phases /build may start or resume from. */
@@ -152,7 +152,12 @@ export function startBuild(ctx: WorkflowContext): Promise<CommandResult> {
     if (holder) {
       return fail("BUILD_RUNNING", `Another shepherd build (pid ${holder.pid}${holder.checkout ? `, in ${holder.checkout}` : ""}) is building ${displayName(state)}. Let it finish or stop it, then /build again.`);
     }
+    const failReleased = (code: string, message: string): CommandResult => {
+      ctx.store.releaseBuild(state.taskId);
+      return fail(code, message);
+    };
 
+    const hadBuild = !!state.build;
     // A fresh build in this checkout commits the whole tree per ticket, so changes made before it would land in ticket
     // 01's commit. Ask before touching the branch; the commit itself waits until the build is on its branch.
     let commitFirst = false;
@@ -163,7 +168,7 @@ export function startBuild(ctx: WorkflowContext): Promise<CommandResult> {
         if (dirty.length > 8) listed.push(`  and ${dirty.length - 8} more`);
         commitFirst = await ctx.confirm("Uncommitted changes", `${listed.join("\n")}\n\nCommit them as a separate "Changes before /build" commit, so they stay out of ticket 01's commit?`);
         if (!commitFirst) {
-          return fail("DIRTY_TREE", "Uncommitted changes in the working tree. Commit or stash them first, or answer yes when /build asks, so they don't land in ticket 01's commit.");
+          return failReleased("DIRTY_TREE", "Uncommitted changes in the working tree. Commit or stash them first, or answer yes when /build asks, so they don't land in ticket 01's commit.");
         }
       }
     }
@@ -173,10 +178,10 @@ export function startBuild(ctx: WorkflowContext): Promise<CommandResult> {
       if (current !== state.build.branch) {
         const target = state.build.branch;
         if (!(await ctx.git.branchExists(target))) {
-          return fail("WRONG_BRANCH", `This build is on branch ${target}, which no longer exists (you are on ${current}). Recreate it with \`git switch -c ${target}\` at the commit you want, then /build again.`);
+          return failReleased("WRONG_BRANCH", `This build is on branch ${target}, which no longer exists (you are on ${current}). Recreate it with \`git switch -c ${target}\` at the commit you want, then /build again.`);
         }
         if ((await dirtyPaths(ctx)).length > 0) {
-          return fail("DIRTY_TREE", `This build is on branch ${target}, but you are on ${current} with uncommitted changes. Commit or stash them; /build then switches to ${target} itself.`);
+          return failReleased("DIRTY_TREE", `This build is on branch ${target}, but you are on ${current} with uncommitted changes. Commit or stash them; /build then switches to ${target} itself.`);
         }
         await ctx.git.switchTo(target);
         ctx.store.setActive(state.taskId, target);
@@ -192,7 +197,8 @@ export function startBuild(ctx: WorkflowContext): Promise<CommandResult> {
       try {
         await ctx.git.switchCreate(branch, baseSha);
       } catch (error) {
-        if (commitFirst) return fail("DIRTY_TREE", `Could not create ${branch} from ${base}: the uncommitted changes conflict with it. Commit or stash them, then /build again. ${(error as Error).message}`.trim());
+        if (commitFirst) return failReleased("DIRTY_TREE", `Could not create ${branch} from ${base}: the uncommitted changes conflict with it. Commit or stash them, then /build again. ${(error as Error).message}`.trim());
+        ctx.store.releaseBuild(state.taskId);
         throw error;
       }
       build = { branch, base, baseSha };
@@ -210,7 +216,15 @@ export function startBuild(ctx: WorkflowContext): Promise<CommandResult> {
     });
     // Kept until the build is done or stopped (`runBuild`), also between `--once` runs: the pretool guard honours it.
     ctx.store.markBuilding(state.taskId, iso(ctx));
-    return done(`Building ${state.plan!.tickets!.length} ticket(s) on ${build.branch} (base ${build.base}).`, state);
+    const total = state.plan!.tickets!.length;
+    const doneCount = Object.values(state.ticketRuns ?? {}).filter((run) => run.status === "done").length;
+    const left = Math.max(0, total - doneCount);
+    return done(
+      hadBuild
+        ? `Resuming ${build.branch}: ${left} of ${total} ticket(s) left (${doneCount}/${total} done).`
+        : `Building ${total} ticket(s) on ${build.branch} (base ${build.base}).`,
+      state,
+    );
   });
 }
 
@@ -284,18 +298,27 @@ function failureDetail(evidence: CheckEvidence[]): string {
  * Known spend on a ticket since a chunk began, from the ledger, split by who incurred it: the review model
  * (`ticket review ...`) and the implementer (the rest: its turns). A part is null when any of its entries is unknown.
  */
-function ticketSpend(ctx: WorkflowContext, taskId: string, ticketId: string, since: string | undefined): CostSplit & { total: number | null; notMetered: boolean } {
+function ticketSpend(
+  ctx: WorkflowContext,
+  taskId: string,
+  ticketId: string,
+  since: string | undefined,
+): CostSplit & { total: number | null; notMetered: boolean; turns: number; tokens: number } {
   const micro: Record<keyof CostSplit, number | null> = { implementer: 0, review: 0 };
   let notMetered = false;
+  let turns = 0;
+  let tokens = 0;
   for (const record of ctx.store.readLedger()) {
     if (record.taskId !== taskId || !record.reason.endsWith(` ticket ${ticketId}`) || (since !== undefined && record.at < since)) continue;
     if (record.meter === "not-metered") notMetered = true;
+    turns += Math.max(0, record.requests || 0);
+    tokens += (record.inputTokens ?? 0) + (record.outputTokens ?? 0) + (record.cacheReadTokens ?? 0) + (record.cacheWriteTokens ?? 0);
     // Compaction and web_search are the implementer's session.
     const part: keyof CostSplit = record.reason.startsWith("ticket review") ? "review" : "implementer";
     micro[part] = micro[part] === null || record.actualUsd === null ? null : micro[part]! + toMicroUsd(record.actualUsd);
   }
   const split = { implementer: micro.implementer === null ? null : fromMicroUsd(micro.implementer), review: micro.review === null ? null : fromMicroUsd(micro.review) };
-  return { ...split, total: sumSplit(split), notMetered };
+  return { ...split, total: sumSplit(split), notMetered, turns, tokens };
 }
 
 const addUsd = (a: number | null, b: number | null): number | null => (a === null || b === null ? null : fromMicroUsd(toMicroUsd(a) + toMicroUsd(b)));
@@ -350,9 +373,9 @@ function commitSubject(ticket: Ticket): string {
   return `${ticket.id}: ${ticket.title}`.replace(/\s+/g, " ").trim();
 }
 
-function attempt(run: TicketRun, startedAt: string, elapsedMs: number, split: CostSplit & { total: number | null; notMetered?: boolean }, outcome: TicketAttempt["outcome"], failedBy?: TicketAttempt["failedBy"], error?: string): TicketAttempt {
-  const { total, notMetered: _notMetered, ...costSplit } = split;
-  return { attempt: run.attempts, tier: rungOf(run.tier, "medium"), provider: run.provider ?? "", model: run.model ?? "", startedAt, elapsedMs, turns: 0, costUsd: total, costSplit, outcome, ...(failedBy ? { failedBy } : {}), ...(error ? { error: error.slice(0, 500) } : {}) };
+function attempt(run: TicketRun, startedAt: string, elapsedMs: number, split: CostSplit & { total: number | null; notMetered?: boolean; turns?: number }, outcome: TicketAttempt["outcome"], failedBy?: TicketAttempt["failedBy"], error?: string): TicketAttempt {
+  const { total, notMetered: _notMetered, turns = 0, ...costSplit } = split;
+  return { attempt: run.attempts, tier: rungOf(run.tier, "medium"), provider: run.provider ?? "", model: run.model ?? "", startedAt, elapsedMs, turns, costUsd: total, costSplit, outcome, ...(failedBy ? { failedBy } : {}), ...(error ? { error: error.slice(0, 500) } : {}) };
 }
 
 const clip = (text: string) => text.slice(0, MAX_SUMMARY_CHARS);
@@ -382,12 +405,12 @@ export async function nextChunk(ctx: WorkflowContext): Promise<NextChunk> {
       const committed = run?.status === "in-progress" && run.attemptStart ? await ctx.git.commitWithSubject(run.attemptStart.head, commitSubject(ticket)) : undefined;
       if (committed) {
         const spent = ticketSpend(ctx, state.taskId, ticket.id, run!.attemptStart!.at);
-        const { total, notMetered, ...split } = spent;
+        const { total, notMetered, turns, tokens, ...split } = spent;
         await patch(
           ctx,
           state.taskId,
           ticket,
-          (previous) => ({ ...previous, status: "done", error: undefined, failedBy: undefined, commit: committed, costUsd: addUsd(previous.costUsd ?? 0, total), costSplit: addSplit(previous.costSplit, split), ...(notMetered ? { notMetered: true } : {}) }),
+          (previous) => ({ ...previous, status: "done", error: undefined, failedBy: undefined, commit: committed, turns: (previous.turns ?? 0) + turns, tokens: (previous.tokens ?? 0) + tokens, costUsd: addUsd(previous.costUsd ?? 0, total), costSplit: addSplit(previous.costSplit, split), ...(notMetered ? { notMetered: true } : {}) }),
           (build) => ({ ...build, currentTicket: undefined, chunkStartedAt: undefined }),
         );
         editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(markdown, "done"));
@@ -405,8 +428,8 @@ export async function nextChunk(ctx: WorkflowContext): Promise<NextChunk> {
         if (settled.kind === "committed" || settled.kind === "review-failed") {
           const spent = ticketSpend(ctx, state.taskId, ticket.id, began);
           const elapsed = Math.max(0, ctx.now().getTime() - new Date(began).getTime());
-          const { total, notMetered, ...split } = spent;
-          const accrue = (previous: TicketRun): TicketRun => ({ ...previous, elapsedMs: (previous.elapsedMs ?? 0) + elapsed, costUsd: addUsd(previous.costUsd, total), costSplit: addSplit(previous.costSplit, split), ...(notMetered ? { notMetered: true } : {}) });
+          const { total, notMetered, turns, tokens, ...split } = spent;
+          const accrue = (previous: TicketRun): TicketRun => ({ ...previous, elapsedMs: (previous.elapsedMs ?? 0) + elapsed, turns: (previous.turns ?? 0) + turns, tokens: (previous.tokens ?? 0) + tokens, costUsd: addUsd(previous.costUsd, total), costSplit: addSplit(previous.costSplit, split), ...(notMetered ? { notMetered: true } : {}) });
           const entry = (previous: TicketRun, outcome: TicketAttempt["outcome"], failedBy?: TicketAttempt["failedBy"], error?: string): TicketAttempt => ({ ...attempt(previous, began, elapsed, spent, outcome, failedBy, error), provider: "", model: "hand fix" });
           if (settled.kind === "committed") {
             await patch(ctx, state.taskId, ticket, (previous) => {
@@ -560,13 +583,14 @@ export async function finishChunk(ctx: WorkflowContext, ticketId: string, result
     const startedAt = state.build.chunkStartedAt ?? iso(ctx);
     const measure = () => ({ elapsed: Math.max(0, ctx.now().getTime() - new Date(startedAt).getTime()), spent: ticketSpend(ctx, state.taskId, ticketId, startedAt) });
     const accrue = (previous: TicketRun, m: ReturnType<typeof measure>): TicketRun => {
-      const { total, notMetered, ...split } = m.spent;
-      return { ...previous, elapsedMs: (previous.elapsedMs ?? 0) + m.elapsed, costUsd: addUsd(previous.costUsd, total), costSplit: addSplit(previous.costSplit, split), ...(notMetered ? { notMetered: true } : {}), summary: result.lastText ? clip(redact(result.lastText)) : previous.summary };
+      const { total, notMetered, turns, tokens, ...split } = m.spent;
+      return { ...previous, elapsedMs: (previous.elapsedMs ?? 0) + m.elapsed, turns: (previous.turns ?? 0) + turns, tokens: (previous.tokens ?? 0) + tokens, costUsd: addUsd(previous.costUsd, total), costSplit: addSplit(previous.costSplit, split), ...(notMetered ? { notMetered: true } : {}), summary: result.lastText ? clip(redact(result.lastText)) : previous.summary };
     };
     const release = (build: BuildRecord): BuildRecord => ({ ...build, currentTicket: undefined, chunkStartedAt: undefined });
 
     // The model ran out of turns: its failure, like a failed check, so the next /build escalates it.
     if (result.turnLimit) {
+      await closeWarmTicketReview(state.taskId, ticketId);
       const limit = ctx.config.routing.maxTicketTurns;
       const reason = `Ran out of turns: ${limit} turns plus ${TURN_GRACE} to wrap up (routing.maxTicketTurns) without finishing.`;
       const m = measure();
@@ -580,6 +604,7 @@ export async function finishChunk(ctx: WorkflowContext, ticketId: string, result
     }
 
     if (result.aborted) {
+      await closeWarmTicketReview(state.taskId, ticketId);
       const m = measure();
       await patch(ctx, state.taskId, ticket, (previous) => ({ ...accrue(previous, m), status: "in-progress" }), release);
       return { kind: "stopped", code: "ABORTED", reason: `Stopped while ticket ${ticketId} was running. It stays in progress; /build resumes it.` };
@@ -587,6 +612,7 @@ export async function finishChunk(ctx: WorkflowContext, ticketId: string, result
 
     const settled = await settle(ctx, state, ticket, result.lastText, () => reviewTicket(ctx, state, ticket, run));
     if (settled.kind === "committed") {
+      await closeWarmTicketReview(state.taskId, ticketId);
       const m = measure();
       await patch(ctx, state.taskId, ticket, (previous) => {
         const next = accrue(previous, m);
@@ -603,6 +629,7 @@ export async function finishChunk(ctx: WorkflowContext, ticketId: string, result
     if (settled.kind === "failed" && settled.verdict === "failed" && !options.final) {
       return { kind: "retry", reason: "checks", text: `The checks failed:\n\n${settled.detail}\n\nFix it; do not commit.` };
     }
+    await closeWarmTicketReview(state.taskId, ticketId);
     const failedBy: NonNullable<TicketRun["failedBy"]> = settled.kind === "review-failed" ? "review" : settled.verdict === "failed" ? "checks" : settled.verdict;
     const reason =
       settled.kind === "review-failed"
@@ -660,9 +687,10 @@ const usdCell = (value: number | null | undefined) => (value === undefined ? "-"
 export function costLabel(run: TicketRun | undefined): string {
   if (!run) return "-";
   // An agent on a subscription has no per-token price: its work shows as "not metered", beside the review's cost.
-  const total = run.notMetered && !run.costUsd ? "not metered" : run.notMetered ? `${formatUsd(run.costUsd)} + not metered` : formatUsd(run.costUsd);
+  // Distinguish known $0 (not metered only) from null (unknown cost + not metered).
+  const total = run.notMetered && run.costUsd === 0 ? "not metered" : run.notMetered ? `${formatUsd(run.costUsd)} + not metered` : formatUsd(run.costUsd);
   if (!run.reviews?.length || !run.costSplit) return total;
-  return `${total} (impl ${run.notMetered && !run.costSplit.implementer ? "not metered" : usdCell(run.costSplit.implementer)} · review ${usdCell(run.costSplit.review)})`;
+  return `${total} (impl ${run.notMetered && run.costSplit.implementer === 0 ? "not metered" : usdCell(run.costSplit.implementer)} · review ${usdCell(run.costSplit.review)})`;
 }
 
 /**
@@ -708,19 +736,36 @@ function logTicket(ctx: WorkflowContext, taskId: string, ticketId: string): void
 export function buildReport(ctx: WorkflowContext, stopped?: string): string {
   const state = requireActive(ctx);
   const tickets = state.plan?.tickets ?? [];
+  const doneCount = tickets.filter((ticket) => state.ticketRuns?.[ticket.id]?.status === "done").length;
+  let totalMs = 0;
+  let totalCostMicro: number | null = 0;
+  let anyNotMetered = false;
   const rows = tickets.map((ticket) => {
     const run = state.ticketRuns?.[ticket.id];
+    if (run?.elapsedMs !== undefined) totalMs += run.elapsedMs;
+    if (run?.notMetered) anyNotMetered = true;
+    if (run) {
+      if (run.costUsd === null) totalCostMicro = null;
+      else if (totalCostMicro !== null) totalCostMicro += toMicroUsd(run.costUsd);
+    }
     const model = run?.provider && run.model ? ranModelText(run.provider, run.model) : "-";
     const result = resultLabel(run);
     return `| ${ticket.id} | ${ticket.title.replace(/\|/g, "/")} | ${ticketDifficulty(ticket)} | ${model} | ${reviewLabel(run)} | ${run?.elapsedMs !== undefined ? formatDuration(run.elapsedMs) : "-"} | ${costLabel(run)} | ${result} |`;
   });
+  const totalCostUsd = totalCostMicro === null ? null : fromMicroUsd(totalCostMicro);
+  const totalCostCell = anyNotMetered && totalCostUsd === 0 ? "not metered" : anyNotMetered ? `${formatUsd(totalCostUsd)} + not metered` : formatUsd(totalCostUsd);
+  const totalRow = `| **Total** | ${doneCount}/${tickets.length} done | | | | ${totalMs > 0 ? formatDuration(totalMs) : "-"} | ${totalCostCell} | |`;
   const unreviewed = tickets.flatMap((ticket) => {
     const last = state.ticketRuns?.[ticket.id]?.reviews?.at(-1);
     return last?.verdict === "unavailable" && state.ticketRuns?.[ticket.id]?.status === "done" ? [`- Ticket ${ticket.id} was committed without its review: ${last.rationale}`] : [];
   });
+  const budget = budgetState(ctx, state.taskId);
+  const spentText = (b: { knownUsd: number; estimatedUnknownUsd: number; unknownRecords: number }) =>
+    `${b.unknownRecords > 0 ? "≈" : ""}${formatUsd(fromMicroUsd(toMicroUsd(b.knownUsd) + toMicroUsd(b.estimatedUnknownUsd)))}`;
+  const budgetLine = `Spend: task ${spentText(budget.task)} / $${ctx.config.budgets.taskUsd} · today ${spentText(budget.daily)} / $${ctx.config.budgets.dailyUsd}`;
   const finished = tickets.every((ticket) => state.ticketRuns?.[ticket.id]?.status === "done");
   const next = finished ? "Next: /review to check the branch, then push and open the PR yourself (git push, then origin pr create or gh pr create)." : `Next: ${stopped ?? "run /build to continue."} /build resumes from here.`;
-  return [`### Build${state.build ? ` · ${state.build.branch}` : ""}`, "", "| Ticket | Title | Difficulty | Model | Review | Time | Cost | Result |", "| --- | --- | --- | --- | --- | --- | --- | --- |", ...rows, ...(unreviewed.length ? ["", ...unreviewed] : []), "", next].join("\n");
+  return [`### Build${state.build ? ` · ${state.build.branch}` : ""} · ${doneCount}/${tickets.length} done`, "", "| Ticket | Title | Difficulty | Model | Review | Time | Cost | Result |", "| --- | --- | --- | --- | --- | --- | --- | --- |", ...rows, totalRow, ...(unreviewed.length ? ["", ...unreviewed] : []), "", budgetLine, next].join("\n");
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -745,6 +790,16 @@ export interface BuildDriver {
   fresh(model: ModelRef, run: (session: ChunkSession) => Promise<void>, ticketId: string, limits?: ChunkLimits, attempt?: number): Promise<void | { stopped: string }>;
 }
 
+/** Snapshot of the active build's ticket progress and budget spend. */
+export interface BuildProgressStatus {
+  done: number;
+  total: number;
+  failed: number;
+  branch?: string;
+  taskSpentUsd: number;
+  dailySpentUsd: number;
+}
+
 /** What `runBuild` reports in `data` when it ran with `once`. */
 export interface BuildOnceData {
   /** The ticket this run worked on; absent when none was left or the build stopped before one was picked. */
@@ -752,6 +807,13 @@ export interface BuildOnceData {
   outcome: "committed" | "stopped" | "done";
   /** Every ticket is built. */
   done: boolean;
+  /** Progress counts for the active task's plan. */
+  ticketsDone?: number;
+  ticketsTotal?: number;
+  ticketsFailed?: number;
+  branch?: string;
+  taskSpentUsd?: number;
+  dailySpentUsd?: number;
   /** Why the build stopped (the code is the result's `code`). */
   stopped?: string;
   /** The ticket the next run will build. */
@@ -777,6 +839,8 @@ export interface BuildWorkflow {
   /** Rolls a ticket back to not started when its session never took a turn. */
   unstartChunk(ticketId: string, previous?: TicketRun): Promise<void>;
   buildReport(stopped?: string): string;
+  /** Ticket progress and spend snapshot for status indicators. */
+  buildStatus?(): BuildProgressStatus | undefined;
   /** The first ticket not done, in build order (for `once`). */
   peekTicket?(): { id: string; title: string; difficulty: string } | undefined;
   progress(text: string): void;
@@ -834,6 +898,8 @@ async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver, 
         break;
       }
       worked = chunk.ticket;
+      const beforeStatus = getWorkflow().buildStatus?.();
+      getWorkflow().progress(`Starting ticket ${chunk.ticket.id}${beforeStatus ? ` (${beforeStatus.done}/${beforeStatus.total} done)` : ""} · ${ticketDifficulty(chunk.ticket)} · ${ranModelText(chunk.model.provider, chunk.model.id)} · ${chunk.ticket.title}`);
       const began = getWorkflow().now().getTime();
       let outcome: ChunkFinish | undefined;
       let sent = false;
@@ -884,8 +950,9 @@ async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver, 
       }
       if (result.kind === "committed") {
         built += 1;
+        const afterStatus = workflow.buildStatus?.();
         const split = result.review ? ` (impl ${result.notMetered && !result.costSplit.implementer ? "not metered" : usdCell(result.costSplit.implementer)} · review ${usdCell(result.costSplit.review)})` : "";
-        workflow.progress(`Ticket ${chunk.ticket.id} · ${ticketDifficulty(chunk.ticket)} · ${ranModelText(chunk.model.provider, chunk.model.id)} · ${formatDuration(workflow.now().getTime() - began)} · ${result.notMetered && !result.costUsd ? "not metered" : formatUsd(result.costUsd)}${split} · checks passed${result.review ? ` · review ${result.review}` : ""} · committed ${result.sha.slice(0, 7)}`);
+        workflow.progress(`Ticket ${chunk.ticket.id} · ${ticketDifficulty(chunk.ticket)} · ${ranModelText(chunk.model.provider, chunk.model.id)} · ${formatDuration(workflow.now().getTime() - began)} · ${result.notMetered && !result.costUsd ? "not metered" : formatUsd(result.costUsd)}${split} · checks passed${result.review ? ` · review ${result.review}` : ""} · committed ${result.sha.slice(0, 7)}${afterStatus ? ` · ${afterStatus.done}/${afterStatus.total} done · task ${formatUsd(afterStatus.taskSpentUsd)}` : ""}`);
         if (result.warning) workflow.progress(result.warning);
         if (options.once) {
           finishedOne = true;
@@ -924,6 +991,12 @@ function onceResult(getWorkflow: () => BuildWorkflow, ran: { worked: Ticket | un
   } catch {
     /* no next ticket named */
   }
+  let status: BuildProgressStatus | undefined;
+  try {
+    status = workflow.buildStatus?.();
+  } catch {
+    /* status unavailable */
+  }
   const finished = finishedOne ? next === undefined : !stopped;
   // The table is for the end of the build; between tickets the one-line results are enough.
   let report: string | undefined;
@@ -935,11 +1008,64 @@ function onceResult(getWorkflow: () => BuildWorkflow, ran: { worked: Ticket | un
       /* the result still says how it ended */
     }
   }
-  const data = (outcome: BuildOnceData["outcome"]): BuildOnceData => ({ ...(ticket ? { ticket } : {}), outcome, done: finished, ...(stopped ? { stopped } : {}), ...(next ? { next } : {}), ...(report ? { report } : {}) });
+  const data = (outcome: BuildOnceData["outcome"]): BuildOnceData => ({
+    ...(ticket ? { ticket } : {}),
+    outcome,
+    done: finished,
+    ...(status
+      ? {
+          ticketsDone: status.done,
+          ticketsTotal: status.total,
+          ticketsFailed: status.failed,
+          ...(status.branch ? { branch: status.branch } : {}),
+          taskSpentUsd: status.taskSpentUsd,
+          dailySpentUsd: status.dailySpentUsd,
+        }
+      : {}),
+    ...(stopped ? { stopped } : {}),
+    ...(next ? { next } : {}),
+    ...(report ? { report } : {}),
+  });
   if (stopped) return { ok: false, code, text: stopped, data: data("stopped") };
   if (!finishedOne) return { ok: true, text: "All tickets are built. Run /review to check the branch, then push and open the PR yourself.", data: data("done") };
-  const text = next ? `Ticket ${worked!.id} is built. Next: ticket ${next.id} (${next.title}); run /build again.` : `Ticket ${worked!.id} is built, the last one. Run /review to check the branch, then push and open the PR yourself.`;
+  const progress = status ? ` (${status.done}/${status.total} done)` : "";
+  const text = next ? `Ticket ${worked!.id} is built${progress}. Next: ticket ${next.id} (${next.title}); run /build again.` : `Ticket ${worked!.id} is built${progress}, the last one. Run /review to check the branch, then push and open the PR yourself.`;
   return { ok: true, text, data: data("committed") };
+}
+
+/** Pauses an active build: clears the build-in-progress marker and moves IMPLEMENTING -> PAUSED cleanly. */
+export function pauseBuild(ctx: WorkflowContext): Promise<CommandResult> {
+  return guard(async () => {
+    const state = await requireActiveTask(ctx);
+    if (ctx.store.liveBuildClaim(state.taskId)) {
+      return fail("BUILD_RUNNING", `A build process is currently running for ${displayName(state)}; stop it (Ctrl-C) first, or wait for the current ticket to finish.`);
+    }
+    ctx.store.clearBuilding(state.taskId);
+    if (state.phase === "IMPLEMENTING") {
+      await ctx.store.update(state.taskId, "build paused", (task) => ({
+        ...move(task, "PAUSED", iso(ctx), "paused by user"),
+        ...(task.build ? { build: { ...task.build, currentTicket: undefined, chunkStartedAt: undefined } } : {}),
+      }));
+      return done(`Paused build for ${displayName(state)}. Branch guards are lifted; run /shepherd:build to resume.`, { taskId: state.taskId, phase: "PAUSED" });
+    }
+    return done(`Cleared build marker for ${displayName(state)} (phase ${state.phase}).`, { taskId: state.taskId, phase: state.phase });
+  });
+}
+
+/** Current build progress counts and spend for the active task. */
+export function buildStatus(ctx: WorkflowContext): BuildProgressStatus | undefined {
+  const id = ctx.store.readActive();
+  const state = id ? ctx.store.load(id) : undefined;
+  if (!state) return undefined;
+  const tickets = state.plan?.tickets ?? [];
+  const runs = Object.values(state.ticketRuns ?? {});
+  const total = tickets.length || runs.length;
+  const doneCount = runs.filter((run) => run.status === "done").length;
+  const failed = runs.filter((run) => run.status === "failed").length;
+  const budget = budgetState(ctx, state.taskId);
+  const taskSpentUsd = fromMicroUsd(toMicroUsd(budget.task.knownUsd) + toMicroUsd(budget.task.estimatedUnknownUsd));
+  const dailySpentUsd = fromMicroUsd(toMicroUsd(budget.daily.knownUsd) + toMicroUsd(budget.daily.estimatedUnknownUsd));
+  return { done: doneCount, total, failed, ...(state.build?.branch ? { branch: state.build.branch } : {}), taskSpentUsd, dailySpentUsd };
 }
 
 /** The first ticket whose run is not done, in build order, or undefined when every ticket is done. */

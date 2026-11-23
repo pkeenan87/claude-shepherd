@@ -1,29 +1,36 @@
 # Commands
 
-Five slash commands, backed by the `shepherd` CLI. A skill tells Claude Code which CLI calls to make; every rule (validation, redaction, ticket sizing, phases, budgets, approval, commits) is in the CLI, and Claude Code only fills the schemas it prints. Nothing here pushes, opens a pull request or merges. Do that yourself.
+Eight slash commands, backed by the `shepherd` CLI. A skill tells Claude Code which CLI calls to make; every rule (validation, redaction, ticket sizing, phases, budgets, approval, commits) is in the CLI. `/shepherd:build` and `/shepherd:review` never push or open PRs; remote operations exist only in `/shepherd:ship` (`--push`/`--pr`) and `/shepherd:cleanup --remote`, both gated by Claude Code's `PreToolUse` confirmation prompt.
 
 | Command | Effect |
 |---|---|
-| `/shepherd:plan <request>` | Interview, spec, tickets, then approve. Edits nothing. |
+| `/shepherd:plan <request>` | Interview, spec, tickets, optional `--worktree`, then approve. Edits nothing. |
 | `/shepherd:plans [<name> \| close <name> \| --all]` | List, switch to, or close tasks. |
+| `/shepherd:status` | Concise dashboard of active task, ticket progress, spend, and cache warmth. |
 | `/shepherd:build` | Build the approved plan, one ticket at a time, one commit each, in herdr sub-agents. |
-| `/shepherd:review [--with <model>]` | Checks, static scan and a model pass on the branch diff; offers to fix findings. |
-| `/shepherd:cost` | Spend by model, job and task against the budgets. |
+| `/shepherd:review [--with <model>]...` | Checks, static scan and single- or multi-model parallel review with consensus badges. |
+| `/shepherd:ship` | Branch preflight, PR body generator, and confirmation-gated `--push` / `--pr`. |
+| `/shepherd:cleanup` | Preview and clean stale worktrees, merged local/remote branches, closed plan mirrors, and expired sessions. |
+| `/shepherd:cost` | Spend by model, job, task, and ticket against budgets (with tokens, cache-hit %, and API-equivalent value). |
 
 ## The CLI
 
 ```text
 shepherd version
 shepherd cost [--json]
-shepherd status [--statusline]                    one line: plan, plan spend, today's spend (--statusline reads Claude Code's status line JSON)
+shepherd status [--json] [--statusline]           one line (or JSON): plan, ticket progress, spend, cache warmth
 shepherd statusline-install [--force]             puts that line in Claude Code's status line (~/.claude/settings.json)
-shepherd plan <start|spec|tickets|show|revise|approve> ...
+shepherd compact-config [--pct <30..90> | --off]  sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in ~/.claude/settings.json
+shepherd plan <start [--worktree [dir]] [--base <branch>]|spec|tickets|show|revise|approve> ...
 shepherd plans [<name> | close <name> | --all]
 shepherd task <list|use <name>|close [<name>] [--force]>
-shepherd build [--once] [--json]
-shepherd review [--with <model>] [--json]
+shepherd build [--once] [--json] | pause
+shepherd review [--with <model>]... [--json]
 shepherd fix <--tab|--list> [--json]
-shepherd hook <stop|prompt|pretool>               the plugin's hooks; reads hook JSON on stdin
+shepherd ship [--push | --pr [--draft]] [--base <branch>] [--json]
+shepherd cleanup [--dry-run] [--worktrees] [--branches] [--plans] [--sessions] [--remote] [--force] [--json]
+shepherd hook <stop|prompt|pretool|precompact|postcompact>   the plugin's hooks; reads hook JSON on stdin
+shepherd herdr-install [--layout <name>] [--no-dock]         installs shepherd-config + shepherd-viewer mods
 shepherd migrate-config [--force] [--json]
 ```
 

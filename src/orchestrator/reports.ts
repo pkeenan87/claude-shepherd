@@ -6,7 +6,7 @@ import { sweepAgentLogs } from "./agent-sweep.js";
 import { budgetState, statusFor } from "./budget.js";
 import { done, fail, guard, type WorkflowContext } from "./context.js";
 import { activeTask, displayName, listTasks } from "./tasks.js";
-import { cell, formatUsd, formatUsdShort, mdTable } from "./format.js";
+import { cell, formatTokens, formatUsd, formatUsdShort, mdTable } from "./format.js";
 
 /** What a budget has spent: the known sum, or "≈ known + estimate" when some calls have an unknown cost (as budgets count it). */
 function budgetSpent(summary: SpendSummary): string {
@@ -35,23 +35,50 @@ function jobOf(entry: CostRecord): string {
  */
 function spendRows(ctx: WorkflowContext, records: CostRecord[], key: (entry: CostRecord) => string, extra?: (key: string) => string[]): string[][] {
   const groups = new Map<string, CostRecord[]>();
-  for (const entry of records) groups.set(key(entry), [...(groups.get(key(entry)) ?? []), entry]);
+  for (const entry of records) {
+    const k = key(entry);
+    const list = groups.get(k);
+    if (list) list.push(entry);
+    else groups.set(k, [entry]);
+  }
   return [...groups.entries()]
     .map(([name, rows]) => ({ name, calls: rows.reduce((sum, entry) => sum + entry.requests, 0), spend: summarize(rows, { pricing: ctx.config.pricing, unknownCallUsd: ctx.config.budgets.unknownCallUsd }) }))
     .sort((a, b) => b.spend.knownUsd + b.spend.estimatedUnknownUsd - (a.spend.knownUsd + a.spend.estimatedUnknownUsd))
     .map(({ name, calls, spend }) => {
       // A group of nothing but subscription agents' rows has no dollar figure: it shows a count.
       const onlyUnmetered = spend.notMeteredRecords > 0 && spend.notMeteredRecords === groups.get(name)!.length;
+      const billedTotal = spend.knownUsd + spend.estimatedUnknownUsd;
+      const hasSubSavings = spend.apiEquivalentUsd > billedTotal + 0.00005;
+      const total = onlyUnmetered
+        ? "not metered"
+        : spend.unknownRecords > 0
+          ? `≈ ${formatUsd(billedTotal)}`
+          : hasSubSavings
+            ? `${formatUsd(spend.knownUsd)} (API-equiv ${formatUsd(spend.apiEquivalentUsd)})`
+            : formatUsd(spend.knownUsd);
       return [
         cell(name),
         String(calls),
         onlyUnmetered ? "-" : formatUsd(spend.knownUsd),
         spend.unknownRecords > 0 ? String(spend.unknownRecords) : "-",
         spend.notMeteredRecords > 0 ? String(spend.notMeteredRecords) : "-",
-        onlyUnmetered ? "not metered" : spend.unknownRecords > 0 ? `≈ ${formatUsd(spend.knownUsd + spend.estimatedUnknownUsd)}` : formatUsd(spend.knownUsd),
+        total,
         ...(extra?.(name) ?? []),
       ];
     });
+}
+
+function tokenSummaryLine(summary: SpendSummary): string | undefined {
+  const { input, output, cacheRead, cacheWrite } = summary.tokens;
+  const totalIn = input + cacheRead + cacheWrite;
+  if (totalIn + output === 0) return undefined;
+  const hitPct = totalIn > 0 ? Math.round((cacheRead / totalIn) * 100) : 0;
+  return `Tokens (this repo, all-time): ${formatTokens(input)} in · ${formatTokens(output)} out · ${formatTokens(cacheRead)} cache-read (${hitPct}% cache hit)${cacheWrite > 0 ? ` · ${formatTokens(cacheWrite)} cache-write` : ""}`;
+}
+
+function ticketOf(entry: CostRecord): string | undefined {
+  const match = / ticket (\S+)$/.exec(entry.reason);
+  return match ? match[1] : undefined;
 }
 
 async function costReport(ctx: WorkflowContext, format: string): Promise<CommandResult> {
@@ -70,24 +97,37 @@ async function costReport(ctx: WorkflowContext, format: string): Promise<Command
   if (format !== "") return fail("USAGE", "Use /cost, /cost csv, or /cost json.");
   const unpriced = unpricedModels(records, ctx.config.pricing);
   const names = new Map(listTasks(ctx).map((item) => [item.taskId, displayName(item)]));
-  const line = `Known spend ${formatUsd(summary.knownUsd)} across ${records.length} record(s)${summary.unknownRecords > 0 ? ` · ${summary.unknownRecords} with unknown cost, estimated at ${formatUsd(summary.estimatedUnknownUsd)} · total ≈ ${formatUsd(summary.knownUsd + summary.estimatedUnknownUsd)}` : ""}${summary.notMeteredRecords > 0 ? ` · ${summary.notMeteredRecords} not metered (agent subscriptions)` : ""}`;
+  const billedTotal = summary.knownUsd + summary.estimatedUnknownUsd;
+  const apiEquivNote = summary.apiEquivalentUsd > billedTotal + 0.00005 ? ` · API-equiv ${formatUsd(summary.apiEquivalentUsd)}` : "";
+  const line = `Known spend ${formatUsd(summary.knownUsd)} across ${records.length} record(s)${apiEquivNote}${summary.unknownRecords > 0 ? ` · ${summary.unknownRecords} with unknown cost, estimated at ${formatUsd(summary.estimatedUnknownUsd)} · total ≈ ${formatUsd(billedTotal)}` : ""}${summary.notMeteredRecords > 0 ? ` · ${summary.notMeteredRecords} not metered (agent subscriptions)` : ""}`;
+  const tokensLine = tokenSummaryLine(summary);
+  const taskTicketRecords = task ? records.filter((entry) => entry.taskId === task.taskId && ticketOf(entry) !== undefined) : [];
   const markdown = [
     `## Cost · ${line}`,
     "",
-    `Budget: task ${budgetSpent(budget.task)} / $${ctx.config.budgets.taskUsd} (${statusFor(ctx, budget.task, ctx.config.budgets.taskUsd)}) · daily ${budgetSpent(budget.daily)} / $${ctx.config.budgets.dailyUsd} (${statusFor(ctx, budget.daily, ctx.config.budgets.dailyUsd)})`,
+    `Budget: task ${budgetSpent(budget.task)} / $${ctx.config.budgets.taskUsd} (${statusFor(ctx, budget.task, ctx.config.budgets.taskUsd)}) · daily ${budgetSpent(budget.daily)} / $${ctx.config.budgets.dailyUsd} (${statusFor(ctx, budget.daily, ctx.config.budgets.dailyUsd)}) [all repos]`,
+    ...(tokensLine ? [tokensLine] : []),
     ...(unpriced.length ? ["", `No pricing row for ${unpriced.join(", ")}: their spend is unknown. Add a row to pricing.`] : []),
     "",
-    "### By model",
+    "### By model (this repo, all-time)",
     "",
     ...mdTable(["Model", "Calls", "Known", "Unknown rows", "Not metered", "Total"], spendRows(ctx, records, (entry) => `${entry.provider}/${entry.model}`)),
     "",
-    "### By job",
+    "### By job (this repo, all-time)",
     "",
     ...mdTable(["Job", "Calls", "Known", "Unknown rows", "Not metered", "Total"], spendRows(ctx, records, jobOf)),
     "",
-    "### By task",
+    "### By task (this repo, all-time)",
     "",
     ...mdTable(["Task", "Calls", "Known", "Unknown rows", "Not metered", "Total"], spendRows(ctx, records, (entry) => names.get(entry.taskId) ?? entry.taskId)),
+    ...(task && taskTicketRecords.length > 0
+      ? [
+          "",
+          `### By ticket (${displayName(task)})`,
+          "",
+          ...mdTable(["Ticket", "Calls", "Known", "Unknown rows", "Not metered", "Total"], spendRows(ctx, taskTicketRecords, (entry) => `ticket ${ticketOf(entry)}`)),
+        ]
+      : []),
   ].join("\n");
   ctx.report?.(markdown);
   return done(ctx.report ? line : markdown, summary);

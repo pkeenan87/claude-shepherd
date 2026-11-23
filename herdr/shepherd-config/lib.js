@@ -1,13 +1,30 @@
 // Pure helpers of the shepherd-config panel (no herdr imports, so tests can load them).
 
+export const THINKING_LEVELS = ["default", "off", "minimal", "low", "medium", "high", "xhigh"];
+
 // Cheap guard against sending a secret: the CLI refuses them too, but nothing secret should reach even an argv.
 export function looksSecret(text) {
   const v = String(text).trim();
   if (/-----BEGIN [A-Z ]*PRIVATE KEY/.test(v)) return true;
-  if (/\b(sk|pk|rk|xai|ghp|gho|ghs|github_pat|xox[abp]|AKIA|AIza)[-_][A-Za-z0-9_-]{12,}/.test(v)) return true;
+  if (/\b(sk|pk|rk|xai|ghp|gho|ghs|github_pat|xox[abp]|AKIA|AIza|hf|glpat|xapp|pypi)[-_][A-Za-z0-9_-]{12,}/.test(v)) return true;
   if (/^(bearer|basic)\s+\S{8,}/i.test(v)) return true;
   if (/^eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\./.test(v)) return true;
   return false;
+}
+
+/** Splits a Pi `provider/id[:thinking]` string into `{ base, thinking }`. */
+export function splitThinking(value) {
+  const text = String(value ?? "").trim();
+  const match = /:((?:off|minimal|low|medium|high|xhigh))$/.exec(text);
+  if (!match) return { base: text, thinking: "default" };
+  return { base: text.slice(0, match.index), thinking: match[1] };
+}
+
+/** Recombines a Pi model id with an optional thinking level (`"default"` omits the suffix). */
+export function withThinking(value, thinking) {
+  const { base } = splitThinking(value);
+  if (!base) return "";
+  return !thinking || thinking === "default" ? base : `${base}:${thinking}`;
 }
 
 // The models.* value for a kind and what was entered: { value } or { error }. The CLI validates again with the real parser.
@@ -60,9 +77,25 @@ export function ctxText(n) {
   return n >= 1024 ? Math.round(n / 1024) + "k" : String(n);
 }
 
+export function formatCtxPill(ctx) {
+  if (!ctx || typeof ctx.contextTokens !== "number" || ctx.contextTokens <= 0) return null;
+  const k = ctx.contextTokens >= 1000 ? Math.round(ctx.contextTokens / 1000) + "k" : String(ctx.contextTokens);
+  return `ctx ${k} ${ctx.warm ? "warm" : "cold"}`;
+}
+
 export function ticketsText(plan) {
   const failed = plan.ticketsFailed > 0 ? ", " + plan.ticketsFailed + " failed" : "";
   return plan.ticketsDone + "/" + plan.ticketsTotal + " tickets" + failed;
+}
+
+/** Filters Herdr `terminals()` to live shepherd sub-agents (carrying any `shepherd.*` label). */
+export function filterShepherdTerminals(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter((term) => {
+    const labels = term?.labels;
+    if (!labels || typeof labels !== "object") return false;
+    return Object.keys(labels).some((key) => key.startsWith("shepherd."));
+  });
 }
 
 // What an exec of the CLI gives back as one document: the JSON it printed, or an { ok: false, error }.

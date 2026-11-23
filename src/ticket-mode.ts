@@ -15,7 +15,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadConfig } from "./config.js";
 import { isDeniedCommand, ticketBashProblem } from "./sandbox.js";
@@ -38,12 +38,17 @@ export interface TicketModeOptions {
 }
 
 function writeStatus(file: string, status: Partial<TicketStatus>): void {
+  const temp = `${file}.${process.pid}.tmp`;
   try {
     mkdirSync(path.dirname(file), { recursive: true });
-    const temp = `${file}.${process.pid}.tmp`;
     writeFileSync(temp, `${JSON.stringify(status)}\n`, "utf8");
     renameSync(temp, file);
   } catch {
+    try {
+      rmSync(temp, { force: true });
+    } catch {
+      /* ignore */
+    }
     /* the runner treats a missing or stale status file as "no news"; never throw into Pi */
   }
 }
@@ -73,11 +78,10 @@ export function ticketMode(pi: ExtensionAPI, options: TicketModeOptions = {}): v
 
   // Bash rules: always on (a ticket child has no other mode); the same rules the main session's tool_call hook applies to a ticket.
   pi.on("tool_call", (event) => {
-    if (isToolCallEventType("bash", event)) {
+    if (isToolCallEventType("bash", event) || isToolCallEventType("powershell", event)) {
       const reason = ticketBashProblem(event.input.command);
       if (reason) return { block: true, reason };
     }
-    if (isToolCallEventType("powershell", event) && isDeniedCommand(event.input.command)) return { block: true, reason: "Blocked destructive command." };
     return undefined;
   });
   pi.on("user_bash", (event) => {
@@ -112,6 +116,7 @@ export function ticketMode(pi: ExtensionAPI, options: TicketModeOptions = {}): v
   pi.on("message_end", (event, ctx) => {
     const message = event.message as { role?: string; stopReason?: string };
     if (message.role !== "assistant") return undefined;
+    if (message.stopReason === "error") return undefined;
     turns += 1;
     abortRun = () => ctx.abort();
     budget?.count();

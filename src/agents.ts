@@ -1,9 +1,13 @@
 import { THINKING_LEVELS, WorkflowError, type ThinkingLevel } from "./domain.js";
 
-/** An external coding agent: the argv that starts it in a terminal, and the flag that picks its model. */
+/** An external coding agent: the argv that starts it in a terminal, the flag that picks its model, and optional billing metadata. */
 export interface AgentDef {
   run: string[];
   modelFlag?: string;
+  /** "api" bills tokens against budgets (default); "subscription" records $0 billed while still tracking API-equivalent `listPriceUsd`. */
+  billing?: "api" | "subscription";
+  /** Optional per-million-token routing fee added on top of API list prices (e.g. 0.25 for Cursor Teams/Enterprise on third-party models). */
+  routingFeePerMillionUsd?: number;
 }
 
 /** A CLI's "trust this folder?" first-run prompt: shepherd presses `keys` when the screen matches `screen`. */
@@ -42,7 +46,7 @@ export const TRUST_PROMPTS: Readonly<Record<string, TrustPrompt>> = {
 export const BUILTIN_AGENTS: Readonly<Record<string, AgentDef>> = {
   claude: { run: ["claude", "--permission-mode", "auto"], modelFlag: "--model" },
   codex: { run: ["codex", "--no-daemon", "--approve-for-me"], modelFlag: "-m" },
-  "cursor-agent": { run: ["cursor-agent", "--auto-review", "--trust"], modelFlag: "--model" },
+  "cursor-agent": { run: ["cursor-agent", "--auto-review", "--trust"], modelFlag: "--model", billing: "subscription" },
   grok: { run: ["grok", "--permission-mode", "auto"], modelFlag: "-m" },
   agy: { run: ["agy", "--mode", "auto"], modelFlag: "--model" },
   gemini: { run: ["gemini", "--approval-mode", "auto_edit"], modelFlag: "-m" },

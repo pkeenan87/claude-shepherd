@@ -27,12 +27,14 @@ import { agentProgram, piProgram, type Program } from "./tab-program.js";
 /** A review is one pass over a diff, not a ticket: its own wall-clock limit, never shorter than the configured per-call time. */
 const MIN_REVIEW_MS = 15 * 60_000;
 
-export interface TabAsked<T> {
-  parsed?: T;
-  /** Cost of the tab's spend; null when any of it is unknown. */
-  costUsd: number | null;
-  by?: string;
-  error?: string;
+/**
+ * Optional warm reviewer tab handle kept open between round 1 (fail) and round 2 (re-review) of the same ticket,
+ * so round 2 sends a short follow-up prompt instead of cold-starting a second reviewer tab.
+ */
+export interface WarmReviewTab {
+  tab: Tab;
+  program: Program;
+  modelKey: string;
 }
 
 export interface TabReviewInput<T> {
@@ -41,10 +43,26 @@ export interface TabReviewInput<T> {
   model: TicketModel;
   /** The review rounds so far on this rung plus one, for the tab name. */
   round: number;
+  /** Optional warm tab from round 1 of this ticket; if kept open on failure, returned on `TabAsked.warmTab`. */
+  warmTab?: WarmReviewTab;
+  /** Whether to keep the tab open for a round-2 follow-up if the parsed review fails the ticket. */
+  keepWarm?: (parsed: T) => boolean;
+  /** Follow-up prompt used when reusing an already-open warm tab on round 2. */
+  followUpPrompt?: (outFile: string) => string;
   /** The prompt, given the absolute path the findings file is to be written to. */
   prompt(outFile: string): string;
   parse(text: string): T | undefined;
   progress(line: string): void;
+}
+
+export interface TabAsked<T> {
+  parsed?: T;
+  /** Cost of the tab's spend; null when any of it is unknown. */
+  costUsd: number | null;
+  by?: string;
+  error?: string;
+  /** Populated when `keepWarm` returned true so the caller can pass it to round 2 (and must close it afterward). */
+  warmTab?: WarmReviewTab;
 }
 
 const fingerprint = (diff: string) => createHash("sha256").update(diff).digest("hex");
@@ -67,34 +85,44 @@ export async function askInTab<T>(ctx: WorkflowContext, input: TabReviewInput<T>
     const outFile = path.resolve(reports, `ticket-review-${ticket.id}-${at}.json`);
     if (existsSync(outFile)) unlinkSync(outFile);
     const ledger = { job: "ticket review", tier: "review", phase: state.phase, taskId: state.taskId, ticketId: ticket.id };
-    // The agent's log is snapshotted when its program is made, before the tab opens.
-    const program: Program =
-      model.kind === "agent" ? agentProgram(ctx, model, ledger) : piProgram(ctx, model, { ...ledger, sessionDir: path.join(taskDir, "sessions", `review-${ticket.id}-${at}`), label: `review-${ticket.id}` });
     const exclude = excludedPaths(ctx);
     const headBefore = await ctx.git.head().catch(() => undefined);
     const branchBefore = await ctx.git.currentBranch().catch(() => undefined);
     const before = fingerprint(await ctx.git.workingDiff("HEAD", exclude));
-    const name = tabName(displayName(state), `r${ticket.id}`, input.round, at);
-    progress(`opening ${label} in a herdr sub-agent`);
-    tab = await openTab({
-      ...ctx.herdrTimings,
-      ...(program.readyTimeoutMs ? { readyTimeoutMs: program.readyTimeoutMs } : {}),
-      turnTimeoutMs: ctx.herdrTimings?.turnTimeoutMs ?? Math.max(ctx.config.review.timeoutMs, MIN_REVIEW_MS),
-      client: ctx.herdr!,
-      ...(where.space ? { space: where.space } : {}),
-      cwd: ctx.git.repoRoot,
-      argv: program.argv,
-      ...(program.trust ? { trust: program.trust } : {}),
-      ...(program.silentHint ? { silentHint: program.silentHint } : {}),
-      name,
-      labels: { "shepherd.ticket-review": ticket.id },
-      progress,
-      blockedNotice: `The review of ticket ${ticket.id} (${label}) is waiting for you in herdr sub-agent ${name} (agents list)`,
-    });
+    const reusing = input.warmTab && input.warmTab.modelKey === label ? input.warmTab : undefined;
+    let program: Program;
+    if (reusing) {
+      tab = reusing.tab;
+      program = reusing.program;
+      progress(`reusing warm ${label} sub-agent (${tab.name}) for round ${input.round}`);
+    } else {
+      // The agent's log is snapshotted when its program is made, before the tab opens.
+      program =
+        model.kind === "agent"
+          ? agentProgram(ctx, model, ledger)
+          : piProgram(ctx, model, { ...ledger, sessionDir: path.join(taskDir, "sessions", `review-${ticket.id}-${at}`), label: `review-${ticket.id}` });
+      const name = tabName(displayName(state), `r${ticket.id}`, input.round, at);
+      progress(`opening ${label} in a herdr sub-agent`);
+      tab = await openTab({
+        ...ctx.herdrTimings,
+        ...(program.readyTimeoutMs ? { readyTimeoutMs: program.readyTimeoutMs } : {}),
+        turnTimeoutMs: ctx.herdrTimings?.turnTimeoutMs ?? Math.max(ctx.config.review.timeoutMs, MIN_REVIEW_MS),
+        client: ctx.herdr!,
+        ...(where.space ? { space: where.space } : {}),
+        cwd: ctx.git.repoRoot,
+        argv: program.argv,
+        ...(program.trust ? { trust: program.trust } : {}),
+        ...(program.silentHint ? { silentHint: program.silentHint } : {}),
+        name,
+        labels: { "shepherd.ticket-review": ticket.id },
+        progress,
+        blockedNotice: `The review of ticket ${ticket.id} (${label}) is waiting for you in herdr sub-agent ${name} (agents list)`,
+      });
+    }
     const opened = tab;
     let failure: string | undefined;
     try {
-      await opened.prompt(input.prompt(outFile));
+      await opened.prompt(reusing && input.followUpPrompt ? input.followUpPrompt(outFile) : input.prompt(outFile));
     } catch (error) {
       failure = messageOf(error);
     }
@@ -124,9 +152,13 @@ export async function askInTab<T>(ctx: WorkflowContext, input: TabReviewInput<T>
     if (fingerprint(await ctx.git.workingDiff("HEAD", exclude)) !== before) {
       return failed(left(`${label} changed the working tree during the review (it was told not to edit files), so the diff it judged is not the one that would be committed${note}`));
     }
+    if (input.keepWarm?.(parsed)) {
+      tab = undefined;
+      return { parsed, costUsd: cost, by: label, warmTab: { tab: opened, program, modelKey: label } };
+    }
     await opened.close();
     tab = undefined;
-    return { parsed, costUsd: cost, by: label, };
+    return { parsed, costUsd: cost, by: label };
   } catch (error) {
     return failed(`${label} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr sub-agent ${tab.name} is left open)` : ""}`);
   }

@@ -1,10 +1,14 @@
 import { execFile } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { promisify } from "node:util";
 import type { GitWorkspace } from "../git/workspace.js";
 import type { CheckRunner } from "../review/review.js";
+import { atomicWrite, withLock } from "../storage/store.js";
 
 const exec = promisify(execFile);
 const MAX_CACHED_CHECKS = 200;
+const CHECK_CACHE_TTL_MS = 24 * 60 * 60_000;
 /** Output a check may print before it is stopped. A test suite's log fits; a runaway loop does not. */
 const CHECK_MAX_BUFFER = 64 * 1024 * 1024;
 /** A check that runs longer than this is stopped and fails, so a hung check cannot stall /review or /build. */
@@ -38,19 +42,78 @@ async function cleanTree(git: GitWorkspace, cwd: string): Promise<string | undef
   return tree.code === 0 ? tree.stdout.trim() : undefined;
 }
 
-/** Skips re-running a check that already passed on an identical clean tree. */
-export function cachingRunner(git: GitWorkspace, runner: CheckRunner): CheckRunner {
-  const passed = new Map<string, string>();
+interface PersistedCheckCache {
+  entries: Record<string, { at: number; stdout: string }>;
+}
+
+function readDiskCache(file: string | undefined, now: number): Map<string, { at: number; stdout: string }> {
+  const map = new Map<string, { at: number; stdout: string }>();
+  if (!file || !existsSync(file)) return map;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<PersistedCheckCache>;
+    if (!parsed.entries || typeof parsed.entries !== "object") return map;
+    for (const [k, v] of Object.entries(parsed.entries)) {
+      if (v && typeof v.at === "number" && typeof v.stdout === "string" && now - v.at <= CHECK_CACHE_TTL_MS) {
+        map.set(k, v);
+      }
+    }
+  } catch {
+    /* ignore corrupt cache */
+  }
+  return map;
+}
+
+/** Lightweight checkout environment fingerprint so worktrees without dependencies or changed toolchains never reuse a cached pass. */
+function envStamp(cwd: string): string {
+  const parts = [path.resolve(cwd), process.version];
+  for (const rel of ["node_modules", ".venv", "target"]) {
+    try {
+      const st = statSync(path.join(cwd, rel));
+      parts.push(`${rel}:${Math.floor(st.mtimeMs)}`);
+    } catch {
+      /* absent */
+    }
+  }
+  return parts.join("|");
+}
+
+async function persistCacheEntry(
+  file: string | undefined,
+  key: string,
+  entry: { at: number; stdout: string },
+  nowMs: number,
+): Promise<void> {
+  if (!file) return;
+  try {
+    await withLock(`${file}.lock`, () => {
+      const merged = readDiskCache(file, nowMs);
+      if (merged.size >= MAX_CACHED_CHECKS) merged.clear();
+      merged.set(key, entry);
+      const entries: PersistedCheckCache["entries"] = {};
+      for (const [k, v] of merged) entries[k] = v;
+      atomicWrite(file, JSON.stringify({ entries }, null, 2));
+    });
+  } catch {
+    /* best-effort cache */
+  }
+}
+
+/** Skips re-running a check that already passed on an identical clean tree in the same checkout/env (optionally persisted across CLI runs). */
+export function cachingRunner(git: GitWorkspace, runner: CheckRunner, cacheFile?: string, now: () => number = () => Date.now()): CheckRunner {
+  const passed = readDiskCache(cacheFile, now());
   return {
     run: async (command, args, cwd) => {
       const tree = await cleanTree(git, cwd);
-      const key = tree ? `${tree}\u0000${command}\u0000${args.join("\u0000")}` : undefined;
+      const key = tree ? `${envStamp(cwd)}\u0000${tree}\u0000${command}\u0000${args.join("\u0000")}` : undefined;
+      const currentNow = now();
       const cached = key ? passed.get(key) : undefined;
-      if (cached) return { code: 0, stdout: cached, stderr: "" };
+      if (cached && currentNow - cached.at <= CHECK_CACHE_TTL_MS) return { code: 0, stdout: cached.stdout, stderr: "" };
       const result = await runner.run(command, args, cwd);
       if (key && result.code === 0) {
+        const entry = { at: now(), stdout: `cached: passed earlier on identical tree ${tree}\n${result.stdout.slice(0, 1000)}` };
         if (passed.size >= MAX_CACHED_CHECKS) passed.clear();
-        passed.set(key, `cached: passed earlier on identical tree ${tree}\n${result.stdout.slice(0, 1000)}`);
+        passed.set(key, entry);
+        await persistCacheEntry(cacheFile, key, entry, entry.at);
       }
       return result;
     },

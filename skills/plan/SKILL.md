@@ -7,7 +7,7 @@ allowed-tools: Bash(shepherd plan start:*), Bash(shepherd plan spec:*), Bash(she
 
 You are planning, not building. Do not edit or create files in the repo; use Read, Grep and Glob to look things up. All policy (validation, ticket sizing, approval) lives in the `shepherd` CLI: you fill its schemas and fix what it rejects.
 
-1. Run `shepherd plan start "$ARGUMENTS"`. If `$ARGUMENTS` is empty and a plan is in progress, run `shepherd plan start` with no request to resume it. The output names the task and prints the spec schema, the ticket rules and the exact ticket JSON schema. Follow it.
+1. Run `shepherd plan start "$ARGUMENTS"`. If the user wants to run this feature in parallel with other work (or if another unfinished task is active), offer or pass `--worktree` (`shepherd plan start --worktree "$ARGUMENTS"`) so shepherd creates a linked git worktree aligned with Herdr's Spaces directory while sharing `.shepherd/` state and budgets. If `$ARGUMENTS` is empty and a plan is in progress, run `shepherd plan start` with no request to resume it. The output names the task and prints the spec schema, the ticket rules and the exact ticket JSON schema. Follow it.
 
 2. Explore the code that will change, read-only. Look up facts yourself; ask the user only decisions (scope, trade-offs, preferences) that the code cannot answer.
 
