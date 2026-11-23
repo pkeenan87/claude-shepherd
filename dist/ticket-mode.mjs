@@ -7363,7 +7363,7 @@ var require_dist = __commonJS({
 
 // src/ticket-mode.ts
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path2 from "node:path";
 
 // src/config.ts
@@ -7371,6 +7371,105 @@ var import_yaml = __toESM(require_dist(), 1);
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+
+// src/pricing-defaults.ts
+var DEFAULT_PRICING = [
+  // Anthropic (Claude 5.5 / Fable 5.2 + 2026 prior-gen fallbacks)
+  { provider: "anthropic", model: "claude-haiku-5-5", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.5, cacheReadPerMillionUsd: 0.01, cacheWritePerMillionUsd: 0.125 },
+  { provider: "anthropic", model: "claude-sonnet-5-5", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1, cacheWritePerMillionUsd: 2.5 },
+  { provider: "anthropic", model: "claude-opus-5-5", effectiveFrom: "2026-01-01", inputPerMillionUsd: 4, outputPerMillionUsd: 20, cacheReadPerMillionUsd: 0.2, cacheWritePerMillionUsd: 5 },
+  { provider: "anthropic", model: "claude-fable-5-2", effectiveFrom: "2026-01-01", inputPerMillionUsd: 8, outputPerMillionUsd: 40, cacheReadPerMillionUsd: 0.2, cacheWritePerMillionUsd: 10 },
+  { provider: "anthropic", model: "claude-opus-4-6", effectiveFrom: "2026-01-01", inputPerMillionUsd: 5, outputPerMillionUsd: 25, cacheReadPerMillionUsd: 0.5, cacheWritePerMillionUsd: 6.25 },
+  { provider: "anthropic", model: "claude-sonnet-4-6", effectiveFrom: "2026-01-01", inputPerMillionUsd: 3, outputPerMillionUsd: 15, cacheReadPerMillionUsd: 0.3, cacheWritePerMillionUsd: 3.75 },
+  { provider: "anthropic", model: "claude-haiku-4-5", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1, outputPerMillionUsd: 5, cacheReadPerMillionUsd: 0.1, cacheWritePerMillionUsd: 1.25 },
+  // OpenAI / Codex (GPT-6 family + GPT-5.4 / Codex)
+  { provider: "openai", model: "gpt-6.2-astra", effectiveFrom: "2026-01-01", inputPerMillionUsd: 8, outputPerMillionUsd: 40, cacheReadPerMillionUsd: 0.4 },
+  { provider: "openai", model: "gpt-6-astra", effectiveFrom: "2026-01-01", inputPerMillionUsd: 10, outputPerMillionUsd: 50, cacheReadPerMillionUsd: 1 },
+  { provider: "openai", model: "gpt-6.2-sol", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1 },
+  { provider: "openai", model: "gpt-6.1-sol", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1 },
+  { provider: "openai", model: "gpt-6-sol", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1 },
+  { provider: "openai", model: "gpt-6.1-terra", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1, outputPerMillionUsd: 5, cacheReadPerMillionUsd: 0.05 },
+  { provider: "openai", model: "gpt-6-luna", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.5, cacheReadPerMillionUsd: 0.01 },
+  { provider: "openai", model: "gpt-5.4", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2.5, outputPerMillionUsd: 15, cacheReadPerMillionUsd: 0.25 },
+  { provider: "openai", model: "gpt-5.3-codex", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1.75, outputPerMillionUsd: 14, cacheReadPerMillionUsd: 0.175 },
+  // Google / Gemini / Antigravity (Gemini 4 element lineup + Dec 1, 2026 Argon/Carbon standard rate rollover)
+  { provider: "google", model: "gemini-4-neon", effectiveFrom: "2026-01-01", inputPerMillionUsd: 3, outputPerMillionUsd: 15, cacheReadPerMillionUsd: 0.15 },
+  { provider: "google", model: "gemini-4-hydrogen", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1.5, outputPerMillionUsd: 7.5, cacheReadPerMillionUsd: 0.075 },
+  { provider: "google", model: "gemini-4-argon", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1 },
+  { provider: "google", model: "gemini-4-argon", effectiveFrom: "2026-12-01", inputPerMillionUsd: 4, outputPerMillionUsd: 20, cacheReadPerMillionUsd: 0.2 },
+  { provider: "google", model: "gemini-4-carbon", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1 },
+  { provider: "google", model: "gemini-4-carbon", effectiveFrom: "2026-12-01", inputPerMillionUsd: 4, outputPerMillionUsd: 20, cacheReadPerMillionUsd: 0.2 },
+  { provider: "google", model: "gemini-2.5-pro", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1.25, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.125 },
+  { provider: "google", model: "gemini-2.5-flash", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0.3, outputPerMillionUsd: 2.5, cacheReadPerMillionUsd: 0.03 },
+  // xAI / Grok 4 family
+  { provider: "xai", model: "grok-4.7", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 6, cacheReadPerMillionUsd: 0.5 },
+  { provider: "xai", model: "grok-4.6", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 6, cacheReadPerMillionUsd: 0.5 },
+  { provider: "xai", model: "grok-4.3", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1.25, outputPerMillionUsd: 2.5, cacheReadPerMillionUsd: 0.2 },
+  { provider: "xai", model: "grok-4.20", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1.25, outputPerMillionUsd: 2.5, cacheReadPerMillionUsd: 0.2 },
+  { provider: "xai", model: "grok-code-fast", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1, outputPerMillionUsd: 2, cacheReadPerMillionUsd: 0.2 },
+  { provider: "xai", model: "grok-build-0.1", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1, outputPerMillionUsd: 2, cacheReadPerMillionUsd: 0.2 },
+  // Cursor first-party included models (subscription pool, $0 incremental API fee)
+  { provider: "cursor", model: "composer-2", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0, cacheReadPerMillionUsd: 0 },
+  { provider: "cursor", model: "composer-1", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0, cacheReadPerMillionUsd: 0 },
+  { provider: "cursor", model: "cursor-small", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0, cacheReadPerMillionUsd: 0 }
+];
+var ALIASES = {
+  // Anthropic CLI aliases
+  opus: "claude-opus-5-5",
+  best: "claude-opus-5-5",
+  sonnet: "claude-sonnet-5-5",
+  opusplan: "claude-sonnet-5-5",
+  haiku: "claude-haiku-5-5",
+  fable: "claude-fable-5-2",
+  "claude-fable": "claude-fable-5-2",
+  "claude-fable-5": "claude-fable-5-2",
+  // OpenAI / Codex shorthand
+  astra: "gpt-6.2-astra",
+  sol: "gpt-6.2-sol",
+  luna: "gpt-6-luna",
+  terra: "gpt-6.1-terra",
+  // Google / AGY shorthand
+  argon: "gemini-4-argon",
+  carbon: "gemini-4-carbon",
+  neon: "gemini-4-neon",
+  hydrogen: "gemini-4-hydrogen"
+};
+function canonicalModelId(provider, model) {
+  let clean = model.trim().toLowerCase();
+  clean = clean.replace(/\[[^\]]*\]/g, "").trim();
+  clean = clean.replace(/\s+/g, "-");
+  if (clean.startsWith("cursor-") && clean !== "cursor-small") clean = clean.slice("cursor-".length);
+  clean = clean.replace(/-(?:20\d{2}-?\d{2}-?\d{2})$/, "");
+  if (clean !== "grok-code-fast") {
+    clean = clean.replace(/-(?:high|medium|low|xhigh|max|fast|thinking)(?:-(?:fast|high|medium|low))?$/, "");
+  }
+  const aliased = ALIASES[clean];
+  if (aliased) return aliased;
+  if (provider === "anthropic" || clean.startsWith("claude-")) {
+    clean = clean.replace(/^(claude-[a-z]+-\d+)\.(\d+)$/, "$1-$2");
+  }
+  return clean;
+}
+function inferProviderForModel(rawModel) {
+  const lower = rawModel.trim().toLowerCase();
+  const canonical = canonicalModelId("", rawModel);
+  const cursorPrefixed = lower.startsWith("cursor-") || lower.startsWith("composer");
+  if (canonical.startsWith("claude-")) return { provider: "anthropic", model: canonical, firstPartyCursor: false };
+  if (canonical.startsWith("gpt-") || canonical.startsWith("o3") || canonical.startsWith("o4") || canonical.includes("codex")) {
+    return { provider: "openai", model: canonical, firstPartyCursor: false };
+  }
+  if (canonical.startsWith("gemini-")) return { provider: "google", model: canonical, firstPartyCursor: false };
+  if (canonical.startsWith("grok-")) return { provider: "xai", model: canonical, firstPartyCursor: cursorPrefixed };
+  if (lower.startsWith("composer")) return { provider: "cursor", model: canonical, firstPartyCursor: true };
+  return { provider: "cursor", model: canonical || lower || "unknown", firstPartyCursor: cursorPrefixed };
+}
+var AGENT_DEFAULT_PROVIDER = {
+  claude: "anthropic",
+  codex: "openai",
+  agy: "google",
+  gemini: "google",
+  grok: "xai"
+};
 
 // src/domain.ts
 var THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -7387,7 +7486,7 @@ var WorkflowError = class extends Error {
 var BUILTIN_AGENTS = {
   claude: { run: ["claude", "--permission-mode", "auto"], modelFlag: "--model" },
   codex: { run: ["codex", "--no-daemon", "--approve-for-me"], modelFlag: "-m" },
-  "cursor-agent": { run: ["cursor-agent", "--auto-review", "--trust"], modelFlag: "--model" },
+  "cursor-agent": { run: ["cursor-agent", "--auto-review", "--trust"], modelFlag: "--model", billing: "subscription" },
   grok: { run: ["grok", "--permission-mode", "auto"], modelFlag: "-m" },
   agy: { run: ["agy", "--mode", "auto"], modelFlag: "--model" },
   gemini: { run: ["gemini", "--approval-mode", "auto_edit"], modelFlag: "-m" },
@@ -7456,6 +7555,10 @@ var PATTERNS = [
   /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9_]{10,}/g,
   /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{10,}/g,
   /(?<![A-Za-z0-9])npm_[A-Za-z0-9]{20,}/g,
+  /(?<![A-Za-z0-9])hf_[A-Za-z0-9]{20,}/g,
+  /(?<![A-Za-z0-9])glpat-[A-Za-z0-9_-]{16,}/g,
+  /(?<![A-Za-z0-9])xapp-[A-Za-z0-9-]{16,}/g,
+  /(?<![A-Za-z0-9])pypi-[A-Za-z0-9_-]{20,}/g,
   /(?<![A-Za-z0-9])xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])/g,
   /(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{35}/g,
@@ -7471,7 +7574,7 @@ var PATTERNS = [
   // Credentials embedded in URLs: scheme://user:pass@host
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"']+:[^\s@/"']+@/gi
 ];
-var KEY_VALUE = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?[A-Za-z0-9_.-]{0,40}${KEY_WORD}["']?\s*[:=]\s*)(["']?)([^\s"',}]+)`, "gi");
+var KEY_VALUE = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?[A-Za-z0-9_.-]{0,40}${KEY_WORD}["']?\s*[:=]\s*)(?:"([^"\r\n]*)|'([^'\r\n]*)|([^\s"',}]+))`, "gi");
 function isNotLiteral(value) {
   const bare = value.replace(/;+$/, "");
   if (/^[{[($]/.test(bare)) return true;
@@ -7490,7 +7593,12 @@ function redact(value) {
     next = next.replace(pattern, replacement);
   }
   KEY_VALUE.lastIndex = 0;
-  return next.replace(KEY_VALUE, (match, _key, quote, value2) => !quote && isNotLiteral(value2) ? match : "[REDACTED]");
+  return next.replace(KEY_VALUE, (match, _key, dq, sq, bare) => {
+    if (bare !== void 0) return isNotLiteral(bare) ? match : "[REDACTED]";
+    const quoted = dq ?? sq ?? "";
+    if (quoted === "") return match;
+    return "[REDACTED]";
+  });
 }
 function containsSecret(value) {
   return redact(value) !== value;
@@ -7498,6 +7606,9 @@ function containsSecret(value) {
 
 // src/config.ts
 var MODEL_KEYS = ["low", "medium", "high", "review"];
+function normalizeReviewerSpec(spec) {
+  return typeof spec === "string" ? { model: spec } : { model: spec.model, ...spec.name ? { name: spec.name } : {}, ...spec.focus ? { focus: spec.focus } : {} };
+}
 var DEFAULT_UNKNOWN_CALL_USD = 0.05;
 var DEFAULT_MODELS = {
   low: "xai/grok-4.7",
@@ -7512,27 +7623,28 @@ var DEFAULTS = {
   routing: { maxEscalations: 2, maxTicketTurns: 100 },
   build: { visibleTabs: false },
   branchPrefix: "shepherd",
-  budgets: { taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: DEFAULT_UNKNOWN_CALL_USD, idleWarnMinutes: 60, idleWarnTokens: 1e5 },
+  budgets: { taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: DEFAULT_UNKNOWN_CALL_USD, idleWarnMinutes: 60, idleWarnTokens: 1e5, idleAction: "warn" },
   checks: [],
   setup: [],
   review: { model: true, tickets: true, timeoutMs: 3e5 },
-  pricing: []
+  pricing: [...DEFAULT_PRICING]
 };
 var KNOWN_KEYS = {
   models: MODEL_KEYS,
   local: ["baseUrl", "apiKeyEnv", "models"],
   agents: void 0,
-  budgets: ["taskUsd", "dailyUsd", "softWarningRatio", "unknownCallUsd", "idleWarnMinutes", "idleWarnTokens"],
+  budgets: ["taskUsd", "dailyUsd", "softWarningRatio", "unknownCallUsd", "idleWarnMinutes", "idleWarnTokens", "idleAction", "timeZone"],
   pricing: void 0,
-  review: ["model", "tickets", "timeoutMs"],
+  review: ["model", "tickets", "timeoutMs", "reviewers", "highRiskReviewers"],
   checks: void 0,
   setup: void 0,
   build: ["visibleTabs"],
+  worktree: ["default", "dir"],
   branchPrefix: void 0,
   workspaceDir: void 0,
   routing: ["maxEscalations", "maxTicketTurns"]
 };
-var USER_ONLY_SECTIONS = ["local", "agents", "pricing", "workspaceDir"];
+var USER_ONLY_SECTIONS = ["local", "agents", "pricing", "workspaceDir", "worktree"];
 var CONFIG_DOCS = "docs/configuration.md";
 function isRecord(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -7629,6 +7741,7 @@ function isLoopbackHttpUrl(value) {
   const url = parseUrl(value);
   return !!url && url.protocol === "http:" && url.username === "" && url.password === "" && isLoopbackHost(url.hostname);
 }
+var AGENT_KEYS = /* @__PURE__ */ new Set(["run", "modelFlag", "billing", "routingFeePerMillionUsd"]);
 function normalizeAgents(value, where) {
   if (value === void 0 || value === null) return void 0;
   if (!isRecord(value)) invalid(where, "agents", "must be a mapping of agent names");
@@ -7636,12 +7749,23 @@ function normalizeAgents(value, where) {
   for (const [name, def] of Object.entries(value)) {
     const field = `agents.${name}`;
     if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) invalid(where, field, "is not a valid agent name (letters, digits, - and _)");
-    if (!isRecord(def)) invalid(where, field, "must be a mapping with run (and optionally modelFlag)");
-    for (const key of Object.keys(def)) if (key !== "run" && key !== "modelFlag") invalid(where, `${field}.${key}`, "is not a known key (run, modelFlag)");
-    const run = stringArray(def.run, `${field}.run`, where);
+    if (!isRecord(def)) invalid(where, field, "must be a mapping with run (and optionally modelFlag, billing, routingFeePerMillionUsd)");
+    for (const key of Object.keys(def)) if (!AGENT_KEYS.has(key)) invalid(where, `${field}.${key}`, "is not a known key (run, modelFlag, billing, routingFeePerMillionUsd)");
+    const builtin = BUILTIN_AGENTS[name];
+    const run = def.run !== void 0 ? stringArray(def.run, `${field}.run`, where) : builtin ? [...builtin.run] : stringArray(def.run, `${field}.run`, where);
     if (run.length === 0) invalid(where, `${field}.run`, "must name the program to run");
     if (def.modelFlag !== void 0 && (typeof def.modelFlag !== "string" || !def.modelFlag.startsWith("-"))) invalid(where, `${field}.modelFlag`, "must be a flag such as --model");
-    out[name] = { run, ...def.modelFlag !== void 0 ? { modelFlag: def.modelFlag } : {} };
+    if (def.billing !== void 0 && def.billing !== "api" && def.billing !== "subscription") invalid(where, `${field}.billing`, 'must be "api" or "subscription"');
+    if (def.routingFeePerMillionUsd !== void 0 && (typeof def.routingFeePerMillionUsd !== "number" || !Number.isFinite(def.routingFeePerMillionUsd) || def.routingFeePerMillionUsd < 0)) {
+      invalid(where, `${field}.routingFeePerMillionUsd`, "must be a finite number >= 0");
+    }
+    const modelFlag = def.modelFlag !== void 0 ? def.modelFlag : builtin?.modelFlag;
+    out[name] = {
+      run,
+      ...modelFlag !== void 0 ? { modelFlag } : {},
+      ...def.billing !== void 0 ? { billing: def.billing } : {},
+      ...def.routingFeePerMillionUsd !== void 0 ? { routingFeePerMillionUsd: def.routingFeePerMillionUsd } : {}
+    };
   }
   return out;
 }
@@ -7711,12 +7835,32 @@ function normalizeRaw(input, where, ignored) {
   if (out.workspaceDir !== void 0 && (typeof out.workspaceDir !== "string" || out.workspaceDir.trim() === "")) invalid(where, "workspaceDir", "must be a non-empty path");
   const buildSection = section(out, "build", where);
   if (buildSection && buildSection.visibleTabs !== void 0 && typeof buildSection.visibleTabs !== "boolean") invalid(where, "build.visibleTabs", "must be a boolean");
+  const worktreeSection = section(out, "worktree", where);
+  if (worktreeSection) {
+    if (worktreeSection.default !== void 0 && worktreeSection.default !== "ask" && worktreeSection.default !== "always" && worktreeSection.default !== "never") {
+      invalid(where, "worktree.default", 'must be "ask", "always", or "never"');
+    }
+    if (worktreeSection.dir !== void 0 && (typeof worktreeSection.dir !== "string" || worktreeSection.dir.trim() === "")) {
+      invalid(where, "worktree.dir", "must be a non-empty path");
+    }
+  }
   const budgets = section(out, "budgets", where);
   if (budgets) {
     for (const key of ["taskUsd", "dailyUsd"]) checkNumber(budgets, key, where, { exclusiveMin: 0 }, "budgets");
     checkNumber(budgets, "softWarningRatio", where, { min: 0, max: 1 }, "budgets");
     checkNumber(budgets, "unknownCallUsd", where, { min: 0 }, "budgets");
     for (const key of ["idleWarnMinutes", "idleWarnTokens"]) checkNumber(budgets, key, where, { min: 0, integer: true }, "budgets");
+    if (budgets.idleAction !== void 0 && budgets.idleAction !== "warn" && budgets.idleAction !== "block" && budgets.idleAction !== "off") {
+      invalid(where, "budgets.idleAction", 'must be "warn", "block", or "off"');
+    }
+    if (budgets.timeZone !== void 0) {
+      if (typeof budgets.timeZone !== "string" || budgets.timeZone.trim() === "") invalid(where, "budgets.timeZone", "must be an IANA timezone name such as America/New_York");
+      try {
+        new Intl.DateTimeFormat("en-CA", { timeZone: budgets.timeZone });
+      } catch {
+        invalid(where, "budgets.timeZone", `is not a valid IANA timezone (${budgets.timeZone})`);
+      }
+    }
   }
   for (const key of ["checks", "setup"]) {
     const list = out[key];
@@ -7736,6 +7880,23 @@ function normalizeRaw(input, where, ignored) {
     if (review.model !== void 0 && typeof review.model !== "boolean") invalid(where, "review.model", "must be a boolean");
     if (review.tickets !== void 0 && typeof review.tickets !== "boolean") invalid(where, "review.tickets", "must be a boolean");
     checkNumber(review, "timeoutMs", where, { min: 1e3, integer: true }, "review");
+    for (const key of ["reviewers", "highRiskReviewers"]) {
+      const list = review[key];
+      if (list === void 0) continue;
+      if (!Array.isArray(list)) invalid(where, `review.${key}`, "must be a list of models or { model, name?, focus? } mappings");
+      list.forEach((entry, index) => {
+        const field = `review.${key}[${index}]`;
+        if (typeof entry === "string") {
+          if (!entry.trim()) invalid(where, field, "must be a non-empty model string");
+          return;
+        }
+        if (!isRecord(entry) || typeof entry.model !== "string" || !entry.model.trim()) {
+          invalid(where, field, "must be a model string or a mapping with a non-empty string model");
+        }
+        if (entry.name !== void 0 && (typeof entry.name !== "string" || !entry.name.trim())) invalid(where, `${field}.name`, "must be a non-empty string");
+        if (entry.focus !== void 0 && (typeof entry.focus !== "string" || !entry.focus.trim())) invalid(where, `${field}.focus`, "must be a non-empty string");
+      });
+    }
   }
   const local = normalizeLocal(out.local, where);
   if (local) out.local = local;
@@ -7753,9 +7914,19 @@ function validateModels(config, where) {
     const problem = ticketModelProblem(config.models[key], config);
     if (problem) invalid(where, `models.${key}`, `is not valid: ${problem}`);
   }
+  for (const key of ["reviewers", "highRiskReviewers"]) {
+    const list = config.review[key];
+    if (!list) continue;
+    list.forEach((entry, index) => {
+      const model = normalizeReviewerSpec(entry).model;
+      const problem = ticketModelProblem(model, config);
+      if (problem) invalid(where, `review.${key}[${index}]`, `is not valid: ${problem}`);
+    });
+  }
 }
 function build(norm) {
   const obj = (key) => isRecord(norm[key]) ? norm[key] : {};
+  const worktreeRaw = isRecord(norm.worktree) ? norm.worktree : void 0;
   const config = {
     workspaceDir: typeof norm.workspaceDir === "string" ? norm.workspaceDir : DEFAULTS.workspaceDir,
     models: { ...DEFAULT_MODELS, ...obj("models") },
@@ -7763,12 +7934,14 @@ function build(norm) {
     agents: isRecord(norm.agents) ? norm.agents : {},
     routing: { ...DEFAULTS.routing, ...obj("routing") },
     build: { ...DEFAULTS.build, ...obj("build") },
+    ...worktreeRaw ? { worktree: { default: worktreeRaw.default ?? "ask", ...typeof worktreeRaw.dir === "string" ? { dir: worktreeRaw.dir } : {} } } : {},
     branchPrefix: typeof norm.branchPrefix === "string" ? norm.branchPrefix : DEFAULTS.branchPrefix,
     budgets: { ...DEFAULTS.budgets, ...obj("budgets") },
     checks: Array.isArray(norm.checks) ? norm.checks.map((check) => ({ ...check, args: check.args ?? [] })) : DEFAULTS.checks,
     setup: Array.isArray(norm.setup) ? norm.setup.map((check) => ({ ...check, args: check.args ?? [] })) : DEFAULTS.setup,
     review: { ...DEFAULTS.review, ...obj("review") },
-    pricing: Array.isArray(norm.pricing) ? norm.pricing : []
+    // Built-in 2026 pricing defaults sit underneath user rows; user rows always win on matching (provider, model, effectiveFrom) or later dates.
+    pricing: [...DEFAULT_PRICING, ...Array.isArray(norm.pricing) ? norm.pricing : []]
   };
   return config;
 }
@@ -7832,10 +8005,13 @@ function readConfigText(text, file, ignored) {
   }
   return normalizeRaw(parsed ?? {}, file, ignored);
 }
-function loadConfig(cwd) {
-  const { projectPath, userPath } = configPaths(cwd);
+function loadConfig(cwd, fallbackProjectRoot) {
+  const { projectPath: ownProjectPath, userPath } = configPaths(cwd);
+  const useFallback = !existsSync(ownProjectPath) && !!fallbackProjectRoot && path.resolve(fallbackProjectRoot) !== path.resolve(cwd);
+  const projectBase = useFallback ? path.join(fallbackProjectRoot, ".shepherd", "config") : path.join(cwd, ".shepherd", "config");
+  const projectPath = useFallback ? pickYaml(projectBase).path : ownProjectPath;
   const warnings = [];
-  for (const base of [path.join(cwd, ".shepherd", "config"), path.join(homedir(), ".claude", "shepherd")]) {
+  for (const base of [projectBase, path.join(homedir(), ".claude", "shepherd")]) {
     const { path: used, ignored: ignored2 } = pickYaml(base);
     if (ignored2) warnings.push(`${displayPath(ignored2)} is ignored because ${displayPath(used)} exists; delete one of them.`);
   }
@@ -7854,14 +8030,78 @@ function loadConfig(cwd) {
   if (warnings.length > 0) config.warnings = warnings;
   return config;
 }
-function unpricedConfigModels(config) {
-  const priced = new Set(config.pricing.map((row) => `${row.provider}/${row.model}`));
+var BUILTIN_PRICE_ROWS = new WeakSet(DEFAULT_PRICING);
+var priceIndexes = /* @__PURE__ */ new WeakMap();
+function priceKey(provider, model) {
+  return `${provider}\0${model}`;
+}
+function priceIndex(pricing) {
+  const cached = priceIndexes.get(pricing);
+  if (cached && cached.length === pricing.length) return cached;
+  const byKey = /* @__PURE__ */ new Map();
+  pricing.forEach((row) => {
+    const day = normalizeEffectiveFrom(row.effectiveFrom);
+    if (!day) return;
+    const key = priceKey(row.provider, row.model);
+    let bucket = byKey.get(key);
+    if (!bucket) {
+      bucket = { user: [], builtin: [] };
+      byKey.set(key, bucket);
+    }
+    (BUILTIN_PRICE_ROWS.has(row) ? bucket.builtin : bucket.user).push({ day, row });
+  });
+  const byDay = (a, b) => a.day < b.day ? -1 : a.day > b.day ? 1 : 0;
+  for (const bucket of byKey.values()) {
+    bucket.user.sort(byDay);
+    bucket.builtin.sort(byDay);
+  }
+  const index = { length: pricing.length, byKey };
+  priceIndexes.set(pricing, index);
+  return index;
+}
+function newestOnOrBefore(list, day) {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = lo + hi >>> 1;
+    if (list[mid].day <= day) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo === 0 ? void 0 : list[lo - 1].row;
+}
+function priceFor(pricing, provider, model, at) {
+  if (Number.isNaN(at.getTime())) return void 0;
+  const index = priceIndex(pricing);
+  const canonical = canonicalModelId(provider, model);
+  const exactBucket = index.byKey.get(priceKey(provider, model));
+  const canonBucket = canonical !== model ? index.byKey.get(priceKey(provider, canonical)) : void 0;
+  if (!exactBucket && !canonBucket) {
+    return provider === "local" ? { provider, model, effectiveFrom: "1970-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0 } : void 0;
+  }
+  const day = at.toISOString().slice(0, 10);
+  return (exactBucket ? newestOnOrBefore(exactBucket.user, day) : void 0) ?? (canonBucket ? newestOnOrBefore(canonBucket.user, day) : void 0) ?? (exactBucket ? newestOnOrBefore(exactBucket.builtin, day) : void 0) ?? (canonBucket ? newestOnOrBefore(canonBucket.builtin, day) : void 0);
+}
+function unpricedConfigModels(config, at = /* @__PURE__ */ new Date()) {
   const out = /* @__PURE__ */ new Set();
   for (const key of MODEL_KEYS) {
     const model = parseTicketModel(config.models[key], config);
-    if (model.kind !== "pi" || model.provider === "local") continue;
-    const name = `${model.provider}/${model.id}`;
-    if (!priced.has(name)) out.add(name);
+    if (model.kind === "pi") {
+      if (model.provider === "local") continue;
+      if (!priceFor(config.pricing, model.provider, model.id, at)) out.add(`${model.provider}/${model.id}`);
+      continue;
+    }
+    if (!model.model) continue;
+    if (model.name === "cursor-agent") {
+      const lower = model.model.toLowerCase();
+      if (lower === "auto" || lower.startsWith("auto-smart")) continue;
+      const inferred = inferProviderForModel(model.model);
+      if (inferred.provider !== "cursor" && !priceFor(config.pricing, inferred.provider, inferred.model, at)) {
+        out.add(`${inferred.provider}/${inferred.model}`);
+      }
+      continue;
+    }
+    const provider = AGENT_DEFAULT_PROVIDER[model.name];
+    if (provider && !priceFor(config.pricing, provider, model.model, at)) out.add(`${provider}/${model.model}`);
   }
   return [...out];
 }
@@ -7872,19 +8112,22 @@ function unpricedWarning(config) {
 
 // src/sandbox.ts
 var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
-var WRAPPERS = /* @__PURE__ */ new Set(["sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout", "setsid", "stdbuf", "ionice", "chrt", "taskset"]);
+var WRAPPERS = /* @__PURE__ */ new Set(["sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout", "setsid", "stdbuf", "ionice", "chrt", "taskset", "builtin", "busybox"]);
 var WRAPPER_VALUE_FLAGS = /* @__PURE__ */ new Set(["-u", "-g"]);
 var WRAPPER_EXTRA_VALUE_FLAGS = {
+  env: /* @__PURE__ */ new Set(["--unset", "-C", "--chdir"]),
+  sudo: /* @__PURE__ */ new Set(["-p", "-C", "-T", "-r", "-t"]),
   nice: /* @__PURE__ */ new Set(["-n"]),
   xargs: /* @__PURE__ */ new Set(["-n", "-I", "-P", "-L", "-s", "-d", "-a", "-E"]),
-  timeout: /* @__PURE__ */ new Set(["-s", "-k"]),
+  timeout: /* @__PURE__ */ new Set(["-s", "--signal", "-k", "--kill-after"]),
   stdbuf: /* @__PURE__ */ new Set(["-i", "-o", "-e"]),
   ionice: /* @__PURE__ */ new Set(["-c", "-n", "-p"])
 };
 var WRAPPER_POSITIONALS = { timeout: 1, chrt: 1, taskset: 1 };
-var GIT_VALUE_FLAGS = /* @__PURE__ */ new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
-function splitSegments(line) {
+var GIT_VALUE_FLAGS = /* @__PURE__ */ new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"]);
+function splitSegments(line, depth = 0) {
   const segments = [];
+  const embedded = [];
   let tokens = [];
   let current = "";
   let has = false;
@@ -7906,7 +8149,28 @@ function splitSegments(line) {
     if (quote) {
       if (ch === quote) quote = null;
       else if (ch === "\\" && quote === '"' && i + 1 < line.length) current += line[++i];
-      else current += ch;
+      else if (quote === '"' && ch === "$" && line[i + 1] === "(" && depth < MAX_NESTING) {
+        let paren = 1;
+        let j = i + 2;
+        for (; j < line.length && paren > 0; j += 1) {
+          if (line[j] === "\\" && j + 1 < line.length) j += 1;
+          else if (line[j] === "(") paren += 1;
+          else if (line[j] === ")") paren -= 1;
+        }
+        const inner = line.slice(i + 2, paren === 0 ? j - 1 : j);
+        if (inner.trim()) embedded.push(inner);
+        current += line.slice(i, j);
+        i = j - 1;
+      } else if (quote === '"' && ch === "`" && depth < MAX_NESTING) {
+        let j = i + 1;
+        for (; j < line.length && line[j] !== "`"; j += 1) {
+          if (line[j] === "\\" && j + 1 < line.length) j += 1;
+        }
+        const inner = line.slice(i + 1, j);
+        if (inner.trim()) embedded.push(inner);
+        current += line.slice(i, Math.min(line.length, j + 1));
+        i = j;
+      } else current += ch;
       continue;
     }
     if (ch === "'" || ch === '"') {
@@ -7933,6 +8197,7 @@ function splitSegments(line) {
     }
   }
   endSegment(false);
+  for (const sub of embedded) segments.push(...splitSegments(sub, depth + 1));
   return segments;
 }
 function baseName(token) {
@@ -7942,6 +8207,7 @@ function baseName(token) {
 function unwrap(input) {
   let tokens = input;
   let xargs = false;
+  const extraSegments = [];
   let i = 0;
   for (; ; ) {
     while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i += 1;
@@ -7960,13 +8226,15 @@ function unwrap(input) {
     }
     if (tokens[i] === "--") i += 1;
     if (split !== void 0) {
-      tokens = [...splitSegments(split)[0]?.tokens ?? [], ...tokens.slice(i)];
+      const parts = splitSegments(split);
+      if (parts.length > 1) extraSegments.push(...parts.slice(1));
+      tokens = [...parts[0]?.tokens ?? [], ...tokens.slice(i)];
       i = 0;
       continue;
     }
     i += WRAPPER_POSITIONALS[name] ?? 0;
   }
-  return { argv: tokens.slice(i), xargs };
+  return { argv: tokens.slice(i), xargs, extraSegments };
 }
 function stripWrappers(tokens) {
   return unwrap(tokens).argv;
@@ -7978,27 +8246,36 @@ function shellScript(args) {
   return args[at + 1] === "--" ? args[at + 2] : args[at + 1];
 }
 function commandsOfArgv(tokens, piped, depth) {
-  const { argv, xargs } = unwrap(tokens);
-  if (argv.length === 0) return [];
-  const out = [{ argv, xargs, piped }];
-  const name = baseName(argv[0]).toLowerCase();
-  const args = argv.slice(1);
-  const nested = (script) => {
-    if (depth + 1 >= MAX_NESTING) out.push({ argv: [], xargs: false, piped: false, opaque: script });
-    else out.push(...commandsIn(script, depth + 1));
-  };
-  if (SHELLS.has(name)) {
-    const script = shellScript(args);
-    if (script !== void 0) nested(script);
-  } else if (name === "eval") nested(args.join(" "));
-  else if (name === "find") {
-    for (let i = 0; i < args.length; i += 1) {
-      if (!/^-(exec|execdir|ok|okdir)$/.test(args[i])) continue;
-      const end = args.findIndex((arg, j) => j > i && (arg === ";" || arg === "+"));
-      const inner = args.slice(i + 1, end < 0 ? void 0 : end);
-      if (depth + 1 < MAX_NESTING) out.push(...commandsOfArgv(inner, false, depth + 1));
-      else out.push({ argv: [], xargs: false, piped: false, opaque: inner.join(" ") });
+  const { argv, xargs, extraSegments } = unwrap(tokens);
+  const out = [];
+  if (argv.length > 0) {
+    out.push({ argv, xargs, piped });
+    const name = baseName(argv[0]).toLowerCase();
+    const args = argv.slice(1);
+    const nested = (script) => {
+      if (depth + 1 >= MAX_NESTING) out.push({ argv: [], xargs: false, piped: false, opaque: script });
+      else out.push(...commandsIn(script, depth + 1));
+    };
+    if (SHELLS.has(name)) {
+      const script = shellScript(args);
+      if (script !== void 0) nested(script);
+    } else if (name === "eval") nested(args.join(" "));
+    else if (name === "git") {
+      const call = gitCall(argv);
+      if (call?.shellAlias) nested(call.shellAlias);
+    } else if (name === "find") {
+      for (let i = 0; i < args.length; i += 1) {
+        if (!/^-(exec|execdir|ok|okdir)$/.test(args[i])) continue;
+        const end = args.findIndex((arg, j) => j > i && (arg === ";" || arg === "+"));
+        const inner = args.slice(i + 1, end < 0 ? void 0 : end);
+        if (depth + 1 < MAX_NESTING) out.push(...commandsOfArgv(inner, false, depth + 1));
+        else out.push({ argv: [], xargs: false, piped: false, opaque: inner.join(" ") });
+      }
     }
+  }
+  for (const seg of extraSegments) {
+    if (depth + 1 < MAX_NESTING) out.push(...commandsOfArgv(seg.tokens, seg.piped, depth + 1));
+    else out.push({ argv: [], xargs: false, piped: false, opaque: seg.tokens.join(" ") });
   }
   return out;
 }
@@ -8014,7 +8291,11 @@ function shortFlags(args) {
   return out;
 }
 function longFlag(args, name) {
-  return args.some((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`));
+  for (const arg of args) {
+    if (arg === "--") break;
+    if (arg === `--${name}` || arg.startsWith(`--${name}=`)) return true;
+  }
+  return false;
 }
 function deniedArgv(tokens) {
   if (tokens.length === 0) return false;
@@ -8038,7 +8319,11 @@ function deniedArgv(tokens) {
       (arg) => arg === "--force" || arg === "--delete" || arg.startsWith("--force-with-lease") || arg.startsWith("--force-if-includes") || /^-[A-Za-z]+$/.test(arg) && /[fd]/.test(arg) || /^\+\S/.test(arg) || /^:\S/.test(arg)
     );
   }
-  if (call?.sub === "reset") return call.rest.includes("--hard");
+  if (call?.sub === "reset") {
+    const dash = call.rest.indexOf("--");
+    const flags = dash < 0 ? call.rest : call.rest.slice(0, dash);
+    return flags.includes("--hard");
+  }
   return false;
 }
 function isDownloader(tokens) {
@@ -8047,7 +8332,7 @@ function isDownloader(tokens) {
   return cmd === "curl" || cmd === "wget";
 }
 function isDeniedCommand(line) {
-  if (/<\(\s*(curl|wget)\b/i.test(line) || /\b(curl|wget)\b[^\n]*\|\s*(sudo\s+)?(\S*\/)?(sh|bash|zsh|dash|ksh)\b/i.test(line)) {
+  if (/<\(\s*(curl|wget)\b/i.test(line) || /\b(curl|wget)\b[^\n]*\|\s*(sudo\s+)?(\S*\/)?(sh|bash|zsh|dash|ksh|fish)\b/i.test(line)) {
     return true;
   }
   const commands = commandsIn(line);
@@ -8069,25 +8354,44 @@ function gitCall(argv) {
   const aliases = /* @__PURE__ */ new Map();
   let i = 0;
   while (i < args.length && args[i].startsWith("-")) {
-    const alias = args[i] === "-c" ? /^alias\.([^=]+)=(.*)$/i.exec(args[i + 1] ?? "") : null;
-    if (alias) aliases.set(alias[1].toLowerCase(), alias[2]);
-    i += GIT_VALUE_FLAGS.has(args[i]) ? 2 : 1;
+    const opt = args[i];
+    if (opt === "-c") {
+      const alias = /^alias\.([^=]+)=(.*)$/i.exec(args[i + 1] ?? "");
+      if (alias) aliases.set(alias[1].toLowerCase(), alias[2]);
+      i += 2;
+      continue;
+    }
+    if (opt.startsWith("-c") && opt.length > 2) {
+      const alias = /^alias\.([^=]+)=(.*)$/i.exec(opt.slice(2));
+      if (alias) aliases.set(alias[1].toLowerCase(), alias[2]);
+      i += 1;
+      continue;
+    }
+    i += GIT_VALUE_FLAGS.has(opt) ? 2 : 1;
   }
   const sub = args[i];
   const rest = args.slice(i + 1);
   const expansion = sub === void 0 ? void 0 : aliases.get(sub.toLowerCase());
   if (expansion === void 0) return { sub, rest };
-  const words = expansion.replace(/^!\s*/, "").trim().split(/\s+/);
+  const trimmed = expansion.trim();
+  if (trimmed.startsWith("!")) {
+    const shellCmd = trimmed.slice(1).trim();
+    const words2 = shellCmd.split(/\s+/);
+    if (words2[0] === "git") words2.shift();
+    return { sub: words2[0], rest: [...words2.slice(1), ...rest], shellAlias: shellCmd };
+  }
+  const words = trimmed.split(/\s+/);
   if (words[0] === "git") words.shift();
   return { sub: words[0], rest: [...words.slice(1), ...rest] };
 }
 function movesBranch(call) {
   if (call.sub === "switch") return true;
   if (call.sub === "symbolic-ref") return call.rest.filter((arg) => !arg.startsWith("-")).length >= 2;
+  if (call.sub === "update-ref") return call.rest.some((arg) => arg === "HEAD");
   if (call.sub !== "checkout") return false;
   if (call.rest.some((arg) => /^-[A-Za-z]*[bB][A-Za-z]*$/.test(arg) || arg === "--orphan" || arg === "--detach")) return true;
   const dash = call.rest.indexOf("--");
-  return dash < 0 && call.rest.some((arg) => arg === "-" || !arg.startsWith("-"));
+  return dash < 0 && call.rest.some((arg) => (arg === "-" || !arg.startsWith("-")) && arg !== ".");
 }
 function mayRunGit(command, word, test) {
   for (const simple of commandsIn(command)) {
@@ -8187,22 +8491,28 @@ function turnLimitNotice(maxTurns) {
 }
 function turnBudget(limits, steer, abort) {
   let turns = 0;
+  let steered = false;
   let stopped = false;
+  let aborted = false;
   const safely = (action) => {
     try {
       const result = action();
       if (result && typeof result.catch === "function") result.catch(() => void 0);
+      return true;
     } catch {
+      return false;
     }
   };
   return {
     count() {
-      if (!limits || stopped) return;
+      if (!limits || aborted) return;
       turns += 1;
-      if (turns === limits.maxTurns) safely(() => steer(turnLimitNotice(limits.maxTurns)));
+      if (!steered && turns >= limits.maxTurns && turns < limits.maxTurns + TURN_GRACE) {
+        if (safely(() => steer(turnLimitNotice(limits.maxTurns)))) steered = true;
+      }
       if (turns >= limits.maxTurns + TURN_GRACE) {
         stopped = true;
-        safely(abort);
+        if (safely(abort)) aborted = true;
       }
     },
     stopped: () => stopped
@@ -8211,13 +8521,17 @@ function turnBudget(limits, steer, abort) {
 
 // src/ticket-mode.ts
 function writeStatus(file, status) {
+  const temp = `${file}.${process.pid}.tmp`;
   try {
     mkdirSync(path2.dirname(file), { recursive: true });
-    const temp = `${file}.${process.pid}.tmp`;
     writeFileSync(temp, `${JSON.stringify(status)}
 `, "utf8");
     renameSync(temp, file);
   } catch {
+    try {
+      rmSync(temp, { force: true });
+    } catch {
+    }
   }
 }
 function registerProviders(pi, cwd) {
@@ -8237,11 +8551,10 @@ function ticketMode(pi, options = {}) {
   if (problem && statusFile) writeStatus(statusFile, { error: problem });
   if (problem && !statusFile) pi.on("session_start", (_event, ctx) => void ctx.ui.notify(`shepherd ticket mode: ${problem}`, "warning"));
   pi.on("tool_call", (event) => {
-    if (isToolCallEventType("bash", event)) {
+    if (isToolCallEventType("bash", event) || isToolCallEventType("powershell", event)) {
       const reason = ticketBashProblem(event.input.command);
       if (reason) return { block: true, reason };
     }
-    if (isToolCallEventType("powershell", event) && isDeniedCommand(event.input.command)) return { block: true, reason: "Blocked destructive command." };
     return void 0;
   });
   pi.on("user_bash", (event) => {
@@ -8271,6 +8584,7 @@ function ticketMode(pi, options = {}) {
   pi.on("message_end", (event, ctx) => {
     const message = event.message;
     if (message.role !== "assistant") return void 0;
+    if (message.stopReason === "error") return void 0;
     turns += 1;
     abortRun = () => ctx.abort();
     budget?.count();

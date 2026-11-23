@@ -157,15 +157,25 @@ export interface ModelFinding {
   file?: string;
   message: string;
   evidence?: string;
+  /** Reviewers that independently reported this finding (populated by multi-model /review). */
+  reviewers?: string[];
 }
 
-/** One part of the diff in the model pass: who reviewed it, and the attempts that failed first (or instead). */
+/** One part of the diff (or one reviewer in a multi-model pass): who reviewed it, and the attempts that failed first (or instead). */
 export interface ModelReviewPart {
   /** 1-based. */
   index: number;
-  /** "provider/model" that answered; absent when no attempt succeeded. */
+  /** "provider/model" or label that answered; absent when no attempt succeeded. */
   reviewedBy?: string;
+  /** Optional focus lens assigned to this reviewer (e.g. "correctness & security"). */
+  focus?: string;
   findings: number;
+  /** Findings dropped below MIN_RISK for this reviewer. */
+  dropped?: number;
+  elapsedMs?: number;
+  costUsd?: number | null;
+  listPriceUsd?: number;
+  notMetered?: boolean;
   /** "provider/model: why" per failed attempt, in order; or why the part was not attempted. */
   failures: string[];
 }
@@ -343,10 +353,21 @@ export interface TicketAttempt {
   error?: string;
 }
 
+/** Linked git worktree created for a task during planning (`shepherd plan start --worktree`). */
+export interface WorktreeRecord {
+  path: string;
+  branch: string;
+  base: string;
+  baseSha: string;
+  createdAt: string;
+}
+
 export interface TaskState {
   taskId: string;
   /** Short readable name from the request (`fix-login-redirect`); also names the default build branch. Older tasks have none. */
   name?: string;
+  /** Present when the task was created in its own git worktree (`shepherd plan start --worktree`). */
+  worktree?: WorktreeRecord;
   /** Set when the task was closed (a person, or a new /plan after it finished). Its files and branch are kept. */
   closedAt?: string;
   closedReason?: string;
@@ -359,6 +380,8 @@ export interface TaskState {
   classification?: AcceptedClassification;
   plan?: PlanDocument;
   approvedVersion?: number;
+  /** Highest version ever frozen as plan.vN.approved.json, preserved across plan revisions so re-approval never collides. */
+  lastApprovedVersion?: number;
   /** When the plan was approved (ISO). */
   approvedAt?: string;
   /** Per-ticket progress, keyed by ticket id. */

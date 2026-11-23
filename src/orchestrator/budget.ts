@@ -1,5 +1,7 @@
+import { agentTable } from "../agents.js";
+import { fromMicroUsd, toMicroUsd } from "../config.js";
 import type { CommandResult, CostRecord, Phase, TokenUsage } from "../domain.js";
-import { budgetStatusFor, buildCostRecord, recordsForDay, summarize, type SpendSummary } from "../cost/ledger.js";
+import { budgetStatusFor, buildCostRecord, makeDayKey, recordsForDay, summarize, type SpendSummary } from "../cost/ledger.js";
 import type { AgentLedgerEntry } from "../runner/agent-usage.js";
 import { active, fail, type WorkflowContext } from "./context.js";
 
@@ -16,8 +18,9 @@ export interface BudgetState {
 
 export function budgetState(ctx: WorkflowContext, taskId?: string, records = ctx.store.readLedger()): BudgetState {
   const pricing = ctx.config.pricing;
-  const { dailyUsd, taskUsd, softWarningRatio, unknownCallUsd } = ctx.config.budgets;
-  const daily = summarize(recordsForDay(ctx.dailyRecords ? ctx.dailyRecords() : records, ctx.now()), { pricing, unknownCallUsd });
+  const { dailyUsd, taskUsd, softWarningRatio, unknownCallUsd, timeZone } = ctx.config.budgets;
+  const dayKey = makeDayKey(timeZone);
+  const daily = summarize(recordsForDay(ctx.dailyRecords ? ctx.dailyRecords() : records, ctx.now(), dayKey), { pricing, unknownCallUsd });
   const task = summarize(taskId ? records.filter((record) => record.taskId === taskId) : [], { pricing, unknownCallUsd });
   const statuses = [budgetStatusFor(daily, dailyUsd, softWarningRatio), budgetStatusFor(task, taskUsd, softWarningRatio)];
   return { status: statuses.includes("hard") ? "hard" : statuses.includes("soft") ? "soft" : "ok", daily, task };
@@ -53,15 +56,35 @@ export function record(
   retries: number,
   reason: string,
   /** A fixed id and time, for a call recorded after the fact (Pi's own calls, read from the session file). */
-  when: { id?: string; at?: Date; /** An external agent's row (see `recordAgentUsage`). */ meter?: "agent-log" | "not-metered" } = {},
+  when: {
+    id?: string;
+    at?: Date;
+    /** An external agent's row (see `recordAgentUsage`). */
+    meter?: "agent-log" | "not-metered";
+    /** Subscription billing records $0 billed while preserving API-equivalent `listPriceUsd` for transparency. */
+    billing?: "api" | "subscription";
+    /** Optional per-million-token routing surcharge added on top of API list price (e.g. Cursor Teams/Enterprise). */
+    routingFeePerMillionUsd?: number;
+  } = {},
 ): CostRecord {
   const entry = buildCostRecord({ provider, model, phase, taskId, tier, usage, outcome, retries, reason }, ctx.config.pricing, when.at ?? ctx.now(), when.id ?? ctx.id());
   // Model-free work (a failure before any request) reports zero tokens: that is a known zero charge, not an unknown one.
-  if (usage.input === 0 && usage.output === 0 && entry.actualUsd === null) {
+  if (usage.input === 0 && usage.output === 0 && (usage.cacheRead ?? 0) === 0 && (usage.cacheWrite ?? 0) === 0 && entry.actualUsd === null) {
     entry.actualUsd = 0;
     entry.usageKnown = true;
   }
+  if (when.routingFeePerMillionUsd && when.routingFeePerMillionUsd > 0 && entry.actualUsd !== null) {
+    const totalTokens = (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+    const feeMicro = Math.round((totalTokens * toMicroUsd(when.routingFeePerMillionUsd)) / 1_000_000);
+    entry.actualUsd = fromMicroUsd(toMicroUsd(entry.actualUsd) + feeMicro);
+  }
+  // Always capture API-equivalent list price when known so subscription vs API transparency works cleanly.
+  if (entry.actualUsd !== null && entry.listPriceUsd === undefined) entry.listPriceUsd = entry.actualUsd;
   if (when.meter) entry.meter = when.meter;
+  if (when.billing === "subscription" && when.meter !== "not-metered") {
+    entry.actualUsd = 0;
+    entry.usageKnown = true;
+  }
   // A subscription agent has no per-token price: a known $0 that /cost counts as "not metered", never an unknown call.
   if (when.meter === "not-metered") {
     entry.actualUsd = 0;
@@ -117,21 +140,35 @@ export function refreshPiLedgered(ctx: WorkflowContext): Set<string> {
  * Pi wrote itself; a hook's own summary is ledgered where it ran). Each entry is recorded once, under the id
  * `pi-<session>-<entry>`, at the entry's time, on the active task. `model` is the one the child ran; a usage entry names its own.
  */
-export function recordPiUsage(ctx: WorkflowContext, input: { sessionId: string; entries: readonly unknown[]; model?: { provider: string; id: string }; since?: Date; ticketId?: string }): CostRecord[] {
+export function recordPiUsage(
+  ctx: WorkflowContext,
+  input: {
+    sessionId: string;
+    entries: readonly unknown[];
+    model?: { provider: string; id: string };
+    since?: Date;
+    ticketId?: string;
+    taskId?: string;
+    phase?: Phase;
+    tier?: string;
+    job?: string;
+  },
+): CostRecord[] {
   const seen = (ctx.piLedgered ??= new Set(ctx.store.readLedger().map((entry) => entry.id).filter((id) => id.startsWith("pi-"))));
-  const state = active(ctx);
+  const state = input.taskId ? undefined : active(ctx);
   const out: CostRecord[] = [];
   let refreshed = false;
-  const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+  const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null);
   for (const raw of input.entries) {
     const entry = raw as PiEntry;
     if (typeof entry?.id !== "string" || !entry.usage) continue;
-    const job =
+    const piJob =
       entry.type === "usage" ? `Pi ${String(entry.kind ?? "usage").replace(/_/g, " ").replace(/^cache warm$/, "cache warming")}`
       : entry.type === "compaction" && entry.fromHook !== true ? "Pi compaction"
       : entry.type === "branch_summary" && entry.fromHook !== true ? "Pi branch summary"
       : undefined;
-    if (!job) continue;
+    if (!piJob) continue;
+    const job = input.job ? `${input.job} (${piJob})` : piJob;
     const id = `pi-${input.sessionId}-${entry.id}`;
     const at = typeof entry.timestamp === "string" && !Number.isNaN(Date.parse(entry.timestamp)) ? new Date(entry.timestamp) : ctx.now();
     // A resumed session's history belongs to whatever ran then, not to the task active now.
@@ -146,7 +183,21 @@ export function recordPiUsage(ctx: WorkflowContext, input: { sessionId: string; 
     const model = typeof entry.model === "string" ? entry.model : input.model?.id ?? "unknown";
     const listed = count(entry.usage.cost?.total);
     const usage: TokenUsage = { input: count(entry.usage.input), output: count(entry.usage.output), cacheRead: count(entry.usage.cacheRead), cacheWrite: count(entry.usage.cacheWrite), requests: 1, ...(listed !== null ? { listPriceUsd: listed } : {}) };
-    out.push(record(ctx, state?.taskId ?? SESSION_TASK_ID, state?.phase ?? "IDLE", "pi", provider, model, usage, "success", 0, input.ticketId ? `${job} · ticket ${input.ticketId}` : job, { id, at }));
+    out.push(
+      record(
+        ctx,
+        input.taskId ?? state?.taskId ?? SESSION_TASK_ID,
+        input.phase ?? state?.phase ?? "IDLE",
+        input.tier ?? "pi",
+        provider,
+        model,
+        usage,
+        "success",
+        0,
+        input.ticketId ? `${job} · ticket ${input.ticketId}` : job,
+        { id, at },
+      ),
+    );
   }
   return out;
 }
@@ -160,9 +211,18 @@ export function recordPiUsage(ctx: WorkflowContext, input: { sessionId: string; 
 export function recordAgentUsage(ctx: WorkflowContext, input: { reason: string; entries: readonly AgentLedgerEntry[]; ticketId?: string; taskId?: string; phase?: Phase; tier?: string }): CostRecord[] {
   const state = input.taskId ? undefined : active(ctx);
   const reason = input.ticketId ? `${input.reason} · ticket ${input.ticketId}` : input.reason;
+  const agents = agentTable(ctx.config);
   const out: CostRecord[] = [];
   for (const item of input.entries) {
-    out.push(record(ctx, input.taskId ?? state?.taskId ?? SESSION_TASK_ID, input.phase ?? state?.phase ?? "IDLE", input.tier ?? "agent", item.provider, item.model, item.usage, "success", 0, reason, { meter: item.meter }));
+    const def = agents[item.agent];
+    const surcharge = item.firstPartyCursor ? 0 : def?.routingFeePerMillionUsd;
+    out.push(
+      record(ctx, input.taskId ?? state?.taskId ?? SESSION_TASK_ID, input.phase ?? state?.phase ?? "IDLE", input.tier ?? "agent", item.provider, item.model, item.usage, "success", 0, reason, {
+        meter: item.meter,
+        ...(def?.billing ? { billing: def.billing } : {}),
+        ...(surcharge ? { routingFeePerMillionUsd: surcharge } : {}),
+      }),
+    );
   }
   return out;
 }

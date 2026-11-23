@@ -6,21 +6,23 @@
  * comments survive, are validated by the real loader before anything is written, and never carry a secret.
  */
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { isMap, isScalar, parse, parseDocument, type Document } from "yaml";
-import { agentTable, parseTicketModel, ticketModelProblem } from "../agents.js";
-import { MODEL_KEYS, configPaths, displayPath, loadConfig, parseConfig, type LocalModelConfig, type WorkflowConfig } from "../config.js";
+import { agentTable, parseTicketModel, ranModelText, ticketModelProblem } from "../agents.js";
+import { discoverAgentModels, type DiscoverOptions } from "../agent-models.js";
+import { MODEL_KEYS, configPaths, displayPath, loadConfig, normalizeReviewerSpec, parseConfig, type LocalModelConfig, type ReviewerSpec, type WorkflowConfig } from "../config.js";
 import { budgetStatusFor, makeDayKey, recordsForDay, summarize, unpricedModels, type SpendBucket } from "../cost/ledger.js";
-import type { CostRecord, TaskState } from "../domain.js";
+import { ticketDifficulty, type CostRecord, type TaskState } from "../domain.js";
+import { reviewLabel } from "../orchestrator/build.js";
 import type { WorkflowContext } from "../orchestrator/context.js";
 import { closeTask, displayName, isClosed, listTasks, stateText, unfinishedTasks } from "../orchestrator/tasks.js";
 import { contextMismatch, probeLocalContext, serverOrigin } from "../providers/local-context.js";
 import { containsSecret, redact } from "../redact.js";
-import { shepherdHome } from "../shepherd-home.js";
+import { dailyRecordsOf, readJson, registeredRepos, shepherdHome } from "../shepherd-home.js";
 import { TaskStore, atomicWrite } from "../storage/store.js";
 
 const execFileAsync = promisify(execFile);
@@ -32,7 +34,7 @@ export const LOCAL_PRESETS = [
   { name: "LM Studio", baseUrl: "http://127.0.0.1:1234/v1" },
 ] as const;
 
-const SET_KEYS = ["models.low", "models.medium", "models.high", "models.review", "local.baseUrl", "budgets.taskUsd", "budgets.dailyUsd"] as const;
+const SET_KEYS = ["models.low", "models.medium", "models.high", "models.review", "local.baseUrl", "budgets.taskUsd", "budgets.dailyUsd", "budgets.idleAction", "review.reviewers"] as const;
 const PHASE_LABELS: Record<string, string> = { PLANNING: "plan", AWAITING_PLAN_APPROVAL: "plan", IMPLEMENTING: "build", REVIEWING: "review" };
 const RECENT_CLOSED = 8;
 
@@ -76,13 +78,35 @@ interface Effective {
   project?: Json;
 }
 
+/** Resolves the git repo's common root and per-worktree active pointer so the panel sees shared tasks inside linked worktrees. */
+function gitWorktreeRoots(cwd: string): { root: string; commonRoot: string; isWorktree: boolean; activePointer?: string } {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--show-toplevel", "--git-common-dir", "--git-dir"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const [top, commonRaw, dirRaw] = out.trim().split(/\r?\n/);
+    const root = top?.trim() || cwd;
+    const resolvedCommon = commonRaw ? path.resolve(cwd, commonRaw.trim()) : path.join(root, ".git");
+    const commonRoot = path.basename(resolvedCommon) === ".git" ? path.dirname(resolvedCommon) : root;
+    const gitDir = dirRaw ? path.resolve(cwd, dirRaw.trim()) : path.join(root, ".git");
+    const isWorktree = path.resolve(gitDir) !== path.resolve(path.join(commonRoot, ".git"));
+    return { root, commonRoot, isWorktree, ...(isWorktree ? { activePointer: path.join(gitDir, "shepherd-active.json") } : {}) };
+  } catch {
+    return { root: cwd, commonRoot: cwd, isWorktree: false };
+  }
+}
+
 /** The config as the loader gives it. A rejected file does not stop the panel: the defaults (plus what the user file says) are shown with the error. */
 function effective(cwd: string): Effective {
-  const { userPath, projectPath } = configPaths(cwd);
+  const { root, commonRoot, isWorktree } = gitWorktreeRoots(cwd);
+  const { userPath, projectPath: ownProjectPath } = configPaths(root);
+  const projectPath = !existsSync(ownProjectPath) && isWorktree ? configPaths(commonRoot).projectPath : ownProjectPath;
   const user = existsSync(userPath) ? readRaw(userPath) : undefined;
   const project = existsSync(projectPath) ? readRaw(projectPath) : undefined;
   try {
-    return { config: loadConfig(cwd), errors: [], user, project };
+    return { config: loadConfig(root, isWorktree ? commonRoot : undefined), errors: [], user, project };
   } catch (error) {
     const config = parseConfig("");
     config.models = { ...config.models };
@@ -113,7 +137,8 @@ function fileView(file: string): Json {
 
 /** A minimal context for the orchestrator helpers that only read the store, the clock and the config. */
 function contextFor(cwd: string, config: WorkflowConfig): WorkflowContext {
-  return { cwd, config, store: new TaskStore(path.join(cwd, config.workspaceDir)), now: () => new Date() } as unknown as WorkflowContext;
+  const { commonRoot, activePointer } = gitWorktreeRoots(cwd);
+  return { cwd, config, store: new TaskStore(path.join(commonRoot, config.workspaceDir), activePointer), now: () => new Date() } as unknown as WorkflowContext;
 }
 
 // ---------------------------------------------------------------- models
@@ -162,6 +187,7 @@ interface PlanView {
   ticketsTotal: number;
   ticketsFailed: number;
   branch?: string;
+  worktree?: string;
   updatedAt: string;
   /** Known spend plus the estimate for calls of unknown cost. */
   spendUsd: number;
@@ -184,6 +210,7 @@ function planView(task: TaskState, active: string | undefined, spend: SpendBucke
     ticketsTotal: total,
     ticketsFailed: runs.filter((run) => run.status === "failed").length,
     ...(task.build?.branch ? { branch: task.build.branch } : {}),
+    ...(task.worktree?.path ? { worktree: task.worktree.path } : {}),
     updatedAt: task.updatedAt,
     spendUsd: round(known + (spend?.estimatedUnknownUsd ?? 0)),
     knownUsd: known,
@@ -224,36 +251,124 @@ function scopeView(records: CostRecord[], limitUsd: number, config: WorkflowConf
     knownUsd: summary.knownUsd,
     estimatedUnknownUsd: summary.estimatedUnknownUsd,
     spendUsd: round(summary.knownUsd + summary.estimatedUnknownUsd),
+    apiEquivalentUsd: round(summary.apiEquivalentUsd),
+    tokens: summary.tokens,
     // Calls whose cost is unknown: a model with no pricing row, or an agent that is not metered.
     unknown: summary.unknownRecords,
+    notMetered: summary.notMeteredRecords,
     limitUsd,
     status: budgetStatusFor(summary, limitUsd, config.budgets.softWarningRatio),
     ...breakdown(records, config),
   };
 }
 
+/** Latest session context & cache warmth from `$SHEPHERD_HOME/sessions/*.json`, if any. */
+function latestSessionContext(shepherd: string, config: WorkflowConfig, now: Date): Json | null {
+  try {
+    let best: { lastTurnEnd: string; contextTokens: number; model?: string } | undefined;
+    let bestTime = -1;
+    for (const name of readdirSync(path.join(shepherd, "sessions"))) {
+      if (!name.endsWith(".json") || name.endsWith(".pending.json") || name.endsWith(".compact.json")) continue;
+      const note = readJson<{ lastTurnEnd?: string; contextTokens?: number; model?: string }>(path.join(shepherd, "sessions", name));
+      if (!note || typeof note.contextTokens !== "number" || note.contextTokens <= 0 || !note.lastTurnEnd) continue;
+      const t = Date.parse(note.lastTurnEnd);
+      if (Number.isFinite(t) && t > bestTime) {
+        bestTime = t;
+        best = { lastTurnEnd: note.lastTurnEnd, contextTokens: note.contextTokens, ...(note.model ? { model: note.model } : {}) };
+      }
+    }
+    if (!best || bestTime < 0) return null;
+    const idleMs = Math.max(0, now.getTime() - bestTime);
+    if (idleMs > 24 * 60 * 60_000) return null;
+    const thresholdMs = Math.max(1, config.budgets.idleWarnMinutes || 5) * 60_000;
+    return {
+      contextTokens: best.contextTokens,
+      warm: idleMs < thresholdMs,
+      idleMinutes: Math.round(idleMs / 60_000),
+      ...(best.model ? { model: best.model } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function activeTicketViews(task: TaskState | undefined): Json[] {
+  if (!task?.plan?.tickets?.length) return [];
+  return task.plan.tickets.map((ticket) => {
+    const run = task.ticketRuns?.[ticket.id];
+    const running = task.build?.currentTicket === ticket.id;
+    return {
+      id: ticket.id,
+      title: ticket.title,
+      difficulty: ticketDifficulty(ticket),
+      status: running ? "in-progress" : (run?.status ?? "pending"),
+      ...(run?.provider && run.model ? { model: ranModelText(run.provider, run.model) } : {}),
+      review: reviewLabel(run),
+      ...(run ? { costUsd: run.costUsd, ...(run.notMetered ? { notMetered: true } : {}) } : {}),
+      ...(run?.elapsedMs !== undefined ? { elapsedMs: run.elapsedMs } : {}),
+      ...(run?.commit ? { commit: run.commit.slice(0, 7) } : {}),
+      ...(run?.error ? { error: run.error.slice(0, 200) } : {}),
+    };
+  });
+}
+
+function findPlanFile(cwd: string, store: TaskStore, task: TaskState | undefined): string | null {
+  if (!task) return null;
+  const mirrored = path.join(cwd, "_plans", `${displayName(task)}.md`);
+  if (existsSync(mirrored)) return mirrored;
+  const internal = path.join(store.taskDir(task.taskId), "plan.md");
+  return existsSync(internal) ? internal : null;
+}
+
+function findLatestReviewFile(store: TaskStore, task: TaskState | undefined): string | null {
+  if (task) {
+    const taskRev = path.join(store.taskDir(task.taskId), "reports", "review.md");
+    if (existsSync(taskRev)) return taskRev;
+  }
+  const dir = path.join(store.root, "reports");
+  try {
+    const md = readdirSync(dir)
+      .filter((name) => name.startsWith("review-") && name.endsWith(".md"))
+      .sort()
+      .at(-1);
+    return md ? path.join(dir, md) : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------- show
 
 /** Everything the panel draws. */
 export function show(cwd: string): Json {
+  const { root, commonRoot, isWorktree } = gitWorktreeRoots(cwd);
   const eff = effective(cwd);
   const { config } = eff;
-  const paths = configPaths(cwd);
+  const ownPaths = configPaths(root);
+  const paths = !existsSync(ownPaths.projectPath) && isWorktree ? { ...ownPaths, projectPath: configPaths(commonRoot).projectPath } : ownPaths;
   const ctx = contextFor(cwd, config);
+  const now = new Date();
+  const shepherd = shepherdHome();
+  const workspace = path.join(commonRoot, config.workspaceDir);
   // The stored pointer, not `activeTask`: that one reads git and may write the pointer, and a read must not.
   const stored = ctx.store.readActive();
   const tasks = listTasks(ctx);
   const records = ctx.store.readLedger();
+  const dayKey = makeDayKey(config.budgets.timeZone);
+  const todayRecords = dailyRecordsOf([...registeredRepos(shepherd), workspace], now, config.budgets.timeZone);
   const spendByTask = summarize(records, { pricing: config.pricing, unknownCallUsd: config.budgets.unknownCallUsd }).byTask;
   const plans = [...tasks.filter((task) => !isClosed(task)), ...tasks.filter(isClosed).slice(0, RECENT_CLOSED)].map((task) => planView(task, stored, spendByTask[task.taskId]));
   const active = plans.find((plan) => plan.active && !plan.closed);
+  const activeTaskObj = active ? tasks.find((t) => t.taskId === active.id) : undefined;
   const agents = agentTable(config);
+  const agentsBilling = Object.fromEntries(Object.entries(agents).map(([name, def]) => [name, def.billing ?? "api"]));
 
   return {
     ok: true,
     cwd,
     models: Object.fromEntries(MODEL_KEYS.map((key) => [key, modelRow(key, eff)])),
     modelsShadowedByProject: isRecord(eff.project?.models),
+    reviewReviewers: (config.review.reviewers ?? []).map((spec) => normalizeReviewerSpec(spec)),
     local: {
       configured: !!config.local,
       baseUrl: config.local?.baseUrl ?? "",
@@ -263,10 +378,22 @@ export function show(cwd: string): Json {
     },
     agents: Object.keys(agents),
     agentsWithModelFlag: Object.entries(agents).filter(([, def]) => !!def.modelFlag).map(([name]) => name),
-    budgets: { taskUsd: config.budgets.taskUsd, dailyUsd: config.budgets.dailyUsd, shadowedByProject: isRecord(eff.project?.budgets) },
+    agentsBilling,
+    budgets: {
+      taskUsd: config.budgets.taskUsd,
+      dailyUsd: config.budgets.dailyUsd,
+      idleAction: config.budgets.idleAction ?? "warn",
+      shadowedByProject: isRecord(eff.project?.budgets),
+    },
     plans,
+    activeTickets: activeTicketViews(activeTaskObj),
+    buildClaimRunning: activeTaskObj ? Boolean(ctx.store.liveBuildClaim(activeTaskObj.taskId)) : false,
+    liveBuild: activeTaskObj ? Boolean(ctx.store.liveBuildClaim(activeTaskObj.taskId) || ctx.store.buildInProgress(activeTaskObj.taskId)) : false,
+    planFile: findPlanFile(commonRoot, ctx.store, activeTaskObj),
+    latestReviewFile: findLatestReviewFile(ctx.store, activeTaskObj),
+    sessionContext: latestSessionContext(shepherd, config, now),
     costs: {
-      today: scopeView(recordsForDay(records, new Date(), makeDayKey()), config.budgets.dailyUsd, config),
+      today: scopeView(todayRecords.length > 0 ? todayRecords : recordsForDay(records, now, dayKey), config.budgets.dailyUsd, config),
       plan: active ? { id: active.id, name: active.name, ...scopeView(records.filter((record) => record.taskId === active.id), config.budgets.taskUsd, config) } : null,
       // provider/model pairs in the ledger with no pricing row (a local model is a known $0).
       unpriced: unpricedModels(records, config.pricing).filter((name) => !name.startsWith("local/")),
@@ -276,7 +403,7 @@ export function show(cwd: string): Json {
     files: {
       user: fileView(paths.userPath),
       project: { path: paths.projectPath, display: displayPath(paths.projectPath), exists: existsSync(paths.projectPath) },
-      workspace: path.join(cwd, config.workspaceDir),
+      workspace,
     },
   };
 }
@@ -365,11 +492,47 @@ function withShow(cwd: string, result: Json): Json {
 
 /** `set`: one of the keys the panel edits. An empty value removes the key (the default applies again). */
 export function setKey(cwd: string, key: string, value: string, expect?: string): Json {
-  if (!(SET_KEYS as readonly string[]).includes(key)) return refuse(`${key} is not a setting this tool edits (${SET_KEYS.join(", ")})`);
+  const billingMatch = /^agents\.([A-Za-z0-9_-]+)\.billing$/.exec(key);
+  if (!(SET_KEYS as readonly string[]).includes(key) && !billingMatch) {
+    return refuse(`${key} is not a setting this tool edits (${SET_KEYS.join(", ")}, agents.<name>.billing)`);
+  }
   const parts = key.split(".");
   const text = value.trim();
-  let parsed: string | number | undefined;
-  if (key.startsWith("models.")) {
+  let parsed: string | number | ReviewerSpec[] | undefined;
+  if (billingMatch) {
+    if (text !== "") {
+      if (text !== "api" && text !== "subscription") return refuse(`${key} must be "api" or "subscription"`);
+      parsed = text;
+    }
+  } else if (key === "budgets.idleAction") {
+    if (text !== "") {
+      if (text !== "warn" && text !== "block" && text !== "off") return refuse(`${key} must be "warn", "block", or "off"`);
+      parsed = text;
+    }
+  } else if (key === "review.reviewers") {
+    if (text !== "") {
+      const cfg = effective(cwd).config;
+      let items: ReviewerSpec[];
+      if (text.startsWith("[")) {
+        try {
+          const raw = JSON.parse(text) as unknown;
+          if (!Array.isArray(raw)) return refuse("review.reviewers must be a JSON array or comma-separated list");
+          items = raw as ReviewerSpec[];
+        } catch {
+          return refuse("review.reviewers is not valid JSON");
+        }
+      } else {
+        items = text.split(",").map((s) => s.trim()).filter(Boolean);
+      }
+      for (const item of items) {
+        const model = typeof item === "string" ? item : item?.model;
+        if (typeof model !== "string" || !model.trim()) return refuse("Each reviewer needs a non-empty model");
+        const problem = ticketModelProblem(model, cfg);
+        if (problem) return refuse(`review.reviewers (${model}): ${problem}`);
+      }
+      parsed = items.length > 0 ? items : undefined;
+    }
+  } else if (key.startsWith("models.")) {
     if (text !== "") {
       const problem = ticketModelProblem(text, effective(cwd).config);
       if (problem) return refuse(`${key}: ${problem}`);
@@ -392,7 +555,11 @@ export function setKey(cwd: string, key: string, value: string, expect?: string)
     }
     if (key === "local.baseUrl" && !isMap(doc.get("local", true))) throw new Error("There is no local server config yet: use Detect, then Add a model, which creates it with this URL.");
     ensureMap(doc, parts[0]!);
-    doc.setIn(parts, parsed);
+    if (parts.length === 3) {
+      const sub = doc.getIn(parts.slice(0, 2), true);
+      if (!isMap(sub)) doc.setIn(parts.slice(0, 2), doc.createNode({}));
+    }
+    doc.setIn(parts, Array.isArray(parsed) ? doc.createNode(parsed) : parsed);
     return undefined;
   });
   return withShow(cwd, result);
@@ -603,12 +770,18 @@ export async function planClose(cwd: string, id: string, force = false): Promise
 
 // ---------------------------------------------------------------- command line
 
+/** Discovers live + curated 2026 models for every built-in agent (or one `--agent`), plus Pi pricing catalog models. */
+export async function agentModels(options: DiscoverOptions = {}): Promise<Json> {
+  return (await discoverAgentModels(options)) as unknown as Json;
+}
+
 const USAGE = `Usage:
   shepherd-config show          --cwd <dir>
-  shepherd-config set           --cwd <dir> --key <${SET_KEYS.join("|")}> --value <v> [--expect <sha256 of the user file>]
+  shepherd-config set           --cwd <dir> --key <${SET_KEYS.join("|")}|agents.<name>.billing> --value <v> [--expect <sha256 of the user file>]
   shepherd-config local-add     --cwd <dir> --id <model id> --context-window <n> [--base-url <url>] [--expect <sha256>]
   shepherd-config local-remove  --cwd <dir> --id <model id> [--expect <sha256>]
   shepherd-config local-detect  --base-url <url> [--cwd <dir>]
+  shepherd-config agent-models  [--agent <name>] [--refresh] [--cwd <dir>]
   shepherd-config cursor-models
   shepherd-config plan-activate --cwd <dir> --id <plan id>
   shepherd-config plan-close    --cwd <dir> --id <plan id> [--force]
@@ -616,9 +789,13 @@ const USAGE = `Usage:
 Prints one JSON document on stdout: { "ok": true, ... } or { "ok": false, "error": "..." }.
 A refused request is reported inside it (exit 0); the exit status is nonzero only for a usage error.`;
 
-function flag(args: string[], name: string): string | undefined {
+function flag(args: string[], name: string, allowDashValue = false): string | undefined {
   const at = args.indexOf(name);
-  return at >= 0 ? args[at + 1] : undefined;
+  if (at < 0) return undefined;
+  const val = args[at + 1];
+  if (val === undefined) return undefined;
+  if (!allowDashValue && val.startsWith("--")) return undefined;
+  return val;
 }
 
 function dirOf(cwd: string): string {
@@ -638,7 +815,7 @@ function authFetch(cwd: string, baseUrl: string): typeof fetch | undefined {
   return (input, init) => fetch(input, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${key}` } });
 }
 
-const COMMANDS = ["show", "set", "local-add", "local-remove", "local-detect", "cursor-models", "plan-activate", "plan-close"];
+const COMMANDS = ["show", "set", "local-add", "local-remove", "local-detect", "agent-models", "cursor-models", "plan-activate", "plan-close"];
 
 /** Runs the CLI. Returns the exit code; output goes through `out` / `err` so tests need no process. */
 export async function main(argv: string[], out: (text: string) => void = (t) => process.stdout.write(t), err: (text: string) => void = (t) => process.stderr.write(t)): Promise<number> {
@@ -653,10 +830,10 @@ export async function main(argv: string[], out: (text: string) => void = (t) => 
   };
   if (!command || !COMMANDS.includes(command)) return usage(command ? `unknown command "${command}"` : "no command");
   const cwdArg = flag(rest, "--cwd");
-  if (command !== "local-detect" && command !== "cursor-models" && (!cwdArg || cwdArg.startsWith("--"))) return usage(`${command} needs --cwd <dir>`);
-  const cwd = cwdArg && !cwdArg.startsWith("--") ? dirOf(cwdArg) : "";
+  if (command !== "local-detect" && command !== "cursor-models" && command !== "agent-models" && !cwdArg) return usage(`${command} needs --cwd <dir>`);
+  const cwd = cwdArg ? dirOf(cwdArg) : "";
   const expect = flag(rest, "--expect");
-  if (rest.includes("--expect") && (expect === undefined || expect.startsWith("--"))) return usage("--expect needs a sha256");
+  if (rest.includes("--expect") && expect === undefined) return usage("--expect needs a sha256");
   const id = flag(rest, "--id");
   try {
     switch (command) {
@@ -664,7 +841,7 @@ export async function main(argv: string[], out: (text: string) => void = (t) => 
         return print(show(cwd));
       case "set": {
         const key = flag(rest, "--key");
-        const value = flag(rest, "--value");
+        const value = flag(rest, "--value", true);
         if (!key) return usage("set needs --key");
         if (value === undefined) return usage("set needs --value");
         return print(setKey(cwd, key, value, expect));
@@ -684,6 +861,12 @@ export async function main(argv: string[], out: (text: string) => void = (t) => 
         const configured = cwd ? effective(cwd).config.local?.models : undefined;
         const fetchImpl = cwd ? authFetch(cwd, baseUrl) : undefined;
         return print(await localDetect(baseUrl, { ...(configured ? { configured } : {}), ...(fetchImpl ? { fetchImpl } : {}) }));
+      }
+      case "agent-models": {
+        const agent = flag(rest, "--agent");
+        const refresh = rest.includes("--refresh");
+        const pricing = cwd ? effective(cwd).config.pricing : undefined;
+        return print(await agentModels({ ...(agent ? { agent } : {}), refresh, ...(pricing ? { pricing } : {}) }));
       }
       case "cursor-models":
         return print(await cursorModels());

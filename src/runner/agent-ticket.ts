@@ -83,21 +83,30 @@ export async function runAgentTicket(input: AgentTicketInput, run: (session: Chu
   const label = `agent:${input.agent.name}${input.agent.model ? `/${input.agent.model}` : ""}`;
   let tab: Tab | undefined;
   try {
-    // Before the tab opens, so everything the agent writes after is new.
-    const meter: AgentMeter | undefined = createAgentMeter(input.agent.name, { cwd: input.cwd, home: input.home, onConsumed: host.agentLogRead ? (file: string, offset: number) => host.agentLogRead!(file, offset, `agent ${input.agent.name}`) : undefined, ...(host.agentLogExcluded ? { exclude: (file: string) => host.agentLogExcluded!(file) } : {}) });
     const name = tabName(host.taskName(), ticketId, input.attempt, (input.now ?? Date.now)());
     const root = host.sessionsRoot();
     const summaryFile = root ? path.resolve(root, `${ticketId}-${input.attempt}.summary.md`) : undefined;
+    const cursorUsageFile = input.agent.name === "cursor-agent" && root ? path.resolve(root, `${ticketId}-${input.attempt}.cursor-usage.jsonl`) : undefined;
     if (root) mkdirSync(root, { recursive: true });
+    // Before the tab opens, so everything the agent writes after is new.
+    const meter: AgentMeter | undefined = createAgentMeter(input.agent.name, {
+      cwd: input.cwd,
+      home: input.home,
+      ...(cursorUsageFile ? { cursorUsageFile } : {}),
+      onConsumed: host.agentLogRead ? (file: string, offset: number) => host.agentLogRead!(file, offset, `agent ${input.agent.name}`) : undefined,
+      ...(host.agentLogExcluded ? { exclude: (file: string) => host.agentLogExcluded!(file) } : {}),
+    });
     if (input.agent.name === "cursor-agent") {
       const home = input.home ?? homedir();
       const hook = ensureCursorStatusHook(home);
       if ("problem" in hook) return { stopped: `Ticket ${ticketId} cannot start: ${hook.problem}. /build again.` };
       if (hook.changed) host.progress(cursorHookInstalledLine(home));
     }
+    const argv = cursorUsageFile ? ["env", `SHEPHERD_CURSOR_USAGE_LOG=${cursorUsageFile}`, ...input.argv] : input.argv;
     try {
       tab = await openTab({
         ...input,
+        argv,
         name,
         labels: { "shepherd.ticket": ticketId },
         ...(TRUST_PROMPTS[input.agent.name] ? { trust: TRUST_PROMPTS[input.agent.name] } : {}),

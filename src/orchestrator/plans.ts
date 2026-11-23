@@ -1,3 +1,5 @@
+import { fromMicroUsd, toMicroUsd } from "../config.js";
+import { summarize } from "../cost/ledger.js";
 import type { CommandResult, TaskState } from "../domain.js";
 import { dirtyPaths } from "./build.js";
 import { done, fail, guard, type WorkflowContext } from "./context.js";
@@ -30,15 +32,21 @@ function updated(ctx: WorkflowContext, iso: string): string {
 function ticketCount(task: TaskState): string {
   const tickets = task.plan?.tickets ?? [];
   const runs = task.ticketRuns ?? {};
+  const total = tickets.length || Object.keys(runs).length;
+  if (total === 0 && task.phase === "PLANNING") return "-";
   const finished = Object.values(runs).filter((run) => run.status === "done").length;
-  return `${finished}/${tickets.length || Object.keys(runs).length}`;
+  const failed = Object.values(runs).filter((run) => run.status === "failed").length;
+  return `${finished}/${total}${failed > 0 ? ` (${failed} failed)` : ""}`;
 }
 
 /** The active task in one phrase: name, state, tickets done and failed, spend against its budget. */
 function activeSummary(ctx: WorkflowContext, task: TaskState): string {
   const failed = Object.values(task.ticketRuns ?? {}).filter((run) => run.status === "failed").length;
   const { task: spend } = budgetState(ctx, task.taskId);
-  return `${displayName(task)} · ${stateText(task)} · tickets ${ticketCount(task)} done${failed > 0 ? `, ${failed} failed` : ""} · ${formatUsdShort(spend.knownUsd)}${spend.unknownRecords > 0 ? "+?" : ""} of $${ctx.config.budgets.taskUsd}`;
+  const spent = spend.unknownRecords > 0
+    ? `≈${formatUsdShort(fromMicroUsd(toMicroUsd(spend.knownUsd) + toMicroUsd(spend.estimatedUnknownUsd)))}`
+    : formatUsdShort(spend.knownUsd);
+  return `${displayName(task)} · ${stateText(task)} · tickets ${ticketCount(task)} done${failed > 0 ? `, ${failed} failed` : ""} · ${spent} of $${ctx.config.budgets.taskUsd}`;
 }
 
 async function listPlans(ctx: WorkflowContext, all: boolean): Promise<CommandResult> {
@@ -48,15 +56,24 @@ async function listPlans(ctx: WorkflowContext, all: boolean): Promise<CommandRes
   const shown = all ? everything : open;
   const closedCount = everything.length - open.length;
   if (shown.length === 0) return done(`No open tasks.${closedCount > 0 ? " /plans --all lists the closed ones." : ""} /plan <request> starts one.`);
-  const rows = shown.map((task) => [
-    task.taskId === current?.taskId ? "●" : "",
-    cell(displayName(task), 40),
-    cell(stateText(task), 100),
-    ticketCount(task),
-    cell(task.build?.branch ?? "-", 60),
-    updated(ctx, task.updatedAt),
-  ]);
-  const markdown = ["## Tasks", "", ...mdTable(["", "Name", "State", "Tickets", "Branch", "Updated"], rows), "", "● is the active task. /plans <name> switches; /plans close <name> closes."].join("\n");
+  const spendByTask = summarize(ctx.store.readLedger(), { pricing: ctx.config.pricing, unknownCallUsd: ctx.config.budgets.unknownCallUsd }).byTask;
+  const rows = shown.map((task) => {
+    const bucket = spendByTask[task.taskId];
+    const spent = !bucket
+      ? "$0.00"
+      : `${bucket.unknown > 0 ? "≈" : ""}${formatUsdShort(fromMicroUsd(toMicroUsd(bucket.knownUsd) + toMicroUsd(bucket.estimatedUnknownUsd ?? 0)))}`;
+    const live = !isClosed(task) && (ctx.store.liveBuildClaim(task.taskId) || ctx.store.buildInProgress(task.taskId));
+    return [
+      task.taskId === current?.taskId ? "●" : "",
+      cell(displayName(task), 40),
+      cell(`${stateText(task)}${live ? " [active build]" : ""}`, 100),
+      ticketCount(task),
+      spent,
+      cell(task.build?.branch ?? "-", 60),
+      updated(ctx, task.updatedAt),
+    ];
+  });
+  const markdown = ["## Tasks", "", ...mdTable(["", "Name", "State", "Tickets", "Spend", "Branch", "Updated"], rows), "", "● is the active task. /plans <name> switches; /plans close <name> closes."].join("\n");
   const summary = `${open.length} open task(s)${all ? ` and ${closedCount} closed` : closedCount > 0 ? ` (${closedCount} closed; /plans --all)` : ""}. ${current && !isClosed(current) ? `Active: ${activeSummary(ctx, current)}.` : "No active task."} /plans <name> switches.`;
   // The chat block holds the table; the result stays one line. Without a UI the result is the table.
   ctx.report?.(markdown);

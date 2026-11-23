@@ -126,7 +126,7 @@ export function createHerdrClient(options: ClientOptions = {}): HerdrClient {
   async function call(args: string[], display: string, timeoutMs?: number, checked: string[] = args, childEnv?: Record<string, string>): Promise<unknown> {
     const shown = `${command} ${display}`;
     try {
-      // Pasted text is data for the terminal, not a command of ours: only the structural args are checked.
+      // Pasted text and child argv are data for the terminal, not commands of ours: only the structural args are checked.
       assertCommandSafe(command, checked);
     } catch (error) {
       throw new HerdrError(`${command} was refused by the command rules`, shown);
@@ -186,6 +186,11 @@ export function createHerdrClient(options: ClientOptions = {}): HerdrClient {
 
     async run(opts) {
       if (!opts.argv.length) throw new HerdrError("run: empty argv", `${command} run`);
+      try {
+        assertCommandSafe(opts.argv[0]!, opts.argv.slice(1));
+      } catch {
+        throw new HerdrError("run: child command was refused by the command rules", `${command} run`);
+      }
       // No notes about the child go into the parent's chat (--no-notify).
       const args = ["run", "--bg", "--json", "--no-notify"];
       if (opts.name) args.push("--name", opts.name);
@@ -194,8 +199,9 @@ export function createHerdrClient(options: ClientOptions = {}): HerdrClient {
         if (!LABEL_KEY.test(k) || v.includes("\n")) throw new HerdrError(`run: bad label "${k}"`, `${command} run`);
         args.push("--label", `${k}=${v}`);
       }
+      const structural = [...args];
       args.push("--", ...opts.argv);
-      const parsed = asRecord(await call(args, `run --bg${opts.name ? ` --name ${opts.name}` : ""} (argv omitted)`));
+      const parsed = asRecord(await call(args, `run --bg${opts.name ? ` --name ${opts.name}` : ""} (argv omitted)`, undefined, structural));
       const address = typeof parsed?.address === "string" ? parsed.address : undefined;
       if (!address) throw new HerdrError("run: hc printed no terminal address", `${command} run`);
       return address;
@@ -221,11 +227,13 @@ export function createHerdrClient(options: ClientOptions = {}): HerdrClient {
         const remaining = deadline - now();
         if (remaining <= 0) return { status: "timeout", exitCode: null, timedOut: true };
         const seconds = sliceFor(remaining);
+        const before = now();
         const parsed = asRecord(await call(["wait", terminal, "--json", "--timeout", String(seconds)], `wait ${terminal}`, seconds * 1000 + 15_000));
         if (!parsed) throw new HerdrError("wait: hc printed no JSON", `${command} wait ${terminal}`);
         const result = waitResult(parsed);
         // A timeout or a message to the caller returns while it is still working: keep waiting.
         if (result && result.status !== "working") return result;
+        if (!options.now && now() - before < 50) await new Promise((resolve) => setTimeout(resolve, 100));
       }
     },
 

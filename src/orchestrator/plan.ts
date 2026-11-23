@@ -99,7 +99,7 @@ export function forNewPlan(task: TaskState, draft: PlanDocument): Pick<TaskState
 
 /** True when two versions of a ticket ask for the same work (the fields a build acts on). */
 export function sameTicket(a: Ticket, b: Ticket): boolean {
-  const view = (ticket: Ticket) => JSON.stringify([ticket.title, ticket.whatToBuild, ticket.implementation ?? "", ticket.acceptanceCriteria, ticket.checks ?? [], ticket.files ?? [], ticket.blockedBy]);
+  const view = (ticket: Ticket) => JSON.stringify([ticket.title, ticket.whatToBuild, ticket.implementation ?? "", ticket.acceptanceCriteria, ticket.checks ?? [], ticket.files ?? [], ticket.blockedBy, ticketDifficulty(ticket)]);
   return view(a) === view(b);
 }
 

@@ -83,15 +83,22 @@ export function reviewRows(report: ReviewReport): ReviewRow[] {
   }
   for (const finding of statics.filter((item) => item.severity !== "blocking")) rows.push(staticRow(finding));
 
+  const multiCount = (report.modelReview?.parts?.length ?? 0) > 1 ? report.modelReview!.parts!.length : 0;
   for (const finding of report.modelReview?.findings ?? []) {
     const evidence = finding.evidence ? ` (evidence: ${finding.evidence.replace(/\s+/g, " ").slice(0, 200)})` : "";
+    const consensus =
+      multiCount > 1 && finding.reviewers?.length
+        ? finding.reviewers.length > 1
+          ? ` [${finding.reviewers.length}/${multiCount} agree: ${finding.reviewers.join(", ")}]`
+          : ` [${finding.reviewers[0]}]`
+        : "";
     rows.push({
       kind: "model",
-      item: { kind: "model", text: `${scoreLabel(finding)} ${finding.file ? `${finding.file}: ` : ""}${finding.message}${evidence}` },
+      item: { kind: "model", text: `${scoreLabel(finding)} ${finding.file ? `${finding.file}: ` : ""}${finding.message}${consensus}${evidence}` },
       risk: riskLabel(finding),
       where: finding.file ?? NONE,
       ...(finding.file ? { file: finding.file } : {}),
-      finding: finding.message,
+      finding: `${finding.message}${consensus}`,
     });
   }
   for (const finding of report.carried ?? []) {
@@ -196,11 +203,23 @@ export function reviewMarkdown(report: ReviewReport, options: { setupConfigured:
     isSkipped(check) ? "– skipped" : !check.ran ? "✗ did not run" : check.exitCode === 0 ? (check.stdout.startsWith("cached:") ? "✓ pass (cached)" : "✓ pass") : `✗ exit ${check.exitCode}`,
     check.durationMs !== undefined && !check.stdout.startsWith("cached:") ? formatDuration(check.durationMs) : NONE,
   ]);
+  const reviewerRows =
+    (report.modelReview?.parts?.length ?? 0) > 1
+      ? report.modelReview!.parts!.map((part) => [
+          cell(part.reviewedBy ?? `#${part.index}`, 60),
+          cell(part.focus ?? NONE, 60),
+          `${part.findings}${part.dropped ? ` (${part.dropped} dropped)` : ""}`,
+          part.elapsedMs !== undefined ? formatDuration(part.elapsedMs) : NONE,
+          part.notMetered && part.costUsd === undefined ? "not metered" : part.costUsd === undefined ? NONE : part.costUsd === null ? "unknown" : formatUsdShort(part.costUsd),
+          part.failures.length > 0 ? cell(`failed: ${part.failures[0]}`, 100) : "ok",
+        ])
+      : [];
   return [
     `## Review ${report.passed ? "passed" : "did not pass"}${report.elapsedMs !== undefined ? ` · ${formatDuration(report.elapsedMs)}` : ""}${total ? ` · ${total}` : ""}`,
     ...(report.passed ? [] : ["", report.summary]),
     "",
     ...mdTable(["Stage", "Result", "Time", "Cost"], stageRows),
+    ...(reviewerRows.length > 0 ? ["", "### Reviewers", ...mdTable(["Reviewer", "Focus", "Findings", "Time", "Cost", "Status"], reviewerRows)] : []),
     "",
     "### Checks",
     ...(checkRows.length > 0 ? mdTable(["Check", "Result", "Time"], checkRows) : ["None ran."]),

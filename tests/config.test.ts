@@ -31,9 +31,10 @@ describe("defaults", () => {
     expect(config.local).toBeUndefined();
     expect(config.agents).toEqual({});
     expect(config.review).toEqual({ model: true, tickets: true, timeoutMs: 300000 });
-    expect(config.budgets).toEqual({ taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: 0.05, idleWarnMinutes: 60, idleWarnTokens: 100000 });
+    expect(config.budgets).toEqual({ taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: 0.05, idleWarnMinutes: 60, idleWarnTokens: 100000, idleAction: "warn" });
     expect(config.branchPrefix).toBe("shepherd");
     expect(config.build).toEqual({ visibleTabs: false });
+    expect(unpricedConfigModels(config)).toEqual([]);
   });
 
   it("fills the models a file leaves out from the defaults", () => {
@@ -108,7 +109,8 @@ pricing:
     });
     expect(config.agents.claude).toEqual({ run: ["claude", "--permission-mode", "acceptEdits"], modelFlag: "--model" });
     expect(config.agents.mine).toEqual({ run: ["mycli"] });
-    expect(config.pricing[0].effectiveFrom).toBe("2026-01-05");
+    expect(config.pricing.at(-1)!.effectiveFrom).toBe("2026-01-05");
+    expect(priceFor(config.pricing, "anthropic", "claude-sonnet-5-5", new Date("2026-01-05T12:00:00Z"))?.inputPerMillionUsd).toBe(0);
     expect(config.routing.maxEscalations).toBe(0);
   });
 
@@ -117,11 +119,11 @@ pricing:
     expect(parseConfig("branchPrefix: x\n").review.tickets).toBe(true);
   });
 
-  it("warns once about pricing rows the models need, and not for local models or agents", () => {
-    const config = parseConfig("models: { low: local/Qwen3.8-27B, medium: anthropic/claude-sonnet-5-5, high: 'agent:claude', review: anthropic/claude-opus-5-5 }\n" + LOCAL);
-    expect(unpricedConfigModels(config)).toEqual(["anthropic/claude-sonnet-5-5", "anthropic/claude-opus-5-5"]);
+  it("warns once about pricing rows the models need, and not for local models, built-in 2026 models, or default agents", () => {
+    const config = parseConfig("models: { low: local/Qwen3.8-27B, medium: acme/custom-a, high: 'agent:claude', review: acme/custom-b }\n" + LOCAL);
+    expect(unpricedConfigModels(config)).toEqual(["acme/custom-a", "acme/custom-b"]);
     expect(config.warnings).toHaveLength(1);
-    expect(config.warnings![0]).toContain("No pricing rows for anthropic/claude-sonnet-5-5, anthropic/claude-opus-5-5");
+    expect(config.warnings![0]).toContain("No pricing rows for acme/custom-a, acme/custom-b");
   });
 
   it("does not flag the repo config", () => {
@@ -168,7 +170,7 @@ describe("the sample files", () => {
     // Uncomment every setting line ("# key"), keep the "##" explanations.
     const uncommented = template().split("\n").map((line) => line.replace(/^# /, "")).join("\n");
     const config = parseConfig(uncommented);
-    expect(config.budgets).toEqual({ taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: 0.05, idleWarnMinutes: 60, idleWarnTokens: 100000 });
+    expect(config.budgets).toEqual({ taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: 0.05, idleWarnMinutes: 60, idleWarnTokens: 100000, idleAction: "warn" });
     expect(config.routing).toEqual({ maxEscalations: 2, maxTicketTurns: 100 });
     expect(config.review).toEqual({ model: true, tickets: true, timeoutMs: 300000 });
     expect(config.models).toEqual(DEFAULT_MODELS);

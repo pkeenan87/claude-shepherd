@@ -41,7 +41,7 @@ describe("shepherd-config CLI", () => {
       expect(r.local.presets.map((p: Doc) => p.baseUrl)).toEqual(["http://127.0.0.1:8080/v1", "http://127.0.0.1:11434/v1", "http://127.0.0.1:1234/v1"]);
       expect(r.agents).toEqual(["claude", "codex", "cursor-agent", "grok", "agy", "gemini", "opencode"]);
       expect(r.agentsWithModelFlag).toContain("claude");
-      expect(r.budgets).toEqual({ taskUsd: 20, dailyUsd: 75, shadowedByProject: false });
+      expect(r.budgets).toEqual({ taskUsd: 20, dailyUsd: 75, idleAction: "warn", shadowedByProject: false });
       expect(r.plans).toEqual([]);
       expect(r.costs.plan).toBeNull();
       expect(r.costs.today).toMatchObject({ spendUsd: 0, limitUsd: 75, status: "ok", unknown: 0 });
@@ -70,7 +70,7 @@ describe("shepherd-config CLI", () => {
       user("budgets:\n  taskUsd: 7\n");
       writeFileSync(path.join(project, ".shepherd", "config.yaml"), "budgets:\n  dailyUsd: 9\nmodels:\n  low: xai/grok-5\n");
       const r = show(project) as Doc;
-      expect(r.budgets).toEqual({ taskUsd: 20, dailyUsd: 9, shadowedByProject: true });
+      expect(r.budgets).toEqual({ taskUsd: 20, dailyUsd: 9, idleAction: "warn", shadowedByProject: true });
       expect(r.modelsShadowedByProject).toBe(true);
       expect(r.models.low).toMatchObject({ value: "xai/grok-5", source: "project" });
       expect(r.models.medium.source).toBe("default");
@@ -282,7 +282,7 @@ describe("shepherd-config CLI", () => {
       store.setActive("task-alpha");
       store.appendLedger(entry(1, { actualUsd: 1.5 }));
       store.appendLedger(entry(2, { phase: "PLANNING", provider: "openai", model: "gpt-6.1-sol", actualUsd: 0.5 }));
-      store.appendLedger(entry(3, { actualUsd: null, provider: "xai", model: "grok-4.7", inputTokens: null, outputTokens: null }));
+      store.appendLedger(entry(3, { actualUsd: null, provider: "acme", model: "custom-model", inputTokens: null, outputTokens: null }));
       store.appendLedger(entry(4, { taskId: "task-beta", phase: "REVIEWING", actualUsd: 2 }));
       store.appendLedger(entry(5, { at: "2026-01-01T00:00:00.000Z", actualUsd: 100 }));
     });
@@ -306,7 +306,7 @@ describe("shepherd-config CLI", () => {
       expect(costs.today.byPhase.map((p: Doc) => [p.name, p.spendUsd])).toEqual([["plan", 0.5], ["build", 1.55], ["review", 2]]);
       expect(costs.today.byModel[0]).toMatchObject({ name: "anthropic/claude-sonnet-5-5", knownUsd: 3.5 });
       expect(costs.plan).toMatchObject({ id: "task-alpha", name: "alpha", knownUsd: 102, limitUsd: 20, status: "hard" });
-      expect(costs.unpriced).toEqual(expect.arrayContaining(["anthropic/claude-sonnet-5-5", "xai/grok-4.7"]));
+      expect(costs.unpriced).toEqual(["acme/custom-model"]);
     });
 
     it("plan-activate points at the plan and records the branch, without switching", async () => {

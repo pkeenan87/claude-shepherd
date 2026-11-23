@@ -240,11 +240,18 @@ const norm = (text: string) => text.toLowerCase().replace(/[`*_]/g, "").replace(
 export function parseCriteriaMet(finalText: string, criteria: string[]): boolean[] {
   const lines = finalText.split("\n").map((line) => ({ raw: line, text: norm(line) }));
   return criteria.map((criterion) => {
-    const key = norm(criterion).slice(0, 50);
+    const fullKey = norm(criterion);
+    const key = fullKey.slice(0, 50);
     const hit = key ? [...lines].reverse().find((line) => line.text.includes(key)) : undefined;
     if (!hit) return false;
-    if (/\[ \]|\bnot met\b|\bunmet\b|\bnot done\b|\bfailed\b/i.test(hit.raw)) return false;
-    return /\[x\]/i.test(hit.raw) || /\bmet\b|\bdone\b|\bpass(ed)?\b|✅|✓/i.test(hit.raw);
+    if (/\[ \]/.test(hit.raw)) return false;
+    // Strip the matched criterion text before scanning for status words so a criterion like
+    // "- [x] Retry failed requests" does not trigger the negative "\bfailed\b" check.
+    const idx = hit.text.indexOf(fullKey) >= 0 ? hit.text.indexOf(fullKey) : hit.text.indexOf(key);
+    const matchLen = hit.text.indexOf(fullKey) >= 0 ? fullKey.length : key.length;
+    const remainder = idx >= 0 ? `${hit.text.slice(0, idx)} ${hit.text.slice(idx + matchLen)}` : hit.text;
+    if (/\bnot met\b|\bunmet\b|\bnot done\b|\bfailed\b/i.test(remainder)) return false;
+    return /\[x\]/i.test(hit.raw) || /\bmet\b|\bdone\b|\bpass(ed)?\b|✅|✓/i.test(remainder);
   });
 }
 

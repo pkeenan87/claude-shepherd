@@ -5,10 +5,13 @@ claude-shepherd is a Claude Code plugin for changes too big for one chat. You de
 It is [pi-chef](https://github.com/pkeenan87/pi-chef) rebuilt as a plugin. Claude Code is the main session; `pi` is only a worker for tickets that run on a Pi model or a local model.
 
 ```text
-/shepherd:plan <what to build>   interview, spec, tickets rated by difficulty, then your approval
+/shepherd:plan <what to build>   interview, spec, tickets rated by difficulty, optional --worktree, then approval
 /shepherd:build                  one herdr sub-agent per ticket: checks, review, one commit each
-/shepherd:review                 checks, static scan, model review; fix the findings in a tab or here
-/shepherd:cost                   spend by model, job and task against the budgets
+/shepherd:review                 checks, static scan, single- or multi-model parallel review with consensus badges
+/shepherd:ship                   branch preflight, PR body generator, and confirmation-gated --push / --pr
+/shepherd:cleanup                preview and clean stale worktrees, merged local/remote branches, closed plans
+/shepherd:status                 active plan, ticket progress, spend, and prompt-cache warmth
+/shepherd:cost                   spend by model, job, task, and ticket against budgets (with API-equiv savings)
 /shepherd:plans                  list, switch to, or close tasks
 ```
 

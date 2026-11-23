@@ -108,17 +108,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path5) {
-      const ctrl = callVisitor(key, node, visitor, path5);
+    function visit_(key, node, visitor, path6) {
+      const ctrl = callVisitor(key, node, visitor, path6);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path5, ctrl);
-        return visit_(key, ctrl, visitor, path5);
+        replaceNode(key, path6, ctrl);
+        return visit_(key, ctrl, visitor, path6);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path5 = Object.freeze(path5.concat(node));
+          path6 = Object.freeze(path6.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path5);
+            const ci = visit_(i, node.items[i], visitor, path6);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -129,13 +129,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path5 = Object.freeze(path5.concat(node));
-          const ck = visit_("key", node.key, visitor, path5);
+          path6 = Object.freeze(path6.concat(node));
+          const ck = visit_("key", node.key, visitor, path6);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path5);
+          const cv = visit_("value", node.value, visitor, path6);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -156,17 +156,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path5) {
-      const ctrl = await callVisitor(key, node, visitor, path5);
+    async function visitAsync_(key, node, visitor, path6) {
+      const ctrl = await callVisitor(key, node, visitor, path6);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path5, ctrl);
-        return visitAsync_(key, ctrl, visitor, path5);
+        replaceNode(key, path6, ctrl);
+        return visitAsync_(key, ctrl, visitor, path6);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path5 = Object.freeze(path5.concat(node));
+          path6 = Object.freeze(path6.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path5);
+            const ci = await visitAsync_(i, node.items[i], visitor, path6);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -177,13 +177,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path5 = Object.freeze(path5.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path5);
+          path6 = Object.freeze(path6.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path6);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path5);
+          const cv = await visitAsync_("value", node.value, visitor, path6);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -210,23 +210,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path5) {
+    function callVisitor(key, node, visitor, path6) {
       if (typeof visitor === "function")
-        return visitor(key, node, path5);
+        return visitor(key, node, path6);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path5);
+        return visitor.Map?.(key, node, path6);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path5);
+        return visitor.Seq?.(key, node, path6);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path5);
+        return visitor.Pair?.(key, node, path6);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path5);
+        return visitor.Scalar?.(key, node, path6);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path5);
+        return visitor.Alias?.(key, node, path6);
       return void 0;
     }
-    function replaceNode(key, path5, node) {
-      const parent = path5[path5.length - 1];
+    function replaceNode(key, path6, node) {
+      const parent = path6[path6.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -838,10 +838,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path5, value) {
+    function collectionFromPath(schema, path6, value) {
       let v = value;
-      for (let i = path5.length - 1; i >= 0; --i) {
-        const k = path5[i];
+      for (let i = path6.length - 1; i >= 0; --i) {
+        const k = path6[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -860,7 +860,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path5) => path5 == null || typeof path5 === "object" && !!path5[Symbol.iterator]().next().done;
+    var isEmptyPath = (path6) => path6 == null || typeof path6 === "object" && !!path6[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -890,11 +890,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path5, value) {
-        if (isEmptyPath(path5))
+      addIn(path6, value) {
+        if (isEmptyPath(path6))
           this.add(value);
         else {
-          const [key, ...rest] = path5;
+          const [key, ...rest] = path6;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -908,8 +908,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path5) {
-        const [key, ...rest] = path5;
+      deleteIn(path6) {
+        const [key, ...rest] = path6;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -923,8 +923,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path5, keepScalar) {
-        const [key, ...rest] = path5;
+      getIn(path6, keepScalar) {
+        const [key, ...rest] = path6;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -942,8 +942,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path5) {
-        const [key, ...rest] = path5;
+      hasIn(path6) {
+        const [key, ...rest] = path6;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -953,8 +953,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path5, value) {
-        const [key, ...rest] = path5;
+      setIn(path6, value) {
+        const [key, ...rest] = path6;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -3469,9 +3469,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path5, value) {
+      addIn(path6, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path5, value);
+          this.contents.addIn(path6, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -3546,14 +3546,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path5) {
-        if (Collection.isEmptyPath(path5)) {
+      deleteIn(path6) {
+        if (Collection.isEmptyPath(path6)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path5) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path6) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -3568,10 +3568,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path5, keepScalar) {
-        if (Collection.isEmptyPath(path5))
+      getIn(path6, keepScalar) {
+        if (Collection.isEmptyPath(path6))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path5, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path6, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -3582,10 +3582,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path5) {
-        if (Collection.isEmptyPath(path5))
+      hasIn(path6) {
+        if (Collection.isEmptyPath(path6))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path5) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path6) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -3602,13 +3602,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path5, value) {
-        if (Collection.isEmptyPath(path5)) {
+      setIn(path6, value) {
+        if (Collection.isEmptyPath(path6)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path5), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path6), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path5, value);
+          this.contents.setIn(path6, value);
         }
       }
       /**
@@ -5569,9 +5569,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path5) => {
+    visit.itemAtPath = (cst, path6) => {
       let item = cst;
-      for (const [field, index] of path5) {
+      for (const [field, index] of path6) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -5580,23 +5580,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path5) => {
-      const parent = visit.itemAtPath(cst, path5.slice(0, -1));
-      const field = path5[path5.length - 1][0];
+    visit.parentCollection = (cst, path6) => {
+      const parent = visit.itemAtPath(cst, path6.slice(0, -1));
+      const field = path6[path6.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path5, item, visitor) {
-      let ctrl = visitor(item, path5);
+    function _visit(path6, item, visitor) {
+      let ctrl = visitor(item, path6);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path5.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path6.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -5607,10 +5607,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path5);
+            ctrl = ctrl(item, path6);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path5) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path6) : ctrl;
     }
     exports.visit = visit;
   }
@@ -7364,13 +7364,16 @@ var require_dist = __commonJS({
 // src/cli/shepherd-config.ts
 var import_yaml2 = __toESM(require_dist(), 1);
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
-import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
+import { execFile as execFile2, execFileSync } from "node:child_process";
+import { existsSync as existsSync4, readdirSync as readdirSync3, readFileSync as readFileSync5 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import path4 from "node:path";
-import { promisify } from "node:util";
+import path5 from "node:path";
+import { promisify as promisify2 } from "node:util";
 
 // src/domain.ts
+function ticketDifficulty(ticket) {
+  return ticket.difficulty ?? "medium";
+}
 var THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 var WorkflowError = class extends Error {
   code;
@@ -7385,13 +7388,17 @@ var WorkflowError = class extends Error {
 var BUILTIN_AGENTS = {
   claude: { run: ["claude", "--permission-mode", "auto"], modelFlag: "--model" },
   codex: { run: ["codex", "--no-daemon", "--approve-for-me"], modelFlag: "-m" },
-  "cursor-agent": { run: ["cursor-agent", "--auto-review", "--trust"], modelFlag: "--model" },
+  "cursor-agent": { run: ["cursor-agent", "--auto-review", "--trust"], modelFlag: "--model", billing: "subscription" },
   grok: { run: ["grok", "--permission-mode", "auto"], modelFlag: "-m" },
   agy: { run: ["agy", "--mode", "auto"], modelFlag: "--model" },
   gemini: { run: ["gemini", "--approval-mode", "auto_edit"], modelFlag: "-m" },
   opencode: { run: ["opencode"], modelFlag: "--model" }
 };
 var AGENT_PREFIX = "agent:";
+var AGENT_PROVIDER = "agent";
+function ranModelText(provider, id) {
+  return provider === AGENT_PROVIDER ? `${AGENT_PREFIX}${id}` : `${provider}/${id}`;
+}
 var AGENT_NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
 function parseModelRef(value) {
   const slash = value.indexOf("/");
@@ -7444,11 +7451,116 @@ function ticketModelProblem(text, config = {}, options = {}) {
   }
 }
 
+// src/agent-models.ts
+import { execFile } from "node:child_process";
+import { readFileSync as readFileSync4 } from "node:fs";
+import path4 from "node:path";
+import { promisify } from "node:util";
+
 // src/config.ts
 var import_yaml = __toESM(require_dist(), 1);
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+
+// src/pricing-defaults.ts
+var DEFAULT_PRICING = [
+  // Anthropic (Claude 5.5 / Fable 5.2 + 2026 prior-gen fallbacks)
+  { provider: "anthropic", model: "claude-haiku-5-5", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.5, cacheReadPerMillionUsd: 0.01, cacheWritePerMillionUsd: 0.125 },
+  { provider: "anthropic", model: "claude-sonnet-5-5", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1, cacheWritePerMillionUsd: 2.5 },
+  { provider: "anthropic", model: "claude-opus-5-5", effectiveFrom: "2026-01-01", inputPerMillionUsd: 4, outputPerMillionUsd: 20, cacheReadPerMillionUsd: 0.2, cacheWritePerMillionUsd: 5 },
+  { provider: "anthropic", model: "claude-fable-5-2", effectiveFrom: "2026-01-01", inputPerMillionUsd: 8, outputPerMillionUsd: 40, cacheReadPerMillionUsd: 0.2, cacheWritePerMillionUsd: 10 },
+  { provider: "anthropic", model: "claude-opus-4-6", effectiveFrom: "2026-01-01", inputPerMillionUsd: 5, outputPerMillionUsd: 25, cacheReadPerMillionUsd: 0.5, cacheWritePerMillionUsd: 6.25 },
+  { provider: "anthropic", model: "claude-sonnet-4-6", effectiveFrom: "2026-01-01", inputPerMillionUsd: 3, outputPerMillionUsd: 15, cacheReadPerMillionUsd: 0.3, cacheWritePerMillionUsd: 3.75 },
+  { provider: "anthropic", model: "claude-haiku-4-5", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1, outputPerMillionUsd: 5, cacheReadPerMillionUsd: 0.1, cacheWritePerMillionUsd: 1.25 },
+  // OpenAI / Codex (GPT-6 family + GPT-5.4 / Codex)
+  { provider: "openai", model: "gpt-6.2-astra", effectiveFrom: "2026-01-01", inputPerMillionUsd: 8, outputPerMillionUsd: 40, cacheReadPerMillionUsd: 0.4 },
+  { provider: "openai", model: "gpt-6-astra", effectiveFrom: "2026-01-01", inputPerMillionUsd: 10, outputPerMillionUsd: 50, cacheReadPerMillionUsd: 1 },
+  { provider: "openai", model: "gpt-6.2-sol", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1 },
+  { provider: "openai", model: "gpt-6.1-sol", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1 },
+  { provider: "openai", model: "gpt-6-sol", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1 },
+  { provider: "openai", model: "gpt-6.1-terra", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1, outputPerMillionUsd: 5, cacheReadPerMillionUsd: 0.05 },
+  { provider: "openai", model: "gpt-6-luna", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.5, cacheReadPerMillionUsd: 0.01 },
+  { provider: "openai", model: "gpt-5.4", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2.5, outputPerMillionUsd: 15, cacheReadPerMillionUsd: 0.25 },
+  { provider: "openai", model: "gpt-5.3-codex", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1.75, outputPerMillionUsd: 14, cacheReadPerMillionUsd: 0.175 },
+  // Google / Gemini / Antigravity (Gemini 4 element lineup + Dec 1, 2026 Argon/Carbon standard rate rollover)
+  { provider: "google", model: "gemini-4-neon", effectiveFrom: "2026-01-01", inputPerMillionUsd: 3, outputPerMillionUsd: 15, cacheReadPerMillionUsd: 0.15 },
+  { provider: "google", model: "gemini-4-hydrogen", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1.5, outputPerMillionUsd: 7.5, cacheReadPerMillionUsd: 0.075 },
+  { provider: "google", model: "gemini-4-argon", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1 },
+  { provider: "google", model: "gemini-4-argon", effectiveFrom: "2026-12-01", inputPerMillionUsd: 4, outputPerMillionUsd: 20, cacheReadPerMillionUsd: 0.2 },
+  { provider: "google", model: "gemini-4-carbon", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.1 },
+  { provider: "google", model: "gemini-4-carbon", effectiveFrom: "2026-12-01", inputPerMillionUsd: 4, outputPerMillionUsd: 20, cacheReadPerMillionUsd: 0.2 },
+  { provider: "google", model: "gemini-2.5-pro", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1.25, outputPerMillionUsd: 10, cacheReadPerMillionUsd: 0.125 },
+  { provider: "google", model: "gemini-2.5-flash", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0.3, outputPerMillionUsd: 2.5, cacheReadPerMillionUsd: 0.03 },
+  // xAI / Grok 4 family
+  { provider: "xai", model: "grok-4.7", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 6, cacheReadPerMillionUsd: 0.5 },
+  { provider: "xai", model: "grok-4.6", effectiveFrom: "2026-01-01", inputPerMillionUsd: 2, outputPerMillionUsd: 6, cacheReadPerMillionUsd: 0.5 },
+  { provider: "xai", model: "grok-4.3", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1.25, outputPerMillionUsd: 2.5, cacheReadPerMillionUsd: 0.2 },
+  { provider: "xai", model: "grok-4.20", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1.25, outputPerMillionUsd: 2.5, cacheReadPerMillionUsd: 0.2 },
+  { provider: "xai", model: "grok-code-fast", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1, outputPerMillionUsd: 2, cacheReadPerMillionUsd: 0.2 },
+  { provider: "xai", model: "grok-build-0.1", effectiveFrom: "2026-01-01", inputPerMillionUsd: 1, outputPerMillionUsd: 2, cacheReadPerMillionUsd: 0.2 },
+  // Cursor first-party included models (subscription pool, $0 incremental API fee)
+  { provider: "cursor", model: "composer-2", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0, cacheReadPerMillionUsd: 0 },
+  { provider: "cursor", model: "composer-1", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0, cacheReadPerMillionUsd: 0 },
+  { provider: "cursor", model: "cursor-small", effectiveFrom: "2026-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0, cacheReadPerMillionUsd: 0 }
+];
+var ALIASES = {
+  // Anthropic CLI aliases
+  opus: "claude-opus-5-5",
+  best: "claude-opus-5-5",
+  sonnet: "claude-sonnet-5-5",
+  opusplan: "claude-sonnet-5-5",
+  haiku: "claude-haiku-5-5",
+  fable: "claude-fable-5-2",
+  "claude-fable": "claude-fable-5-2",
+  "claude-fable-5": "claude-fable-5-2",
+  // OpenAI / Codex shorthand
+  astra: "gpt-6.2-astra",
+  sol: "gpt-6.2-sol",
+  luna: "gpt-6-luna",
+  terra: "gpt-6.1-terra",
+  // Google / AGY shorthand
+  argon: "gemini-4-argon",
+  carbon: "gemini-4-carbon",
+  neon: "gemini-4-neon",
+  hydrogen: "gemini-4-hydrogen"
+};
+function canonicalModelId(provider, model) {
+  let clean = model.trim().toLowerCase();
+  clean = clean.replace(/\[[^\]]*\]/g, "").trim();
+  clean = clean.replace(/\s+/g, "-");
+  if (clean.startsWith("cursor-") && clean !== "cursor-small") clean = clean.slice("cursor-".length);
+  clean = clean.replace(/-(?:20\d{2}-?\d{2}-?\d{2})$/, "");
+  if (clean !== "grok-code-fast") {
+    clean = clean.replace(/-(?:high|medium|low|xhigh|max|fast|thinking)(?:-(?:fast|high|medium|low))?$/, "");
+  }
+  const aliased = ALIASES[clean];
+  if (aliased) return aliased;
+  if (provider === "anthropic" || clean.startsWith("claude-")) {
+    clean = clean.replace(/^(claude-[a-z]+-\d+)\.(\d+)$/, "$1-$2");
+  }
+  return clean;
+}
+function inferProviderForModel(rawModel) {
+  const lower = rawModel.trim().toLowerCase();
+  const canonical = canonicalModelId("", rawModel);
+  const cursorPrefixed = lower.startsWith("cursor-") || lower.startsWith("composer");
+  if (canonical.startsWith("claude-")) return { provider: "anthropic", model: canonical, firstPartyCursor: false };
+  if (canonical.startsWith("gpt-") || canonical.startsWith("o3") || canonical.startsWith("o4") || canonical.includes("codex")) {
+    return { provider: "openai", model: canonical, firstPartyCursor: false };
+  }
+  if (canonical.startsWith("gemini-")) return { provider: "google", model: canonical, firstPartyCursor: false };
+  if (canonical.startsWith("grok-")) return { provider: "xai", model: canonical, firstPartyCursor: cursorPrefixed };
+  if (lower.startsWith("composer")) return { provider: "cursor", model: canonical, firstPartyCursor: true };
+  return { provider: "cursor", model: canonical || lower || "unknown", firstPartyCursor: cursorPrefixed };
+}
+var AGENT_DEFAULT_PROVIDER = {
+  claude: "anthropic",
+  codex: "openai",
+  agy: "google",
+  gemini: "google",
+  grok: "xai"
+};
 
 // src/redact.ts
 var KEY_WORD = String.raw`(?:api[_-]?key|apikey|secret|password|passwd|pwd|token|refresh(?:[_-]?token)?|credentials?|private[_-]?key|access[_-]?key)`;
@@ -7460,6 +7572,10 @@ var PATTERNS = [
   /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9_]{10,}/g,
   /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{10,}/g,
   /(?<![A-Za-z0-9])npm_[A-Za-z0-9]{20,}/g,
+  /(?<![A-Za-z0-9])hf_[A-Za-z0-9]{20,}/g,
+  /(?<![A-Za-z0-9])glpat-[A-Za-z0-9_-]{16,}/g,
+  /(?<![A-Za-z0-9])xapp-[A-Za-z0-9-]{16,}/g,
+  /(?<![A-Za-z0-9])pypi-[A-Za-z0-9_-]{20,}/g,
   /(?<![A-Za-z0-9])xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])/g,
   /(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{35}/g,
@@ -7475,7 +7591,7 @@ var PATTERNS = [
   // Credentials embedded in URLs: scheme://user:pass@host
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"']+:[^\s@/"']+@/gi
 ];
-var KEY_VALUE = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?[A-Za-z0-9_.-]{0,40}${KEY_WORD}["']?\s*[:=]\s*)(["']?)([^\s"',}]+)`, "gi");
+var KEY_VALUE = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?[A-Za-z0-9_.-]{0,40}${KEY_WORD}["']?\s*[:=]\s*)(?:"([^"\r\n]*)|'([^'\r\n]*)|([^\s"',}]+))`, "gi");
 function isNotLiteral(value) {
   const bare = value.replace(/;+$/, "");
   if (/^[{[($]/.test(bare)) return true;
@@ -7494,26 +7610,34 @@ function redact(value) {
     next = next.replace(pattern, replacement);
   }
   KEY_VALUE.lastIndex = 0;
-  return next.replace(KEY_VALUE, (match, _key, quote, value2) => !quote && isNotLiteral(value2) ? match : "[REDACTED]");
+  return next.replace(KEY_VALUE, (match, _key, dq, sq, bare) => {
+    if (bare !== void 0) return isNotLiteral(bare) ? match : "[REDACTED]";
+    const quoted = dq ?? sq ?? "";
+    if (quoted === "") return match;
+    return "[REDACTED]";
+  });
 }
 function containsSecret(value) {
   return redact(value) !== value;
 }
-function redactUnknown(value) {
+function redactUnknown(value, seen = /* @__PURE__ */ new WeakSet()) {
   if (typeof value === "string") return redact(value);
-  if (Array.isArray(value)) return value.map((item) => redactUnknown(item));
-  if (value && typeof value === "object") {
-    const out = {};
-    for (const [key, inner] of Object.entries(value)) {
-      out[key] = redactUnknown(inner);
-    }
-    return out;
+  if (!value || typeof value !== "object") return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((item) => redactUnknown(item, seen));
+  const out = {};
+  for (const [key, inner] of Object.entries(value)) {
+    out[key] = redactUnknown(inner, seen);
   }
-  return value;
+  return out;
 }
 
 // src/config.ts
 var MODEL_KEYS = ["low", "medium", "high", "review"];
+function normalizeReviewerSpec(spec) {
+  return typeof spec === "string" ? { model: spec } : { model: spec.model, ...spec.name ? { name: spec.name } : {}, ...spec.focus ? { focus: spec.focus } : {} };
+}
 var DEFAULT_UNKNOWN_CALL_USD = 0.05;
 var DEFAULT_MODELS = {
   low: "xai/grok-4.7",
@@ -7528,27 +7652,28 @@ var DEFAULTS = {
   routing: { maxEscalations: 2, maxTicketTurns: 100 },
   build: { visibleTabs: false },
   branchPrefix: "shepherd",
-  budgets: { taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: DEFAULT_UNKNOWN_CALL_USD, idleWarnMinutes: 60, idleWarnTokens: 1e5 },
+  budgets: { taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: DEFAULT_UNKNOWN_CALL_USD, idleWarnMinutes: 60, idleWarnTokens: 1e5, idleAction: "warn" },
   checks: [],
   setup: [],
   review: { model: true, tickets: true, timeoutMs: 3e5 },
-  pricing: []
+  pricing: [...DEFAULT_PRICING]
 };
 var KNOWN_KEYS = {
   models: MODEL_KEYS,
   local: ["baseUrl", "apiKeyEnv", "models"],
   agents: void 0,
-  budgets: ["taskUsd", "dailyUsd", "softWarningRatio", "unknownCallUsd", "idleWarnMinutes", "idleWarnTokens"],
+  budgets: ["taskUsd", "dailyUsd", "softWarningRatio", "unknownCallUsd", "idleWarnMinutes", "idleWarnTokens", "idleAction", "timeZone"],
   pricing: void 0,
-  review: ["model", "tickets", "timeoutMs"],
+  review: ["model", "tickets", "timeoutMs", "reviewers", "highRiskReviewers"],
   checks: void 0,
   setup: void 0,
   build: ["visibleTabs"],
+  worktree: ["default", "dir"],
   branchPrefix: void 0,
   workspaceDir: void 0,
   routing: ["maxEscalations", "maxTicketTurns"]
 };
-var USER_ONLY_SECTIONS = ["local", "agents", "pricing", "workspaceDir"];
+var USER_ONLY_SECTIONS = ["local", "agents", "pricing", "workspaceDir", "worktree"];
 var CONFIG_DOCS = "docs/configuration.md";
 function isRecord(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -7645,6 +7770,7 @@ function isLoopbackHttpUrl(value) {
   const url = parseUrl(value);
   return !!url && url.protocol === "http:" && url.username === "" && url.password === "" && isLoopbackHost(url.hostname);
 }
+var AGENT_KEYS = /* @__PURE__ */ new Set(["run", "modelFlag", "billing", "routingFeePerMillionUsd"]);
 function normalizeAgents(value, where) {
   if (value === void 0 || value === null) return void 0;
   if (!isRecord(value)) invalid(where, "agents", "must be a mapping of agent names");
@@ -7652,12 +7778,23 @@ function normalizeAgents(value, where) {
   for (const [name, def] of Object.entries(value)) {
     const field = `agents.${name}`;
     if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) invalid(where, field, "is not a valid agent name (letters, digits, - and _)");
-    if (!isRecord(def)) invalid(where, field, "must be a mapping with run (and optionally modelFlag)");
-    for (const key of Object.keys(def)) if (key !== "run" && key !== "modelFlag") invalid(where, `${field}.${key}`, "is not a known key (run, modelFlag)");
-    const run = stringArray(def.run, `${field}.run`, where);
+    if (!isRecord(def)) invalid(where, field, "must be a mapping with run (and optionally modelFlag, billing, routingFeePerMillionUsd)");
+    for (const key of Object.keys(def)) if (!AGENT_KEYS.has(key)) invalid(where, `${field}.${key}`, "is not a known key (run, modelFlag, billing, routingFeePerMillionUsd)");
+    const builtin = BUILTIN_AGENTS[name];
+    const run = def.run !== void 0 ? stringArray(def.run, `${field}.run`, where) : builtin ? [...builtin.run] : stringArray(def.run, `${field}.run`, where);
     if (run.length === 0) invalid(where, `${field}.run`, "must name the program to run");
     if (def.modelFlag !== void 0 && (typeof def.modelFlag !== "string" || !def.modelFlag.startsWith("-"))) invalid(where, `${field}.modelFlag`, "must be a flag such as --model");
-    out[name] = { run, ...def.modelFlag !== void 0 ? { modelFlag: def.modelFlag } : {} };
+    if (def.billing !== void 0 && def.billing !== "api" && def.billing !== "subscription") invalid(where, `${field}.billing`, 'must be "api" or "subscription"');
+    if (def.routingFeePerMillionUsd !== void 0 && (typeof def.routingFeePerMillionUsd !== "number" || !Number.isFinite(def.routingFeePerMillionUsd) || def.routingFeePerMillionUsd < 0)) {
+      invalid(where, `${field}.routingFeePerMillionUsd`, "must be a finite number >= 0");
+    }
+    const modelFlag = def.modelFlag !== void 0 ? def.modelFlag : builtin?.modelFlag;
+    out[name] = {
+      run,
+      ...modelFlag !== void 0 ? { modelFlag } : {},
+      ...def.billing !== void 0 ? { billing: def.billing } : {},
+      ...def.routingFeePerMillionUsd !== void 0 ? { routingFeePerMillionUsd: def.routingFeePerMillionUsd } : {}
+    };
   }
   return out;
 }
@@ -7727,12 +7864,32 @@ function normalizeRaw(input, where, ignored) {
   if (out.workspaceDir !== void 0 && (typeof out.workspaceDir !== "string" || out.workspaceDir.trim() === "")) invalid(where, "workspaceDir", "must be a non-empty path");
   const buildSection = section(out, "build", where);
   if (buildSection && buildSection.visibleTabs !== void 0 && typeof buildSection.visibleTabs !== "boolean") invalid(where, "build.visibleTabs", "must be a boolean");
+  const worktreeSection = section(out, "worktree", where);
+  if (worktreeSection) {
+    if (worktreeSection.default !== void 0 && worktreeSection.default !== "ask" && worktreeSection.default !== "always" && worktreeSection.default !== "never") {
+      invalid(where, "worktree.default", 'must be "ask", "always", or "never"');
+    }
+    if (worktreeSection.dir !== void 0 && (typeof worktreeSection.dir !== "string" || worktreeSection.dir.trim() === "")) {
+      invalid(where, "worktree.dir", "must be a non-empty path");
+    }
+  }
   const budgets = section(out, "budgets", where);
   if (budgets) {
     for (const key of ["taskUsd", "dailyUsd"]) checkNumber(budgets, key, where, { exclusiveMin: 0 }, "budgets");
     checkNumber(budgets, "softWarningRatio", where, { min: 0, max: 1 }, "budgets");
     checkNumber(budgets, "unknownCallUsd", where, { min: 0 }, "budgets");
     for (const key of ["idleWarnMinutes", "idleWarnTokens"]) checkNumber(budgets, key, where, { min: 0, integer: true }, "budgets");
+    if (budgets.idleAction !== void 0 && budgets.idleAction !== "warn" && budgets.idleAction !== "block" && budgets.idleAction !== "off") {
+      invalid(where, "budgets.idleAction", 'must be "warn", "block", or "off"');
+    }
+    if (budgets.timeZone !== void 0) {
+      if (typeof budgets.timeZone !== "string" || budgets.timeZone.trim() === "") invalid(where, "budgets.timeZone", "must be an IANA timezone name such as America/New_York");
+      try {
+        new Intl.DateTimeFormat("en-CA", { timeZone: budgets.timeZone });
+      } catch {
+        invalid(where, "budgets.timeZone", `is not a valid IANA timezone (${budgets.timeZone})`);
+      }
+    }
   }
   for (const key of ["checks", "setup"]) {
     const list = out[key];
@@ -7752,6 +7909,23 @@ function normalizeRaw(input, where, ignored) {
     if (review.model !== void 0 && typeof review.model !== "boolean") invalid(where, "review.model", "must be a boolean");
     if (review.tickets !== void 0 && typeof review.tickets !== "boolean") invalid(where, "review.tickets", "must be a boolean");
     checkNumber(review, "timeoutMs", where, { min: 1e3, integer: true }, "review");
+    for (const key of ["reviewers", "highRiskReviewers"]) {
+      const list = review[key];
+      if (list === void 0) continue;
+      if (!Array.isArray(list)) invalid(where, `review.${key}`, "must be a list of models or { model, name?, focus? } mappings");
+      list.forEach((entry, index) => {
+        const field = `review.${key}[${index}]`;
+        if (typeof entry === "string") {
+          if (!entry.trim()) invalid(where, field, "must be a non-empty model string");
+          return;
+        }
+        if (!isRecord(entry) || typeof entry.model !== "string" || !entry.model.trim()) {
+          invalid(where, field, "must be a model string or a mapping with a non-empty string model");
+        }
+        if (entry.name !== void 0 && (typeof entry.name !== "string" || !entry.name.trim())) invalid(where, `${field}.name`, "must be a non-empty string");
+        if (entry.focus !== void 0 && (typeof entry.focus !== "string" || !entry.focus.trim())) invalid(where, `${field}.focus`, "must be a non-empty string");
+      });
+    }
   }
   const local = normalizeLocal(out.local, where);
   if (local) out.local = local;
@@ -7769,9 +7943,19 @@ function validateModels(config, where) {
     const problem = ticketModelProblem(config.models[key], config);
     if (problem) invalid(where, `models.${key}`, `is not valid: ${problem}`);
   }
+  for (const key of ["reviewers", "highRiskReviewers"]) {
+    const list = config.review[key];
+    if (!list) continue;
+    list.forEach((entry, index) => {
+      const model = normalizeReviewerSpec(entry).model;
+      const problem = ticketModelProblem(model, config);
+      if (problem) invalid(where, `review.${key}[${index}]`, `is not valid: ${problem}`);
+    });
+  }
 }
 function build(norm) {
   const obj = (key) => isRecord(norm[key]) ? norm[key] : {};
+  const worktreeRaw = isRecord(norm.worktree) ? norm.worktree : void 0;
   const config = {
     workspaceDir: typeof norm.workspaceDir === "string" ? norm.workspaceDir : DEFAULTS.workspaceDir,
     models: { ...DEFAULT_MODELS, ...obj("models") },
@@ -7779,12 +7963,14 @@ function build(norm) {
     agents: isRecord(norm.agents) ? norm.agents : {},
     routing: { ...DEFAULTS.routing, ...obj("routing") },
     build: { ...DEFAULTS.build, ...obj("build") },
+    ...worktreeRaw ? { worktree: { default: worktreeRaw.default ?? "ask", ...typeof worktreeRaw.dir === "string" ? { dir: worktreeRaw.dir } : {} } } : {},
     branchPrefix: typeof norm.branchPrefix === "string" ? norm.branchPrefix : DEFAULTS.branchPrefix,
     budgets: { ...DEFAULTS.budgets, ...obj("budgets") },
     checks: Array.isArray(norm.checks) ? norm.checks.map((check) => ({ ...check, args: check.args ?? [] })) : DEFAULTS.checks,
     setup: Array.isArray(norm.setup) ? norm.setup.map((check) => ({ ...check, args: check.args ?? [] })) : DEFAULTS.setup,
     review: { ...DEFAULTS.review, ...obj("review") },
-    pricing: Array.isArray(norm.pricing) ? norm.pricing : []
+    // Built-in 2026 pricing defaults sit underneath user rows; user rows always win on matching (provider, model, effectiveFrom) or later dates.
+    pricing: [...DEFAULT_PRICING, ...Array.isArray(norm.pricing) ? norm.pricing : []]
   };
   return config;
 }
@@ -7856,10 +8042,13 @@ function readConfigText(text, file, ignored) {
   }
   return normalizeRaw(parsed ?? {}, file, ignored);
 }
-function loadConfig(cwd) {
-  const { projectPath, userPath } = configPaths(cwd);
+function loadConfig(cwd, fallbackProjectRoot) {
+  const { projectPath: ownProjectPath, userPath } = configPaths(cwd);
+  const useFallback = !existsSync(ownProjectPath) && !!fallbackProjectRoot && path.resolve(fallbackProjectRoot) !== path.resolve(cwd);
+  const projectBase = useFallback ? path.join(fallbackProjectRoot, ".shepherd", "config") : path.join(cwd, ".shepherd", "config");
+  const projectPath = useFallback ? pickYaml(projectBase).path : ownProjectPath;
   const warnings = [];
-  for (const base of [path.join(cwd, ".shepherd", "config"), path.join(homedir(), ".claude", "shepherd")]) {
+  for (const base of [projectBase, path.join(homedir(), ".claude", "shepherd")]) {
     const { path: used, ignored: ignored2 } = pickYaml(base);
     if (ignored2) warnings.push(`${displayPath(ignored2)} is ignored because ${displayPath(used)} exists; delete one of them.`);
   }
@@ -7878,6 +8067,10 @@ function loadConfig(cwd) {
   if (warnings.length > 0) config.warnings = warnings;
   return config;
 }
+var BUILTIN_PRICE_ROWS = new WeakSet(DEFAULT_PRICING);
+function isBuiltinPriceRow(row) {
+  return BUILTIN_PRICE_ROWS.has(row);
+}
 var priceIndexes = /* @__PURE__ */ new WeakMap();
 function priceKey(provider, model) {
   return `${provider}\0${model}`;
@@ -7890,20 +8083,23 @@ function priceIndex(pricing) {
     const day = normalizeEffectiveFrom(row.effectiveFrom);
     if (!day) return;
     const key = priceKey(row.provider, row.model);
-    const list = byKey.get(key);
-    if (list) list.push({ day, row });
-    else byKey.set(key, [{ day, row }]);
+    let bucket = byKey.get(key);
+    if (!bucket) {
+      bucket = { user: [], builtin: [] };
+      byKey.set(key, bucket);
+    }
+    (BUILTIN_PRICE_ROWS.has(row) ? bucket.builtin : bucket.user).push({ day, row });
   });
-  for (const list of byKey.values()) list.sort((a, b) => a.day < b.day ? -1 : a.day > b.day ? 1 : 0);
+  const byDay = (a, b) => a.day < b.day ? -1 : a.day > b.day ? 1 : 0;
+  for (const bucket of byKey.values()) {
+    bucket.user.sort(byDay);
+    bucket.builtin.sort(byDay);
+  }
   const index = { length: pricing.length, byKey };
   priceIndexes.set(pricing, index);
   return index;
 }
-function priceFor(pricing, provider, model, at) {
-  if (Number.isNaN(at.getTime())) return void 0;
-  const list = priceIndex(pricing).byKey.get(priceKey(provider, model));
-  if (!list) return provider === "local" ? { provider, model, effectiveFrom: "1970-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0 } : void 0;
-  const day = at.toISOString().slice(0, 10);
+function newestOnOrBefore(list, day) {
   let lo = 0;
   let hi = list.length;
   while (lo < hi) {
@@ -7913,14 +8109,39 @@ function priceFor(pricing, provider, model, at) {
   }
   return lo === 0 ? void 0 : list[lo - 1].row;
 }
-function unpricedConfigModels(config) {
-  const priced = new Set(config.pricing.map((row) => `${row.provider}/${row.model}`));
+function priceFor(pricing, provider, model, at) {
+  if (Number.isNaN(at.getTime())) return void 0;
+  const index = priceIndex(pricing);
+  const canonical = canonicalModelId(provider, model);
+  const exactBucket = index.byKey.get(priceKey(provider, model));
+  const canonBucket = canonical !== model ? index.byKey.get(priceKey(provider, canonical)) : void 0;
+  if (!exactBucket && !canonBucket) {
+    return provider === "local" ? { provider, model, effectiveFrom: "1970-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0 } : void 0;
+  }
+  const day = at.toISOString().slice(0, 10);
+  return (exactBucket ? newestOnOrBefore(exactBucket.user, day) : void 0) ?? (canonBucket ? newestOnOrBefore(canonBucket.user, day) : void 0) ?? (exactBucket ? newestOnOrBefore(exactBucket.builtin, day) : void 0) ?? (canonBucket ? newestOnOrBefore(canonBucket.builtin, day) : void 0);
+}
+function unpricedConfigModels(config, at = /* @__PURE__ */ new Date()) {
   const out = /* @__PURE__ */ new Set();
   for (const key of MODEL_KEYS) {
     const model = parseTicketModel(config.models[key], config);
-    if (model.kind !== "pi" || model.provider === "local") continue;
-    const name = `${model.provider}/${model.id}`;
-    if (!priced.has(name)) out.add(name);
+    if (model.kind === "pi") {
+      if (model.provider === "local") continue;
+      if (!priceFor(config.pricing, model.provider, model.id, at)) out.add(`${model.provider}/${model.id}`);
+      continue;
+    }
+    if (!model.model) continue;
+    if (model.name === "cursor-agent") {
+      const lower = model.model.toLowerCase();
+      if (lower === "auto" || lower.startsWith("auto-smart")) continue;
+      const inferred = inferProviderForModel(model.model);
+      if (inferred.provider !== "cursor" && !priceFor(config.pricing, inferred.provider, inferred.model, at)) {
+        out.add(`${inferred.provider}/${inferred.model}`);
+      }
+      continue;
+    }
+    const provider = AGENT_DEFAULT_PROVIDER[model.name];
+    if (provider && !priceFor(config.pricing, provider, model.model, at)) out.add(`${provider}/${model.model}`);
   }
   return [...out];
 }
@@ -7928,6 +8149,11 @@ function unpricedWarning(config) {
   const unpriced = unpricedConfigModels(config);
   return unpriced.length > 0 ? [`No pricing rows for ${unpriced.join(", ")}: their cost is unknown. Add rows under pricing in ~/.claude/shepherd.yaml (see ${CONFIG_DOCS}).`] : [];
 }
+
+// src/shepherd-home.ts
+import { existsSync as existsSync3, readdirSync as readdirSync2, readFileSync as readFileSync3, rmSync as rmSync2, statSync as statSync2 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import path3 from "node:path";
 
 // src/cost/ledger.ts
 function unpricedModels(records, pricing) {
@@ -7952,7 +8178,9 @@ function fromMicro(micro) {
 function estimateUnknownMicro(record, pricing) {
   const listed = typeof record.listPriceUsd === "number" && record.listPriceUsd > 0 ? toMicro(record.listPriceUsd) : null;
   if (record.inputTokens === null && record.outputTokens === null) return listed;
-  const rows = pricing.filter((row) => row.provider === record.provider);
+  const rows = pricing.filter(
+    (row) => row.provider === record.provider && !(isBuiltinPriceRow(row) && row.inputPerMillionUsd === 0 && row.outputPerMillionUsd === 0 && (row.cacheReadPerMillionUsd ?? 0) === 0 && (row.cacheWritePerMillionUsd ?? 0) === 0)
+  );
   if (rows.length === 0) return listed;
   let worst = 0;
   for (const row of rows) {
@@ -7962,17 +8190,28 @@ function estimateUnknownMicro(record, pricing) {
   }
   return Math.max(worst, listed ?? 0);
 }
-function bump(bucket, key, known, unknown, estimated) {
-  const current = bucket[key] ?? { known: 0, unknown: 0, estimated: 0 };
+function bump(bucket, key, known, unknown, estimated, apiEquiv, rec) {
+  const current = bucket[key] ?? { known: 0, unknown: 0, estimated: 0, apiEquiv: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
   current.known += known;
   current.unknown += unknown;
   current.estimated += estimated;
+  current.apiEquiv += apiEquiv;
+  current.tokens.input += rec.inputTokens ?? 0;
+  current.tokens.output += rec.outputTokens ?? 0;
+  current.tokens.cacheRead += rec.cacheReadTokens ?? 0;
+  current.tokens.cacheWrite += rec.cacheWriteTokens ?? 0;
   bucket[key] = current;
 }
 function finish(bucket) {
   const out = {};
   for (const [key, value] of Object.entries(bucket)) {
-    out[key] = { knownUsd: fromMicro(value.known), unknown: value.unknown, estimatedUnknownUsd: fromMicro(value.estimated) };
+    out[key] = {
+      knownUsd: fromMicro(value.known),
+      unknown: value.unknown,
+      estimatedUnknownUsd: fromMicro(value.estimated),
+      apiEquivalentUsd: fromMicro(value.apiEquiv),
+      tokens: { ...value.tokens }
+    };
   }
   return out;
 }
@@ -7980,10 +8219,12 @@ function summarize(records, options = {}) {
   const pricing = options.pricing ?? [];
   const flat = toMicro(options.unknownCallUsd ?? DEFAULT_UNKNOWN_CALL_USD);
   let known = 0;
+  let apiEquiv = 0;
   let unknown = 0;
   let estimated = 0;
   let unestimated = 0;
   let notMetered = 0;
+  const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const phase = {};
   const provider = {};
   const model = {};
@@ -7992,6 +8233,7 @@ function summarize(records, options = {}) {
     let k = 0;
     let u = 0;
     let e = 0;
+    let eq = 0;
     if (record.meter === "not-metered") notMetered += 1;
     if (record.actualUsd === null) {
       u = 1;
@@ -8002,17 +8244,26 @@ function summarize(records, options = {}) {
         e = flat;
       } else e = guess;
       estimated += e;
+      eq = e;
     } else {
       k = toMicro(record.actualUsd);
       known += k;
+      eq = typeof record.listPriceUsd === "number" && Number.isFinite(record.listPriceUsd) && record.listPriceUsd > 0 ? Math.max(k, toMicro(record.listPriceUsd)) : k;
     }
-    bump(phase, record.phase, k, u, e);
-    bump(provider, record.provider, k, u, e);
-    bump(model, record.model, k, u, e);
-    bump(task, record.taskId, k, u, e);
+    apiEquiv += eq;
+    tokens.input += record.inputTokens ?? 0;
+    tokens.output += record.outputTokens ?? 0;
+    tokens.cacheRead += record.cacheReadTokens ?? 0;
+    tokens.cacheWrite += record.cacheWriteTokens ?? 0;
+    bump(phase, record.phase, k, u, e, eq, record);
+    bump(provider, record.provider, k, u, e, eq, record);
+    bump(model, record.model, k, u, e, eq, record);
+    bump(task, record.taskId, k, u, e, eq, record);
   }
   return {
     knownUsd: fromMicro(known),
+    apiEquivalentUsd: fromMicro(apiEquiv),
+    tokens,
     unknownRecords: unknown,
     unknownCount: unknown,
     notMeteredRecords: notMetered,
@@ -8043,187 +8294,6 @@ function recordsForDay(records, now, dayKey = makeDayKey()) {
   return records.filter((record) => dayKey(record.at) === today);
 }
 
-// src/orchestrator/machine.ts
-var ACTIVE = [
-  "PLANNING",
-  "AWAITING_PLAN_APPROVAL",
-  "IMPLEMENTING",
-  "REVIEWING"
-];
-var EDGES = {
-  IDLE: ["PLANNING", "PAUSED"],
-  PLANNING: ["AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
-  AWAITING_PLAN_APPROVAL: ["IMPLEMENTING", "PLANNING", "AWAITING_PLAN_APPROVAL", "PAUSED", "FAILED", "BLOCKED"],
-  IMPLEMENTING: ["REVIEWING", "COMPLETE", "IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
-  REVIEWING: ["IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
-  COMPLETE: ["IDLE", "PLANNING"],
-  FAILED: ["IDLE", "PLANNING", "IMPLEMENTING", "PAUSED"],
-  BLOCKED: ["PAUSED", "PLANNING", "IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "IDLE"],
-  PAUSED: []
-};
-function canTransition(from, to, state) {
-  if (to === "COMPLETE" && from !== "COMPLETE") return true;
-  if (from === to && from !== "PAUSED") {
-    return EDGES[from].includes(to) || from === "IMPLEMENTING" || from === "AWAITING_PLAN_APPROVAL";
-  }
-  if (from === "PAUSED") {
-    return to === state?.pausedFrom || to === "FAILED" || to === "IDLE" || to === "PLANNING";
-  }
-  if (ACTIVE.includes(from) && (to === "PAUSED" || to === "BLOCKED" || to === "FAILED")) return true;
-  return EDGES[from].includes(to);
-}
-function assertTransition(from, to, state) {
-  if (!canTransition(from, to, state)) {
-    throw new WorkflowError("ILLEGAL_TRANSITION", `Cannot move from ${from} to ${to}.`);
-  }
-}
-function move(state, to, at, reason) {
-  assertTransition(state.phase, to, state);
-  const next = { ...state, phase: to, updatedAt: at, phaseEnteredAt: to === state.phase ? state.phaseEnteredAt : at };
-  if (to === "PAUSED") next.pausedFrom = state.phase === "PAUSED" ? state.pausedFrom : state.phase;
-  if (to !== "PAUSED") next.pausedFrom = void 0;
-  if (to === "BLOCKED" || to === "FAILED" || to === "PAUSED") {
-    if (reason) next.blockedReason = reason;
-  } else {
-    next.blockedReason = void 0;
-  }
-  return next;
-}
-
-// src/orchestrator/context.ts
-function iso(ctx) {
-  return ctx.now().toISOString();
-}
-
-// src/orchestrator/tasks.ts
-var STOP_WORDS = new Set(
-  "a an and are as at be but by can do does for from has have how i if in into is it its me my of on or our please so that the their then there these this those to us we want with would you your add make new need should could let lets just also some any".split(" ")
-);
-var NAME_MAX = 32;
-var NAME_WORDS = 5;
-function slugName(request) {
-  let fenced = false;
-  const line = request.split("\n").find((item) => {
-    if (item.trim().startsWith("```")) fenced = !fenced;
-    else if (!fenced && /[a-z0-9]/i.test(item)) return true;
-    return false;
-  }) ?? "";
-  const words = line.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  const meaningful = words.filter((word) => !STOP_WORDS.has(word));
-  const pool = meaningful.length > 0 ? meaningful : words;
-  let name = "";
-  for (const word of pool.slice(0, NAME_WORDS)) {
-    const next = name ? `${name}-${word}` : word;
-    if (next.length > NAME_MAX) {
-      if (!name) name = next.slice(0, NAME_MAX);
-      break;
-    }
-    name = next;
-  }
-  return name;
-}
-function displayName(task) {
-  return task.name || slugName(task.request) || task.taskId;
-}
-function listTasks(ctx) {
-  const tasks = [];
-  for (const id of ctx.store.listTaskIds()) {
-    const task = ctx.store.load(id);
-    if (task) tasks.push(task);
-  }
-  return tasks.sort((a, b) => a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : a.taskId < b.taskId ? 1 : -1);
-}
-function isClosed(task) {
-  return task.phase === "COMPLETE";
-}
-function allTicketsDone(task) {
-  const tickets = task.plan?.tickets ?? [];
-  return tickets.length > 0 && tickets.every((ticket) => task.ticketRuns?.[ticket.id]?.status === "done");
-}
-function isFinished(task) {
-  if (isClosed(task)) return true;
-  return ["IMPLEMENTING", "REVIEWING"].includes(task.phase) && allTicketsDone(task) && task.review?.passed === true;
-}
-function unfinishedTasks(tasks) {
-  return tasks.filter((task) => task.phase !== "IDLE" && !isFinished(task));
-}
-function closeTask(ctx, taskId, reason) {
-  const at = iso(ctx);
-  ctx.store.clearBuilding(taskId);
-  return ctx.store.update(taskId, reason, (task) => ({ ...move(task, "COMPLETE", at, reason), closedAt: at, closedReason: reason }));
-}
-function stateText(state) {
-  if (!state || state.phase === "IDLE") return "no active task";
-  const reason = state.blockedReason ? ` (${state.blockedReason.replace(/\s+/g, " ").slice(0, 80)})` : "";
-  switch (state.phase) {
-    case "PLANNING":
-      return `planning (${state.planning?.stage === "tickets" ? "writing tickets" : "interview"})`;
-    case "AWAITING_PLAN_APPROVAL":
-      return state.approvedVersion && state.approvedVersion === state.plan?.version ? "plan approved, run /build" : "plan draft, awaiting approval";
-    case "COMPLETE":
-      return "complete";
-    case "BLOCKED":
-    case "PAUSED":
-    case "FAILED":
-      return `${state.phase.toLowerCase()}${reason}`;
-  }
-  const runs = state.ticketRuns ?? {};
-  const total = state.plan?.tickets?.length || Object.keys(runs).length;
-  const finished = Object.values(runs).filter((run) => run.status === "done").length;
-  const failed = Object.values(runs).filter((run) => run.status === "failed").length;
-  if (state.review) return state.review.passed ? "reviewed, passed" : "reviewed, findings to fix";
-  if (!state.build && Object.keys(runs).length === 0) return "plan approved, run /build";
-  if (state.build?.currentTicket) return `building ticket ${state.build.currentTicket} of ${total}`;
-  if (failed > 0) return `stopped, ${finished} of ${total} tickets done, ${failed} failed; /build resumes`;
-  if (finished >= total && total > 0) return `built, ${total} tickets done; run /review`;
-  return `building, ${finished} of ${total} tickets done`;
-}
-
-// src/providers/local-context.ts
-var PROBE_TIMEOUT_MS = 2e3;
-function serverOrigin(baseUrl) {
-  return baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
-}
-async function getJson(fetchImpl, url, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  timer.unref?.();
-  try {
-    const response = await fetchImpl(url, { signal: controller.signal });
-    if (!response.ok) return void 0;
-    return await response.json();
-  } catch {
-    return void 0;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-var positive = (value) => typeof value === "number" && Number.isInteger(value) && value > 0 ? value : void 0;
-async function probeLocalContext(baseUrl, model, options = {}) {
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const timeoutMs = options.timeoutMs ?? PROBE_TIMEOUT_MS;
-  const origin = serverOrigin(baseUrl);
-  const props = await getJson(fetchImpl, `${origin}/props`, timeoutMs);
-  const llama = positive(props?.default_generation_settings?.n_ctx) ?? positive(props?.n_ctx);
-  if (llama) return llama;
-  const ps = await getJson(fetchImpl, `${origin}/api/ps`, timeoutMs);
-  const wanted = model.toLowerCase();
-  const loaded = ps?.models?.find((entry) => [entry.name, entry.model].some((name) => typeof name === "string" && name.toLowerCase() === wanted));
-  return positive(loaded?.context_length);
-}
-function contextMismatch(model, configured, actual) {
-  if (actual === void 0) return void 0;
-  const told = configured ?? 128e3;
-  if (told === actual) return void 0;
-  const where = configured === void 0 ? `no contextWindow is set for it, so Pi assumes ${told}` : `local.models says contextWindow: ${told}`;
-  const risk = told > actual ? "Pi may send more than the server keeps, which silently drops the start of the conversation" : "tickets are planned smaller than the server could take";
-  return `The local server runs ${model} with a ${actual}-token context window, but ${where}: ${risk}. Set contextWindow: ${actual} on its local.models entry.`;
-}
-
-// src/shepherd-home.ts
-import { homedir as homedir2 } from "node:os";
-import path3 from "node:path";
-
 // src/storage/store.ts
 import { appendFileSync, closeSync, existsSync as existsSync2, fsyncSync, linkSync, mkdirSync, openSync, readFileSync as readFileSync2, readdirSync, renameSync, rmSync, statSync, unlinkSync, readSync, writeFileSync, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -8252,13 +8322,22 @@ function readLockRaw(lockPath) {
 function breakStaleLock(lockPath, staleMs) {
   const raw = readLockRaw(lockPath);
   if (raw === void 0) return;
-  let current;
+  let stale = false;
   try {
-    current = JSON.parse(raw);
+    const current = JSON.parse(raw);
+    if (typeof current.pid === "number" && typeof current.at === "number") {
+      stale = !pidAlive(current.pid) && Date.now() - current.at > staleMs;
+    } else {
+      stale = Date.now() - statSync(lockPath).mtimeMs > staleMs;
+    }
   } catch {
-    return;
+    try {
+      stale = Date.now() - statSync(lockPath).mtimeMs > staleMs;
+    } catch {
+      return;
+    }
   }
-  if (pidAlive(current.pid) || Date.now() - current.at <= staleMs) return;
+  if (!stale) return;
   const tomb = `${lockPath}.stale.${randomUUID()}`;
   try {
     renameSync(lockPath, tomb);
@@ -8438,6 +8517,7 @@ function readClaim(file) {
   }
 }
 function processAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -8446,13 +8526,14 @@ function processAlive(pid) {
   }
 }
 var TaskStore = class {
-  constructor(root) {
+  constructor(root, activeOverride) {
     this.root = root;
+    this.activeOverride = activeOverride;
   }
   ledgerCache;
   seqCache = /* @__PURE__ */ new Map();
   activePath() {
-    return path2.join(this.root, "active-task.json");
+    return this.activeOverride ?? path2.join(this.root, "active-task.json");
   }
   taskDir(taskId) {
     return path2.join(this.root, "tasks", taskId);
@@ -8488,14 +8569,54 @@ var TaskStore = class {
     atomicWrite(this.activePath(), JSON.stringify({ taskId, ...seen ? { seenBranch: seen } : {} }, null, 2));
   }
   /**
-   * Claims the task's build for this process: refused (returns who holds it) while another live process holds it, so
-   * two builds never run on one task at once. A claim whose process is gone is taken over.
+   * Claims the task's build for this process atomically: refused (returns who holds it) while another live process holds
+   * it, so two builds never run on one task at once. A claim whose process is gone is taken over via atomic tombstone.
    */
   claimBuild(taskId, checkout, at) {
     const file = path2.join(this.taskDir(taskId), "build.claim");
+    mkdirSync(path2.dirname(file), { recursive: true });
+    const payload = JSON.stringify({ pid: process.pid, checkout, at }, null, 2);
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const tmp = `${file}.tmp.${randomUUID()}`;
+      try {
+        writeFileSync(tmp, payload, { flag: "wx" });
+        try {
+          linkSync(tmp, file);
+          return void 0;
+        } catch (linkErr) {
+          const code = linkErr.code;
+          if (code === "EPERM" || code === "ENOTSUP" || code === "EXDEV") {
+            const fd = openSync(file, "wx");
+            try {
+              writeFileSync(fd, payload);
+            } finally {
+              closeSync(fd);
+            }
+            return void 0;
+          }
+          throw linkErr;
+        }
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        const held2 = readClaim(file);
+        if (held2 && held2.pid === process.pid) {
+          atomicWrite(file, payload);
+          return void 0;
+        }
+        if (held2 && processAlive(held2.pid)) return held2;
+        const tomb = `${file}.stale.${randomUUID()}`;
+        try {
+          renameSync(file, tomb);
+          rmSync(tomb, { force: true });
+        } catch {
+        }
+      } finally {
+        rmSync(tmp, { force: true });
+      }
+    }
     const held = readClaim(file);
     if (held && held.pid !== process.pid && processAlive(held.pid)) return held;
-    atomicWrite(file, JSON.stringify({ pid: process.pid, checkout, at }, null, 2));
+    atomicWrite(file, payload);
     return void 0;
   }
   /** Drops this process's build claim on the task; another process's claim stays. */
@@ -8657,7 +8778,7 @@ var TaskStore = class {
     const dir = path2.join(this.taskDir(taskId), relative);
     mkdirSync(dir, { recursive: true });
     for (const [name, data] of Object.entries(files)) atomicWrite(path2.join(dir, name), data);
-    for (const name of readdirSync(dir)) if (!(name in files)) rmSync(path2.join(dir, name), { force: true });
+    for (const name of readdirSync(dir)) if (!(name in files)) rmSync(path2.join(dir, name), { recursive: true, force: true });
     return Object.keys(files).map((name) => path2.join(dir, name));
   }
   writeOnceText(taskId, relative, data) {
@@ -8673,13 +8794,21 @@ var TaskStore = class {
     if (!existsSync2(file)) return void 0;
     return readFileSync2(file, "utf8");
   }
+  /** Held around concurrent ledger read-modify-append sequences (such as Pi session sweeps). */
+  withLedgerLock(fn) {
+    return withLock(path2.join(this.root, "cost", "ledger.lock"), fn);
+  }
   appendLedger(record) {
+    this.appendLedgerBatch([record]);
+  }
+  appendLedgerBatch(records) {
+    if (records.length === 0) return;
     const file = path2.join(this.root, "cost", "ledger.jsonl");
     mkdirSync(path2.dirname(file), { recursive: true });
-    const clean = redactUnknown(record);
+    const lines = records.map((record) => `${JSON.stringify(redactUnknown(record))}
+`).join("");
     repairTail(file);
-    appendFileSync(file, `${JSON.stringify(clean)}
-`);
+    appendFileSync(file, lines);
   }
   /** Appends one line to `metrics/tickets.jsonl`, the per-ticket log of /build. Append-only: never rewritten or truncated. */
   appendTicketLog(entry) {
@@ -8721,24 +8850,503 @@ var TaskStore = class {
   notify(message) {
     const file = path2.join(this.root, "notifications.jsonl");
     mkdirSync(this.root, { recursive: true });
-    writeFileSync(file, `${JSON.stringify({ at: (/* @__PURE__ */ new Date()).toISOString(), message })}
+    writeFileSync(file, `${JSON.stringify({ at: (/* @__PURE__ */ new Date()).toISOString(), message: redactUnknown(message) })}
 `, { flag: "a" });
   }
 };
 
 // src/shepherd-home.ts
+var repoStoreCache = /* @__PURE__ */ new Map();
+function cachedStore(dir) {
+  let store = repoStoreCache.get(dir);
+  if (!store) {
+    store = new TaskStore(dir);
+    repoStoreCache.set(dir, store);
+  }
+  return store;
+}
 function shepherdHome(env = process.env, home = homedir2()) {
   return env.SHEPHERD_HOME || path3.join(home, ".claude", "shepherd");
 }
+var reposFile = (shepherd) => path3.join(shepherd, "repos.json");
+function registeredRepos(shepherd) {
+  try {
+    const parsed = JSON.parse(readFileSync3(reposFile(shepherd), "utf8"));
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string" && path3.isAbsolute(item)) : [];
+  } catch {
+    return [];
+  }
+}
+function dailyRecordsOf(dirs, now, timeZone) {
+  const out = [];
+  const dayKey = makeDayKey(timeZone);
+  for (const dir of new Set(dirs.map((item) => path3.resolve(item)))) {
+    try {
+      if (existsSync3(dir)) out.push(...recordsForDay(cachedStore(dir).readLedger(), now, dayKey));
+    } catch {
+    }
+  }
+  return out;
+}
+function readJson(file) {
+  try {
+    return JSON.parse(readFileSync3(file, "utf8"));
+  } catch {
+    return void 0;
+  }
+}
+
+// src/agent-models.ts
+var execFileAsync = promisify(execFile);
+var AGENT_MODELS_CACHE_FILE = "agent-models.json";
+var LIVE_CACHE_MS = 60 * 6e4;
+var ERROR_CACHE_MS = 6e4;
+var DISCOVER_TIMEOUT_MS = 4e3;
+var CURSOR_SMART_SETTINGS = ["cost", "balanced", "intelligence"];
+var CURATED = {
+  claude: [
+    { id: "opus", label: "Claude Opus (alias)", note: "highest reasoning" },
+    { id: "sonnet", label: "Claude Sonnet (alias)", note: "balanced default" },
+    { id: "haiku", label: "Claude Haiku (alias)", note: "fast & low cost" },
+    { id: "fable", label: "Claude Fable (alias)", note: "deep advisor" },
+    { id: "opusplan", label: "Claude OpusPlan (alias)", note: "opus plan, sonnet build" },
+    { id: "best", label: "Claude Best (alias)" },
+    { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
+    { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+    { id: "claude-fable-5-2", label: "Claude Fable 5.2" }
+  ],
+  codex: [
+    { id: "gpt-6.2-astra", label: "GPT-6.2 Astra", note: "flagship review & reasoning" },
+    { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", note: "strong general coding" },
+    { id: "gpt-6-luna", label: "GPT-6 Luna", note: "fast & economical" },
+    { id: "gpt-5.4", label: "GPT-5.4" },
+    { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { id: "o4-mini", label: "o4-mini", note: "compact reasoning" }
+  ],
+  agy: [
+    { id: "gemini-4-argon", label: "Gemini 4 Argon", note: "flagship review & architecture" },
+    { id: "gemini-4-carbon", label: "Gemini 4 Carbon", note: "high-throughput coding" },
+    { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" }
+  ],
+  gemini: [
+    { id: "gemini-4-argon", label: "Gemini 4 Argon", note: "flagship review" },
+    { id: "gemini-4-carbon", label: "Gemini 4 Carbon", note: "balanced coding" },
+    { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "fast & low cost" }
+  ],
+  grok: [
+    { id: "grok-4.7", label: "Grok 4.7", note: "flagship xAI" },
+    { id: "grok-4.6", label: "Grok 4.6" },
+    { id: "grok-4.3", label: "Grok 4.3" },
+    { id: "grok-code-fast", label: "Grok Code Fast", note: "fast low-cost coding" },
+    { id: "grok-build-0.1", label: "Grok Build 0.1" }
+  ],
+  "cursor-agent": [
+    { id: "auto", label: "Auto (Cursor router)", note: "included router" }
+  ],
+  opencode: [
+    { id: "anthropic/claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+    { id: "anthropic/claude-opus-5-5", label: "Claude Opus 5.5" },
+    { id: "openai/gpt-6.1-sol", label: "GPT-6.1 Sol" },
+    { id: "openai/gpt-6.2-astra", label: "GPT-6.2 Astra" },
+    { id: "google/gemini-4-argon", label: "Gemini 4 Argon" }
+  ]
+};
+var LIVE_PROBES = {
+  "cursor-agent": { cmd: "cursor-agent", args: ["--list-models"] },
+  codex: { cmd: "codex", args: ["--list-models"] },
+  agy: { cmd: "agy", args: ["models"] },
+  opencode: { cmd: "opencode", args: ["models"] }
+};
+var stripAnsi = (text) => text.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "");
+function parseCursorListModels(output) {
+  const plain = stripAnsi(output);
+  const smart = /(?<![\w-])auto-smart(?![\w-])/.test(plain);
+  const items = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const raw of plain.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || /^available models/i.test(line) || /^[-=]+$/.test(line)) continue;
+    const match = /^([A-Za-z0-9][A-Za-z0-9._:/[\]=+-]*)\s+(?:-|—|:)\s+(.+)$/.exec(line);
+    if (!match) continue;
+    const id = match[1].trim();
+    const label = match[2].trim();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    items.push({ id, label });
+  }
+  return { smart, items };
+}
+function parseGenericModelList(output) {
+  const plain = stripAnsi(output);
+  const items = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const raw of plain.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || /^(available|models|usage|error|warning|---+)/i.test(line)) continue;
+    const dash = /^([A-Za-z0-9][A-Za-z0-9._:/+-]*)\s+(?:-|—)\s+(.+)$/.exec(line);
+    const id = dash ? dash[1] : /^([A-Za-z0-9][A-Za-z0-9._:/+-]*)(?:\s{2,}(.+))?$/.exec(line)?.[1];
+    if (!id || id.length < 2 || seen.has(id)) continue;
+    if (!/[-._/:0-9]/.test(id) && !["auto", "opus", "sonnet", "haiku", "fable", "best"].includes(id)) continue;
+    seen.add(id);
+    const label = dash ? dash[2].trim() : /^[A-Za-z0-9._:/+-]+\s{2,}(.+)$/.exec(line)?.[1]?.trim() ?? id;
+    items.push({ id, label });
+  }
+  return items;
+}
+function pricingHint(pricing, agent, modelId, at) {
+  const slash = modelId.indexOf("/");
+  const inferred = slash > 0 ? { provider: modelId.slice(0, slash), model: modelId.slice(slash + 1) } : inferProviderForModel(modelId);
+  const provider = inferred.provider === "unknown" ? AGENT_DEFAULT_PROVIDER[agent] ?? "unknown" : inferred.provider;
+  const row = priceFor([...pricing], provider, inferred.model, at);
+  return row ? { input: row.inputPerMillionUsd, output: row.outputPerMillionUsd } : void 0;
+}
+function readCache(file) {
+  try {
+    const parsed = JSON.parse(readFileSync4(file, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function toOptions(agent, items, pricing, at) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const item of items) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    const hint = pricingHint(pricing, agent, item.id, at);
+    out.push({
+      id: item.id,
+      label: item.label,
+      value: `agent:${agent}/${item.id}`,
+      source: item.source,
+      ...item.note ? { note: item.note } : {},
+      ...hint ? { pricing: hint } : {}
+    });
+  }
+  return out;
+}
+function piModelCatalog(pricing = DEFAULT_PRICING, at = /* @__PURE__ */ new Date()) {
+  const rows = [...pricing];
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const row of rows) {
+    const value = `${row.provider}/${row.model}`;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    const active2 = priceFor(rows, row.provider, row.model, at) ?? row;
+    out.push({
+      id: value,
+      label: `${row.model} ($${active2.inputPerMillionUsd}/$${active2.outputPerMillionUsd})`,
+      value,
+      source: "curated",
+      group: row.provider,
+      pricing: { input: active2.inputPerMillionUsd, output: active2.outputPerMillionUsd }
+    });
+  }
+  return out;
+}
+async function discoverAgentModels(options = {}) {
+  const now = options.now ?? Date.now;
+  const at = new Date(now());
+  const pricing = options.pricing ?? DEFAULT_PRICING;
+  const dir = options.home ?? shepherdHome();
+  const cachePath = path4.join(dir, AGENT_MODELS_CACHE_FILE);
+  const cache = readCache(cachePath);
+  const entries = { ...cache.entries ?? {} };
+  let cacheDirty = false;
+  const run = options.run ?? (async (file, args, timeoutMs) => (await execFileAsync(file, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 })).stdout);
+  const targets = options.agent ? [options.agent] : Object.keys(CURATED);
+  const agents = {};
+  for (const agent of targets) {
+    const probe = LIVE_PROBES[agent];
+    const curated = (CURATED[agent] ?? []).map((item) => ({ ...item, source: "curated" }));
+    if (!probe) {
+      agents[agent] = { source: "curated", models: toOptions(agent, curated, pricing, at) };
+      continue;
+    }
+    const cached = !options.refresh ? entries[agent] : void 0;
+    const ttl = cached?.ok ? LIVE_CACHE_MS : ERROR_CACHE_MS;
+    const fresh = cached && typeof cached.at === "number" && now() >= cached.at && now() - cached.at < ttl;
+    let liveItems = [];
+    let smart;
+    let source;
+    if (fresh) {
+      liveItems = cached.items ?? [];
+      smart = cached.smart;
+      source = cached.ok ? "cache" : "unavailable";
+    } else {
+      try {
+        const stdout = await run(probe.cmd, probe.args, DISCOVER_TIMEOUT_MS);
+        if (agent === "cursor-agent") {
+          const parsed = parseCursorListModels(stdout);
+          smart = parsed.smart;
+          liveItems = parsed.items;
+        } else {
+          liveItems = parseGenericModelList(stdout);
+        }
+        source = "live";
+        entries[agent] = { at: now(), ok: true, ...smart !== void 0 ? { smart } : {}, items: liveItems };
+      } catch {
+        source = "unavailable";
+        if (agent === "cursor-agent") smart = false;
+        entries[agent] = { at: now(), ok: false, ...smart !== void 0 ? { smart } : {}, items: [] };
+      }
+      cacheDirty = true;
+    }
+    if (agent === "cursor-agent") {
+      const merged = [
+        { id: "auto", label: "Auto (Cursor router)", note: "included router", source: "curated" }
+      ];
+      if (smart) {
+        for (const setting of CURSOR_SMART_SETTINGS) {
+          merged.push({
+            id: `auto-smart[optimize_for=${setting}]`,
+            label: `Auto-Smart (${setting})`,
+            note: "Teams/Enterprise router",
+            source: source === "live" ? "live" : "curated"
+          });
+        }
+      }
+      for (const item of liveItems) {
+        if (item.id === "auto" || item.id === "auto-smart") continue;
+        merged.push({ id: item.id, label: item.label, source: "live" });
+      }
+      agents[agent] = { source, smart: !!smart, models: toOptions(agent, merged, pricing, at) };
+    } else {
+      const merged = [
+        ...liveItems.map((item) => ({ ...item, source: "live" })),
+        ...curated
+      ];
+      agents[agent] = { source, models: toOptions(agent, merged, pricing, at) };
+    }
+  }
+  if (cacheDirty) {
+    try {
+      atomicWrite(cachePath, JSON.stringify({ entries }, null, 2));
+    } catch {
+    }
+  }
+  return { ok: true, agents, piModels: piModelCatalog(pricing, at) };
+}
+
+// src/orchestrator/machine.ts
+var ACTIVE = [
+  "PLANNING",
+  "AWAITING_PLAN_APPROVAL",
+  "IMPLEMENTING",
+  "REVIEWING"
+];
+var EDGES = {
+  IDLE: ["PLANNING", "PAUSED"],
+  PLANNING: ["AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
+  AWAITING_PLAN_APPROVAL: ["IMPLEMENTING", "PLANNING", "AWAITING_PLAN_APPROVAL", "PAUSED", "FAILED", "BLOCKED"],
+  IMPLEMENTING: ["REVIEWING", "COMPLETE", "IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
+  REVIEWING: ["IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "FAILED", "BLOCKED", "PAUSED"],
+  COMPLETE: ["IDLE", "PLANNING"],
+  FAILED: ["IDLE", "PLANNING", "IMPLEMENTING", "PAUSED"],
+  BLOCKED: ["PAUSED", "PLANNING", "IMPLEMENTING", "AWAITING_PLAN_APPROVAL", "IDLE"],
+  PAUSED: []
+};
+function canTransition(from, to, state) {
+  if (to === "COMPLETE" && from !== "COMPLETE") return true;
+  if (from === to && from !== "PAUSED") {
+    return EDGES[from].includes(to) || from === "IMPLEMENTING" || from === "AWAITING_PLAN_APPROVAL";
+  }
+  if (from === "PAUSED") {
+    return to === state?.pausedFrom || to === "FAILED" || to === "IDLE" || to === "PLANNING";
+  }
+  if (ACTIVE.includes(from) && (to === "PAUSED" || to === "BLOCKED" || to === "FAILED")) return true;
+  return EDGES[from].includes(to);
+}
+function assertTransition(from, to, state) {
+  if (!canTransition(from, to, state)) {
+    throw new WorkflowError("ILLEGAL_TRANSITION", `Cannot move from ${from} to ${to}.`);
+  }
+}
+function move(state, to, at, reason) {
+  assertTransition(state.phase, to, state);
+  const next = { ...state, phase: to, updatedAt: at, phaseEnteredAt: to === state.phase ? state.phaseEnteredAt : at };
+  if (to === "PAUSED") next.pausedFrom = state.phase === "PAUSED" ? state.pausedFrom : state.phase;
+  if (to !== "PAUSED") next.pausedFrom = void 0;
+  if (to === "BLOCKED" || to === "FAILED" || to === "PAUSED") {
+    if (reason) next.blockedReason = reason;
+  } else {
+    next.blockedReason = void 0;
+  }
+  return next;
+}
+
+// src/orchestrator/context.ts
+function iso(ctx) {
+  return ctx.now().toISOString();
+}
+
+// src/orchestrator/tasks.ts
+var STOP_WORDS = new Set(
+  "a an and are as at be but by can do does for from has have how i if in into is it its me my of on or our please so that the their then there these this those to us we want with would you your add make new need should could let lets just also some any".split(" ")
+);
+var NAME_MAX = 32;
+var NAME_WORDS = 5;
+function slugName(request) {
+  let fenced = false;
+  const line = request.split("\n").find((item) => {
+    if (item.trim().startsWith("```")) fenced = !fenced;
+    else if (!fenced && /[a-z0-9]/i.test(item)) return true;
+    return false;
+  }) ?? "";
+  const words = line.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const meaningful = words.filter((word) => !STOP_WORDS.has(word));
+  const pool = meaningful.length > 0 ? meaningful : words;
+  let name = "";
+  for (const word of pool.slice(0, NAME_WORDS)) {
+    const next = name ? `${name}-${word}` : word;
+    if (next.length > NAME_MAX) {
+      if (!name) name = next.slice(0, NAME_MAX);
+      break;
+    }
+    name = next;
+  }
+  return name;
+}
+function displayName(task) {
+  return task.name || slugName(task.request) || task.taskId;
+}
+function listTasks(ctx) {
+  const tasks = [];
+  for (const id of ctx.store.listTaskIds()) {
+    const task = ctx.store.load(id);
+    if (task) tasks.push(task);
+  }
+  return tasks.sort((a, b) => a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : a.taskId < b.taskId ? 1 : -1);
+}
+function isClosed(task) {
+  return task.phase === "COMPLETE";
+}
+function allTicketsDone(task) {
+  const tickets = task.plan?.tickets ?? [];
+  return tickets.length > 0 && tickets.every((ticket) => task.ticketRuns?.[ticket.id]?.status === "done");
+}
+function isFinished(task) {
+  if (isClosed(task)) return true;
+  return ["IMPLEMENTING", "REVIEWING"].includes(task.phase) && allTicketsDone(task) && task.review?.passed === true;
+}
+function unfinishedTasks(tasks) {
+  return tasks.filter((task) => task.phase !== "IDLE" && !isFinished(task));
+}
+function closeTask(ctx, taskId, reason) {
+  const at = iso(ctx);
+  ctx.store.clearBuilding(taskId);
+  return ctx.store.update(taskId, reason, (task) => ({ ...move(task, "COMPLETE", at, reason), closedAt: at, closedReason: reason }));
+}
+function stateText(state) {
+  if (!state || state.phase === "IDLE") return "no active task";
+  const reason = state.blockedReason ? ` (${state.blockedReason.replace(/\s+/g, " ").slice(0, 80)})` : "";
+  switch (state.phase) {
+    case "PLANNING":
+      return `planning (${state.planning?.stage === "tickets" ? "writing tickets" : "interview"})`;
+    case "AWAITING_PLAN_APPROVAL":
+      return state.approvedVersion && state.approvedVersion === state.plan?.version ? "plan approved, run /build" : "plan draft, awaiting approval";
+    case "COMPLETE":
+      return "complete";
+    case "BLOCKED":
+    case "PAUSED":
+    case "FAILED":
+      return `${state.phase.toLowerCase()}${reason}`;
+  }
+  const runs = state.ticketRuns ?? {};
+  const total = state.plan?.tickets?.length || Object.keys(runs).length;
+  const finished = Object.values(runs).filter((run) => run.status === "done").length;
+  const failed = Object.values(runs).filter((run) => run.status === "failed").length;
+  if (state.review) return state.review.passed ? "reviewed, passed" : "reviewed, findings to fix";
+  if (!state.build && Object.keys(runs).length === 0) return "plan approved, run /build";
+  if (state.build?.currentTicket) return `building ticket ${state.build.currentTicket} (${finished}/${total} done)`;
+  if (failed > 0) return `stopped, ${finished} of ${total} tickets done, ${failed} failed; /build resumes`;
+  if (finished >= total && total > 0) return `built, ${total} tickets done; run /review`;
+  return `building, ${finished} of ${total} tickets done`;
+}
+
+// src/review/risk.ts
+var MIN_RISK = 5;
+var SCORE_RULES = [
+  "Rate every finding with two integers from 1 to 10. likelihood: how likely it is a real defect that will actually trigger (1 = very unlikely, a guess; 10 = certain).",
+  "severity: how bad the damage is if it does trigger (1 = cosmetic; 10 = data loss or a security breach).",
+  `Omit every finding you rate below ${MIN_RISK} combined (likelihood \xD7 severity); it is dropped from the report, as is any finding missing either score.`
+].join("\n");
+
+// src/runner/tab.ts
+var READY_TIMEOUT_MS = 5 * 6e4;
+var TURN_TIMEOUT_MS = 4 * 60 * 6e4;
+
+// src/runner/pi-ticket.ts
+var READY_TIMEOUT_MS2 = 2 * 6e4;
+
+// src/orchestrator/tab-program.ts
+var PI_READY_TIMEOUT_MS = 2 * 6e4;
+
+// src/orchestrator/ticket-review-tab.ts
+var MIN_REVIEW_MS = 15 * 6e4;
+
+// src/orchestrator/build.ts
+var ordinal = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`;
+function reviewLabel(run) {
+  const last = run?.reviews?.[run.reviews.length - 1];
+  if (!last) return "-";
+  return last.verdict === "unavailable" ? "unavailable" : last.round > 1 ? `${last.verdict} (${ordinal(last.round)})` : last.verdict;
+}
+
+// src/providers/local-context.ts
+var PROBE_TIMEOUT_MS = 2e3;
+function serverOrigin(baseUrl) {
+  return baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+async function getJson(fetchImpl, url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+  try {
+    const response = await fetchImpl(url, { signal: controller.signal });
+    if (!response.ok) return void 0;
+    return await response.json();
+  } catch {
+    return void 0;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+var positive = (value) => typeof value === "number" && Number.isInteger(value) && value > 0 ? value : void 0;
+async function probeLocalContext(baseUrl, model, options = {}) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? PROBE_TIMEOUT_MS;
+  const origin = serverOrigin(baseUrl);
+  const props = await getJson(fetchImpl, `${origin}/props`, timeoutMs);
+  const llama = positive(props?.default_generation_settings?.n_ctx) ?? positive(props?.n_ctx);
+  if (llama) return llama;
+  const ps = await getJson(fetchImpl, `${origin}/api/ps`, timeoutMs);
+  const wanted = model.toLowerCase();
+  const loaded = ps?.models?.find((entry) => [entry.name, entry.model].some((name) => typeof name === "string" && name.toLowerCase() === wanted));
+  return positive(loaded?.context_length);
+}
+function contextMismatch(model, configured, actual) {
+  if (actual === void 0) return void 0;
+  const told = configured ?? 128e3;
+  if (told === actual) return void 0;
+  const where = configured === void 0 ? `no contextWindow is set for it, so Pi assumes ${told}` : `local.models says contextWindow: ${told}`;
+  const risk2 = told > actual ? "Pi may send more than the server keeps, which silently drops the start of the conversation" : "tickets are planned smaller than the server could take";
+  return `The local server runs ${model} with a ${actual}-token context window, but ${where}: ${risk2}. Set contextWindow: ${actual} on its local.models entry.`;
+}
 
 // src/cli/shepherd-config.ts
-var execFileAsync = promisify(execFile);
+var execFileAsync2 = promisify2(execFile2);
 var LOCAL_PRESETS = [
   { name: "llama.cpp", baseUrl: "http://127.0.0.1:8080/v1" },
   { name: "Ollama", baseUrl: "http://127.0.0.1:11434/v1" },
   { name: "LM Studio", baseUrl: "http://127.0.0.1:1234/v1" }
 ];
-var SET_KEYS = ["models.low", "models.medium", "models.high", "models.review", "local.baseUrl", "budgets.taskUsd", "budgets.dailyUsd"];
+var SET_KEYS = ["models.low", "models.medium", "models.high", "models.review", "local.baseUrl", "budgets.taskUsd", "budgets.dailyUsd", "budgets.idleAction", "review.reviewers"];
 var PHASE_LABELS = { PLANNING: "plan", AWAITING_PLAN_APPROVAL: "plan", IMPLEMENTING: "build", REVIEWING: "review" };
 var RECENT_CLOSED = 8;
 function isRecord2(value) {
@@ -8747,7 +9355,7 @@ function isRecord2(value) {
 function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
 }
-function messageOf(error) {
+function messageOf2(error) {
   return redact(error instanceof Error && error.message ? error.message : String(error));
 }
 function refuse(error, extra = {}) {
@@ -8758,18 +9366,38 @@ function round(usd) {
 }
 function readRaw(file) {
   try {
-    const parsed = (0, import_yaml2.parse)(readFileSync3(file, "utf8"));
+    const parsed = (0, import_yaml2.parse)(readFileSync5(file, "utf8"));
     return isRecord2(parsed) ? parsed : void 0;
   } catch {
     return void 0;
   }
 }
-function effective(cwd) {
-  const { userPath, projectPath } = configPaths(cwd);
-  const user = existsSync3(userPath) ? readRaw(userPath) : void 0;
-  const project = existsSync3(projectPath) ? readRaw(projectPath) : void 0;
+function gitWorktreeRoots(cwd) {
   try {
-    return { config: loadConfig(cwd), errors: [], user, project };
+    const out = execFileSync("git", ["rev-parse", "--show-toplevel", "--git-common-dir", "--git-dir"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const [top, commonRaw, dirRaw] = out.trim().split(/\r?\n/);
+    const root = top?.trim() || cwd;
+    const resolvedCommon = commonRaw ? path5.resolve(cwd, commonRaw.trim()) : path5.join(root, ".git");
+    const commonRoot = path5.basename(resolvedCommon) === ".git" ? path5.dirname(resolvedCommon) : root;
+    const gitDir = dirRaw ? path5.resolve(cwd, dirRaw.trim()) : path5.join(root, ".git");
+    const isWorktree = path5.resolve(gitDir) !== path5.resolve(path5.join(commonRoot, ".git"));
+    return { root, commonRoot, isWorktree, ...isWorktree ? { activePointer: path5.join(gitDir, "shepherd-active.json") } : {} };
+  } catch {
+    return { root: cwd, commonRoot: cwd, isWorktree: false };
+  }
+}
+function effective(cwd) {
+  const { root, commonRoot, isWorktree } = gitWorktreeRoots(cwd);
+  const { userPath, projectPath: ownProjectPath } = configPaths(root);
+  const projectPath = !existsSync4(ownProjectPath) && isWorktree ? configPaths(commonRoot).projectPath : ownProjectPath;
+  const user = existsSync4(userPath) ? readRaw(userPath) : void 0;
+  const project = existsSync4(projectPath) ? readRaw(projectPath) : void 0;
+  try {
+    return { config: loadConfig(root, isWorktree ? commonRoot : void 0), errors: [], user, project };
   } catch (error) {
     const config = parseConfig("");
     config.models = { ...config.models };
@@ -8785,22 +9413,23 @@ function effective(cwd) {
       const models = Array.isArray(user.local.models) ? user.local.models.filter((m) => isRecord2(m) && typeof m.id === "string" && typeof m.contextWindow === "number") : [];
       config.local = { baseUrl: user.local.baseUrl, models };
     }
-    return { config, errors: [messageOf(error)], user, project };
+    return { config, errors: [messageOf2(error)], user, project };
   }
 }
 function fileView(file) {
-  const view = { path: file, display: displayPath(file), exists: existsSync3(file), sha256: sha256("") };
+  const view = { path: file, display: displayPath(file), exists: existsSync4(file), sha256: sha256("") };
   if (view.exists) {
     try {
-      view.sha256 = sha256(readFileSync3(file, "utf8"));
+      view.sha256 = sha256(readFileSync5(file, "utf8"));
     } catch (error) {
-      view.readError = messageOf(error);
+      view.readError = messageOf2(error);
     }
   }
   return view;
 }
 function contextFor(cwd, config) {
-  return { cwd, config, store: new TaskStore(path4.join(cwd, config.workspaceDir)), now: () => /* @__PURE__ */ new Date() };
+  const { commonRoot, activePointer } = gitWorktreeRoots(cwd);
+  return { cwd, config, store: new TaskStore(path5.join(commonRoot, config.workspaceDir), activePointer), now: () => /* @__PURE__ */ new Date() };
 }
 function modelRow(key, eff) {
   const { config } = eff;
@@ -8847,6 +9476,7 @@ function planView(task, active2, spend) {
     ticketsTotal: total,
     ticketsFailed: runs.filter((run) => run.status === "failed").length,
     ...task.build?.branch ? { branch: task.build.branch } : {},
+    ...task.worktree?.path ? { worktree: task.worktree.path } : {},
     updatedAt: task.updatedAt,
     spendUsd: round(known + (spend?.estimatedUnknownUsd ?? 0)),
     knownUsd: known,
@@ -8882,30 +9512,110 @@ function scopeView(records, limitUsd, config) {
     knownUsd: summary.knownUsd,
     estimatedUnknownUsd: summary.estimatedUnknownUsd,
     spendUsd: round(summary.knownUsd + summary.estimatedUnknownUsd),
+    apiEquivalentUsd: round(summary.apiEquivalentUsd),
+    tokens: summary.tokens,
     // Calls whose cost is unknown: a model with no pricing row, or an agent that is not metered.
     unknown: summary.unknownRecords,
+    notMetered: summary.notMeteredRecords,
     limitUsd,
     status: budgetStatusFor(summary, limitUsd, config.budgets.softWarningRatio),
     ...breakdown(records, config)
   };
 }
+function latestSessionContext(shepherd, config, now) {
+  try {
+    let best;
+    let bestTime = -1;
+    for (const name of readdirSync3(path5.join(shepherd, "sessions"))) {
+      if (!name.endsWith(".json") || name.endsWith(".pending.json") || name.endsWith(".compact.json")) continue;
+      const note = readJson(path5.join(shepherd, "sessions", name));
+      if (!note || typeof note.contextTokens !== "number" || note.contextTokens <= 0 || !note.lastTurnEnd) continue;
+      const t = Date.parse(note.lastTurnEnd);
+      if (Number.isFinite(t) && t > bestTime) {
+        bestTime = t;
+        best = { lastTurnEnd: note.lastTurnEnd, contextTokens: note.contextTokens, ...note.model ? { model: note.model } : {} };
+      }
+    }
+    if (!best || bestTime < 0) return null;
+    const idleMs = Math.max(0, now.getTime() - bestTime);
+    if (idleMs > 24 * 60 * 6e4) return null;
+    const thresholdMs = Math.max(1, config.budgets.idleWarnMinutes || 5) * 6e4;
+    return {
+      contextTokens: best.contextTokens,
+      warm: idleMs < thresholdMs,
+      idleMinutes: Math.round(idleMs / 6e4),
+      ...best.model ? { model: best.model } : {}
+    };
+  } catch {
+    return null;
+  }
+}
+function activeTicketViews(task) {
+  if (!task?.plan?.tickets?.length) return [];
+  return task.plan.tickets.map((ticket) => {
+    const run = task.ticketRuns?.[ticket.id];
+    const running = task.build?.currentTicket === ticket.id;
+    return {
+      id: ticket.id,
+      title: ticket.title,
+      difficulty: ticketDifficulty(ticket),
+      status: running ? "in-progress" : run?.status ?? "pending",
+      ...run?.provider && run.model ? { model: ranModelText(run.provider, run.model) } : {},
+      review: reviewLabel(run),
+      ...run ? { costUsd: run.costUsd, ...run.notMetered ? { notMetered: true } : {} } : {},
+      ...run?.elapsedMs !== void 0 ? { elapsedMs: run.elapsedMs } : {},
+      ...run?.commit ? { commit: run.commit.slice(0, 7) } : {},
+      ...run?.error ? { error: run.error.slice(0, 200) } : {}
+    };
+  });
+}
+function findPlanFile(cwd, store, task) {
+  if (!task) return null;
+  const mirrored = path5.join(cwd, "_plans", `${displayName(task)}.md`);
+  if (existsSync4(mirrored)) return mirrored;
+  const internal = path5.join(store.taskDir(task.taskId), "plan.md");
+  return existsSync4(internal) ? internal : null;
+}
+function findLatestReviewFile(store, task) {
+  if (task) {
+    const taskRev = path5.join(store.taskDir(task.taskId), "reports", "review.md");
+    if (existsSync4(taskRev)) return taskRev;
+  }
+  const dir = path5.join(store.root, "reports");
+  try {
+    const md = readdirSync3(dir).filter((name) => name.startsWith("review-") && name.endsWith(".md")).sort().at(-1);
+    return md ? path5.join(dir, md) : null;
+  } catch {
+    return null;
+  }
+}
 function show(cwd) {
+  const { root, commonRoot, isWorktree } = gitWorktreeRoots(cwd);
   const eff = effective(cwd);
   const { config } = eff;
-  const paths = configPaths(cwd);
+  const ownPaths = configPaths(root);
+  const paths = !existsSync4(ownPaths.projectPath) && isWorktree ? { ...ownPaths, projectPath: configPaths(commonRoot).projectPath } : ownPaths;
   const ctx = contextFor(cwd, config);
+  const now = /* @__PURE__ */ new Date();
+  const shepherd = shepherdHome();
+  const workspace = path5.join(commonRoot, config.workspaceDir);
   const stored = ctx.store.readActive();
   const tasks = listTasks(ctx);
   const records = ctx.store.readLedger();
+  const dayKey = makeDayKey(config.budgets.timeZone);
+  const todayRecords = dailyRecordsOf([...registeredRepos(shepherd), workspace], now, config.budgets.timeZone);
   const spendByTask = summarize(records, { pricing: config.pricing, unknownCallUsd: config.budgets.unknownCallUsd }).byTask;
   const plans = [...tasks.filter((task) => !isClosed(task)), ...tasks.filter(isClosed).slice(0, RECENT_CLOSED)].map((task) => planView(task, stored, spendByTask[task.taskId]));
   const active2 = plans.find((plan) => plan.active && !plan.closed);
+  const activeTaskObj = active2 ? tasks.find((t) => t.taskId === active2.id) : void 0;
   const agents = agentTable(config);
+  const agentsBilling = Object.fromEntries(Object.entries(agents).map(([name, def]) => [name, def.billing ?? "api"]));
   return {
     ok: true,
     cwd,
     models: Object.fromEntries(MODEL_KEYS.map((key) => [key, modelRow(key, eff)])),
     modelsShadowedByProject: isRecord2(eff.project?.models),
+    reviewReviewers: (config.review.reviewers ?? []).map((spec) => normalizeReviewerSpec(spec)),
     local: {
       configured: !!config.local,
       baseUrl: config.local?.baseUrl ?? "",
@@ -8915,10 +9625,22 @@ function show(cwd) {
     },
     agents: Object.keys(agents),
     agentsWithModelFlag: Object.entries(agents).filter(([, def]) => !!def.modelFlag).map(([name]) => name),
-    budgets: { taskUsd: config.budgets.taskUsd, dailyUsd: config.budgets.dailyUsd, shadowedByProject: isRecord2(eff.project?.budgets) },
+    agentsBilling,
+    budgets: {
+      taskUsd: config.budgets.taskUsd,
+      dailyUsd: config.budgets.dailyUsd,
+      idleAction: config.budgets.idleAction ?? "warn",
+      shadowedByProject: isRecord2(eff.project?.budgets)
+    },
     plans,
+    activeTickets: activeTicketViews(activeTaskObj),
+    buildClaimRunning: activeTaskObj ? Boolean(ctx.store.liveBuildClaim(activeTaskObj.taskId)) : false,
+    liveBuild: activeTaskObj ? Boolean(ctx.store.liveBuildClaim(activeTaskObj.taskId) || ctx.store.buildInProgress(activeTaskObj.taskId)) : false,
+    planFile: findPlanFile(commonRoot, ctx.store, activeTaskObj),
+    latestReviewFile: findLatestReviewFile(ctx.store, activeTaskObj),
+    sessionContext: latestSessionContext(shepherd, config, now),
     costs: {
-      today: scopeView(recordsForDay(records, /* @__PURE__ */ new Date(), makeDayKey()), config.budgets.dailyUsd, config),
+      today: scopeView(todayRecords.length > 0 ? todayRecords : recordsForDay(records, now, dayKey), config.budgets.dailyUsd, config),
       plan: active2 ? { id: active2.id, name: active2.name, ...scopeView(records.filter((record) => record.taskId === active2.id), config.budgets.taskUsd, config) } : null,
       // provider/model pairs in the ledger with no pricing row (a local model is a known $0).
       unpriced: unpricedModels(records, config.pricing).filter((name) => !name.startsWith("local/"))
@@ -8927,8 +9649,8 @@ function show(cwd) {
     errors: eff.errors,
     files: {
       user: fileView(paths.userPath),
-      project: { path: paths.projectPath, display: displayPath(paths.projectPath), exists: existsSync3(paths.projectPath) },
-      workspace: path4.join(cwd, config.workspaceDir)
+      project: { path: paths.projectPath, display: displayPath(paths.projectPath), exists: existsSync4(paths.projectPath) },
+      workspace
     }
   };
 }
@@ -8966,7 +9688,7 @@ function editUserFile(cwd, expect, apply) {
   const file = configPaths(cwd).userPath;
   const display = displayPath(file);
   try {
-    const before = existsSync3(file) ? readFileSync3(file, "utf8") : "";
+    const before = existsSync4(file) ? readFileSync5(file, "utf8") : "";
     if (expect !== void 0 && expect !== sha256(before)) return refuse(`${display} changed since it was read; refresh and try again`);
     const crlf = before.includes("\r\n");
     const work = crlf ? before.replace(/\r\n/g, "\n") : before;
@@ -8984,25 +9706,61 @@ function editUserFile(cwd, expect, apply) {
     try {
       parseConfig(text, display);
     } catch (error) {
-      return refuse(`${display} would be rejected: ${messageOf(error)}`);
+      return refuse(`${display} would be rejected: ${messageOf2(error)}`);
     }
     const after = crlf ? text.replace(/\n/g, "\r\n") : text;
     const changed = after !== before;
     if (changed) atomicWrite(file, after);
     return { ok: true, changed, ...note ? { note } : {} };
   } catch (error) {
-    return refuse(messageOf(error));
+    return refuse(messageOf2(error));
   }
 }
 function withShow(cwd, result) {
   return result.ok === true ? { ...show(cwd), ...result } : result;
 }
 function setKey(cwd, key, value, expect) {
-  if (!SET_KEYS.includes(key)) return refuse(`${key} is not a setting this tool edits (${SET_KEYS.join(", ")})`);
+  const billingMatch = /^agents\.([A-Za-z0-9_-]+)\.billing$/.exec(key);
+  if (!SET_KEYS.includes(key) && !billingMatch) {
+    return refuse(`${key} is not a setting this tool edits (${SET_KEYS.join(", ")}, agents.<name>.billing)`);
+  }
   const parts = key.split(".");
   const text = value.trim();
   let parsed;
-  if (key.startsWith("models.")) {
+  if (billingMatch) {
+    if (text !== "") {
+      if (text !== "api" && text !== "subscription") return refuse(`${key} must be "api" or "subscription"`);
+      parsed = text;
+    }
+  } else if (key === "budgets.idleAction") {
+    if (text !== "") {
+      if (text !== "warn" && text !== "block" && text !== "off") return refuse(`${key} must be "warn", "block", or "off"`);
+      parsed = text;
+    }
+  } else if (key === "review.reviewers") {
+    if (text !== "") {
+      const cfg = effective(cwd).config;
+      let items;
+      if (text.startsWith("[")) {
+        try {
+          const raw = JSON.parse(text);
+          if (!Array.isArray(raw)) return refuse("review.reviewers must be a JSON array or comma-separated list");
+          items = raw;
+        } catch {
+          return refuse("review.reviewers is not valid JSON");
+        }
+      } else {
+        items = text.split(",").map((s) => s.trim()).filter(Boolean);
+      }
+      for (const item of items) {
+        const model = typeof item === "string" ? item : item?.model;
+        if (typeof model !== "string" || !model.trim()) return refuse("Each reviewer needs a non-empty model");
+        const problem = ticketModelProblem(model, cfg);
+        if (problem) return refuse(`review.reviewers (${model}): ${problem}`);
+      }
+      parsed = items.length > 0 ? items : void 0;
+    }
+  } else if (key.startsWith("models.")) {
     if (text !== "") {
       const problem = ticketModelProblem(text, effective(cwd).config);
       if (problem) return refuse(`${key}: ${problem}`);
@@ -9025,7 +9783,11 @@ function setKey(cwd, key, value, expect) {
     }
     if (key === "local.baseUrl" && !(0, import_yaml2.isMap)(doc.get("local", true))) throw new Error("There is no local server config yet: use Detect, then Add a model, which creates it with this URL.");
     ensureMap(doc, parts[0]);
-    doc.setIn(parts, parsed);
+    if (parts.length === 3) {
+      const sub = doc.getIn(parts.slice(0, 2), true);
+      if (!(0, import_yaml2.isMap)(sub)) doc.setIn(parts.slice(0, 2), doc.createNode({}));
+    }
+    doc.setIn(parts, Array.isArray(parsed) ? doc.createNode(parsed) : parsed);
     return void 0;
   });
   return withShow(cwd, result);
@@ -9109,7 +9871,7 @@ async function localDetect(baseUrl, options = {}) {
   }
   return { ok: true, reachable: false, baseUrl: given, models: [], error: `No answer from ${candidates.map((c) => `${c}/models`).join(" or ")}` };
 }
-var CURSOR_SMART_SETTINGS = ["cost", "balanced", "intelligence"];
+var CURSOR_SMART_SETTINGS2 = ["cost", "balanced", "intelligence"];
 var CURSOR_CACHE_FILE = "cursor-models.json";
 var CURSOR_CACHE_MS = 60 * 6e4;
 var CURSOR_LIST_TIMEOUT_MS = 4e3;
@@ -9120,18 +9882,18 @@ function listsAutoSmart(output) {
 async function cursorModels(options = {}) {
   const now = options.now ?? Date.now;
   const dir = options.home ?? shepherdHome();
-  const cache = path4.join(dir, CURSOR_CACHE_FILE);
+  const cache = path5.join(dir, CURSOR_CACHE_FILE);
   let smart;
   let source = "cache";
   try {
-    const saved = JSON.parse(readFileSync3(cache, "utf8"));
+    const saved = JSON.parse(readFileSync5(cache, "utf8"));
     if (typeof saved.at === "number" && typeof saved.smart === "boolean" && now() - saved.at < CURSOR_CACHE_MS && now() >= saved.at) smart = saved.smart;
   } catch {
     smart = void 0;
   }
   if (smart === void 0) {
     source = "cursor-agent";
-    const run = options.run ?? (async (file, args, timeoutMs) => (await execFileAsync(file, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 })).stdout);
+    const run = options.run ?? (async (file, args, timeoutMs) => (await execFileAsync2(file, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 })).stdout);
     try {
       smart = listsAutoSmart(await run("cursor-agent", ["--list-models"], CURSOR_LIST_TIMEOUT_MS));
     } catch {
@@ -9143,12 +9905,12 @@ async function cursorModels(options = {}) {
     } catch {
     }
   }
-  const models = ["auto", ...smart ? CURSOR_SMART_SETTINGS.map((setting) => `auto-smart[optimize_for=${setting}]`) : []];
+  const models = ["auto", ...smart ? CURSOR_SMART_SETTINGS2.map((setting) => `auto-smart[optimize_for=${setting}]`) : []];
   return { ok: true, source, smart, models: models.map((model) => ({ model, value: `agent:cursor-agent/${model}` })) };
 }
 async function currentBranch(cwd) {
   try {
-    return (await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd })).stdout.trim() || void 0;
+    return (await execFileAsync2("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd })).stdout.trim() || void 0;
   } catch {
     return void 0;
   }
@@ -9184,24 +9946,32 @@ async function planClose(cwd, id, force = false) {
   }
   return { ...show(cwd), ok: true };
 }
+async function agentModels(options = {}) {
+  return await discoverAgentModels(options);
+}
 var USAGE = `Usage:
   shepherd-config show          --cwd <dir>
-  shepherd-config set           --cwd <dir> --key <${SET_KEYS.join("|")}> --value <v> [--expect <sha256 of the user file>]
+  shepherd-config set           --cwd <dir> --key <${SET_KEYS.join("|")}|agents.<name>.billing> --value <v> [--expect <sha256 of the user file>]
   shepherd-config local-add     --cwd <dir> --id <model id> --context-window <n> [--base-url <url>] [--expect <sha256>]
   shepherd-config local-remove  --cwd <dir> --id <model id> [--expect <sha256>]
   shepherd-config local-detect  --base-url <url> [--cwd <dir>]
+  shepherd-config agent-models  [--agent <name>] [--refresh] [--cwd <dir>]
   shepherd-config cursor-models
   shepherd-config plan-activate --cwd <dir> --id <plan id>
   shepherd-config plan-close    --cwd <dir> --id <plan id> [--force]
 
 Prints one JSON document on stdout: { "ok": true, ... } or { "ok": false, "error": "..." }.
 A refused request is reported inside it (exit 0); the exit status is nonzero only for a usage error.`;
-function flag(args, name) {
+function flag(args, name, allowDashValue = false) {
   const at = args.indexOf(name);
-  return at >= 0 ? args[at + 1] : void 0;
+  if (at < 0) return void 0;
+  const val = args[at + 1];
+  if (val === void 0) return void 0;
+  if (!allowDashValue && val.startsWith("--")) return void 0;
+  return val;
 }
 function dirOf(cwd) {
-  return path4.resolve(cwd.startsWith("~/") ? path4.join(homedir3(), cwd.slice(2)) : cwd);
+  return path5.resolve(cwd.startsWith("~/") ? path5.join(homedir3(), cwd.slice(2)) : cwd);
 }
 function authFetch(cwd, baseUrl) {
   const local = effective(cwd).config.local;
@@ -9214,7 +9984,7 @@ function authFetch(cwd, baseUrl) {
   }
   return (input, init) => fetch(input, { ...init, headers: { ...init?.headers, authorization: `Bearer ${key}` } });
 }
-var COMMANDS = ["show", "set", "local-add", "local-remove", "local-detect", "cursor-models", "plan-activate", "plan-close"];
+var COMMANDS = ["show", "set", "local-add", "local-remove", "local-detect", "agent-models", "cursor-models", "plan-activate", "plan-close"];
 async function main(argv, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t)) {
   const [command, ...rest] = argv;
   const usage = (message) => {
@@ -9230,10 +10000,10 @@ ${USAGE}
   };
   if (!command || !COMMANDS.includes(command)) return usage(command ? `unknown command "${command}"` : "no command");
   const cwdArg = flag(rest, "--cwd");
-  if (command !== "local-detect" && command !== "cursor-models" && (!cwdArg || cwdArg.startsWith("--"))) return usage(`${command} needs --cwd <dir>`);
-  const cwd = cwdArg && !cwdArg.startsWith("--") ? dirOf(cwdArg) : "";
+  if (command !== "local-detect" && command !== "cursor-models" && command !== "agent-models" && !cwdArg) return usage(`${command} needs --cwd <dir>`);
+  const cwd = cwdArg ? dirOf(cwdArg) : "";
   const expect = flag(rest, "--expect");
-  if (rest.includes("--expect") && (expect === void 0 || expect.startsWith("--"))) return usage("--expect needs a sha256");
+  if (rest.includes("--expect") && expect === void 0) return usage("--expect needs a sha256");
   const id = flag(rest, "--id");
   try {
     switch (command) {
@@ -9241,7 +10011,7 @@ ${USAGE}
         return print(show(cwd));
       case "set": {
         const key = flag(rest, "--key");
-        const value = flag(rest, "--value");
+        const value = flag(rest, "--value", true);
         if (!key) return usage("set needs --key");
         if (value === void 0) return usage("set needs --value");
         return print(setKey(cwd, key, value, expect));
@@ -9262,6 +10032,12 @@ ${USAGE}
         const fetchImpl = cwd ? authFetch(cwd, baseUrl) : void 0;
         return print(await localDetect(baseUrl, { ...configured ? { configured } : {}, ...fetchImpl ? { fetchImpl } : {} }));
       }
+      case "agent-models": {
+        const agent = flag(rest, "--agent");
+        const refresh = rest.includes("--refresh");
+        const pricing = cwd ? effective(cwd).config.pricing : void 0;
+        return print(await agentModels({ ...agent ? { agent } : {}, refresh, ...pricing ? { pricing } : {} }));
+      }
       case "cursor-models":
         return print(await cursorModels());
       case "plan-activate":
@@ -9270,7 +10046,7 @@ ${USAGE}
         return print(command === "plan-activate" ? await planActivate(cwd, id) : await planClose(cwd, id, rest.includes("--force")));
     }
   } catch (error) {
-    return print(refuse(messageOf(error)));
+    return print(refuse(messageOf2(error)));
   }
   return 0;
 }

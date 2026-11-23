@@ -2,11 +2,12 @@ import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { parse } from "yaml";
-import { parseModelRef, parseTicketModel, ticketModelProblem, type AgentDef } from "./agents.js";
+import { AGENT_DEFAULT_PROVIDER, canonicalModelId, DEFAULT_PRICING, inferProviderForModel } from "./pricing-defaults.js";
+import { BUILTIN_AGENTS, parseModelRef, parseTicketModel, ticketModelProblem, type AgentDef } from "./agents.js";
 import { containsSecret, redact } from "./redact.js";
 import { WorkflowError } from "./domain.js";
 
-export { parseModelRef };
+export { parseModelRef, DEFAULT_PRICING, canonicalModelId, inferProviderForModel };
 
 export interface PricingRow {
   provider: string;
@@ -49,6 +50,27 @@ export interface ModelsConfig {
 
 export const MODEL_KEYS = ["low", "medium", "high", "review"] as const;
 
+/** One reviewer entry in `review.reviewers` or `review.highRiskReviewers`: a model string or an object with optional display name and focus lens. */
+export type ReviewerSpec = string | { model: string; name?: string; focus?: string };
+
+/** Normalized reviewer specification. */
+export interface NormalizedReviewer {
+  model: string;
+  name?: string;
+  focus?: string;
+}
+
+export function normalizeReviewerSpec(spec: ReviewerSpec): NormalizedReviewer {
+  return typeof spec === "string"
+    ? { model: spec }
+    : { model: spec.model, ...(spec.name ? { name: spec.name } : {}), ...(spec.focus ? { focus: spec.focus } : {}) };
+}
+
+export interface WorktreeConfig {
+  default: "ask" | "always" | "never";
+  dir?: string;
+}
+
 export interface WorkflowConfig {
   workspaceDir: string;
   models: ModelsConfig;
@@ -66,6 +88,8 @@ export interface WorkflowConfig {
   };
   /** /build runs each ticket as a herdr sub-agent of the terminal it was started from (no pane). `visibleTabs: true` gives each its own labelled tab instead. */
   build: { visibleTabs: boolean };
+  /** Optional planning worktree settings (`default`: ask | always | never, `dir`: base directory; defaults to Herdr's worktree dir). */
+  worktree?: WorktreeConfig;
   /** /build names each task's branch `<branchPrefix>/<task name>` (with -2, -3 when taken), always from the default branch. */
   branchPrefix: string;
   budgets: {
@@ -81,15 +105,26 @@ export interface WorkflowConfig {
     idleWarnMinutes: number;
     /** The idle warning applies only at this many context tokens or more. 0 disables. */
     idleWarnTokens: number;
+    /** What happens when the idle-cache threshold is crossed: "warn" (non-blocking nudge, default), "block" (pause once per idle stretch), or "off". */
+    idleAction?: "warn" | "block" | "off";
+    /** Optional IANA timezone for daily budget windows (e.g. "America/New_York"). Unset uses UTC. */
+    timeZone?: string;
   };
   checks: CheckConfig[];
   /** Commands /review runs in the repo root before the checks (an install, for example). Same rules as checks. */
   setup: CheckConfig[];
   /**
-   * The model pass of /review (`model`): the review model, in a herdr sub-agent, reads the branch diff and lists advisory findings. `tickets: false`
-   * turns the per-ticket review gate of /build off. `timeoutMs` is how long one per-ticket review turn may take (never less than 15 minutes; the /review model pass and a fix run have no limit of their own).
+   * The model pass of /review (`model`): the review model(s), in herdr sub-agents, read the branch diff and list advisory findings. `tickets: false`
+   * turns the per-ticket review gate of /build off. `timeoutMs` is how long one per-ticket review turn may take (never less than 15 minutes).
+   * `reviewers` configures a multi-model review panel for `/review`; `highRiskReviewers` optionally escalates per-ticket reviews on `high` / security-sensitive tickets.
    */
-  review: { model: boolean; tickets: boolean; timeoutMs: number };
+  review: {
+    model: boolean;
+    tickets: boolean;
+    timeoutMs: number;
+    reviewers?: ReviewerSpec[];
+    highRiskReviewers?: ReviewerSpec[];
+  };
   pricing: PricingRow[];
   /** Notes from loading, for example settings that were ignored. Shown at session start. */
   warnings?: string[];
@@ -113,11 +148,11 @@ const DEFAULTS: WorkflowConfig = {
   routing: { maxEscalations: 2, maxTicketTurns: 100 },
   build: { visibleTabs: false },
   branchPrefix: "shepherd",
-  budgets: { taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: DEFAULT_UNKNOWN_CALL_USD, idleWarnMinutes: 60, idleWarnTokens: 100_000 },
+  budgets: { taskUsd: 20, dailyUsd: 75, softWarningRatio: 0.8, unknownCallUsd: DEFAULT_UNKNOWN_CALL_USD, idleWarnMinutes: 60, idleWarnTokens: 100_000, idleAction: "warn" },
   checks: [],
   setup: [],
   review: { model: true, tickets: true, timeoutMs: 300_000 },
-  pricing: [],
+  pricing: [...DEFAULT_PRICING],
 };
 
 /** The top-level sections and, for the nested ones, the keys inside them. Anything else is ignored with a warning. */
@@ -125,19 +160,20 @@ const KNOWN_KEYS: Record<string, readonly string[] | undefined> = {
   models: MODEL_KEYS,
   local: ["baseUrl", "apiKeyEnv", "models"],
   agents: undefined,
-  budgets: ["taskUsd", "dailyUsd", "softWarningRatio", "unknownCallUsd", "idleWarnMinutes", "idleWarnTokens"],
+  budgets: ["taskUsd", "dailyUsd", "softWarningRatio", "unknownCallUsd", "idleWarnMinutes", "idleWarnTokens", "idleAction", "timeZone"],
   pricing: undefined,
-  review: ["model", "tickets", "timeoutMs"],
+  review: ["model", "tickets", "timeoutMs", "reviewers", "highRiskReviewers"],
   checks: undefined,
   setup: undefined,
   build: ["visibleTabs"],
+  worktree: ["default", "dir"],
   branchPrefix: undefined,
   workspaceDir: undefined,
   routing: ["maxEscalations", "maxTicketTurns"],
 };
 
-/** Sections that only the user file may set: a project file ships with a cloned repo and must not choose servers, commands or prices. */
-export const USER_ONLY_SECTIONS = ["local", "agents", "pricing", "workspaceDir"] as const;
+/** Sections that only the user file may set: a project file ships with a cloned repo and must not choose servers, commands, prices or checkout paths. */
+export const USER_ONLY_SECTIONS = ["local", "agents", "pricing", "workspaceDir", "worktree"] as const;
 
 export const CONFIG_DOCS = "docs/configuration.md";
 
@@ -255,6 +291,8 @@ function isLoopbackHttpUrl(value: string): boolean {
   return !!url && url.protocol === "http:" && url.username === "" && url.password === "" && isLoopbackHost(url.hostname);
 }
 
+const AGENT_KEYS = new Set(["run", "modelFlag", "billing", "routingFeePerMillionUsd"]);
+
 function normalizeAgents(value: unknown, where: string): Record<string, AgentDef> | undefined {
   if (value === undefined || value === null) return undefined;
   if (!isRecord(value)) invalid(where, "agents", "must be a mapping of agent names");
@@ -262,12 +300,23 @@ function normalizeAgents(value: unknown, where: string): Record<string, AgentDef
   for (const [name, def] of Object.entries(value)) {
     const field = `agents.${name}`;
     if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) invalid(where, field, "is not a valid agent name (letters, digits, - and _)");
-    if (!isRecord(def)) invalid(where, field, "must be a mapping with run (and optionally modelFlag)");
-    for (const key of Object.keys(def)) if (key !== "run" && key !== "modelFlag") invalid(where, `${field}.${key}`, "is not a known key (run, modelFlag)");
-    const run = stringArray(def.run, `${field}.run`, where);
+    if (!isRecord(def)) invalid(where, field, "must be a mapping with run (and optionally modelFlag, billing, routingFeePerMillionUsd)");
+    for (const key of Object.keys(def)) if (!AGENT_KEYS.has(key)) invalid(where, `${field}.${key}`, "is not a known key (run, modelFlag, billing, routingFeePerMillionUsd)");
+    const builtin = BUILTIN_AGENTS[name];
+    const run = def.run !== undefined ? stringArray(def.run, `${field}.run`, where) : builtin ? [...builtin.run] : stringArray(def.run, `${field}.run`, where);
     if (run.length === 0) invalid(where, `${field}.run`, "must name the program to run");
     if (def.modelFlag !== undefined && (typeof def.modelFlag !== "string" || !def.modelFlag.startsWith("-"))) invalid(where, `${field}.modelFlag`, "must be a flag such as --model");
-    out[name] = { run, ...(def.modelFlag !== undefined ? { modelFlag: def.modelFlag as string } : {}) };
+    if (def.billing !== undefined && def.billing !== "api" && def.billing !== "subscription") invalid(where, `${field}.billing`, 'must be "api" or "subscription"');
+    if (def.routingFeePerMillionUsd !== undefined && (typeof def.routingFeePerMillionUsd !== "number" || !Number.isFinite(def.routingFeePerMillionUsd) || def.routingFeePerMillionUsd < 0)) {
+      invalid(where, `${field}.routingFeePerMillionUsd`, "must be a finite number >= 0");
+    }
+    const modelFlag = def.modelFlag !== undefined ? (def.modelFlag as string) : builtin?.modelFlag;
+    out[name] = {
+      run,
+      ...(modelFlag !== undefined ? { modelFlag } : {}),
+      ...(def.billing !== undefined ? { billing: def.billing } : {}),
+      ...(def.routingFeePerMillionUsd !== undefined ? { routingFeePerMillionUsd: def.routingFeePerMillionUsd } : {}),
+    };
   }
   return out;
 }
@@ -345,12 +394,32 @@ function normalizeRaw(input: unknown, where: string, ignored: Set<string>): Reco
   if (out.workspaceDir !== undefined && (typeof out.workspaceDir !== "string" || out.workspaceDir.trim() === "")) invalid(where, "workspaceDir", "must be a non-empty path");
   const buildSection = section(out, "build", where);
   if (buildSection && buildSection.visibleTabs !== undefined && typeof buildSection.visibleTabs !== "boolean") invalid(where, "build.visibleTabs", "must be a boolean");
+  const worktreeSection = section(out, "worktree", where);
+  if (worktreeSection) {
+    if (worktreeSection.default !== undefined && worktreeSection.default !== "ask" && worktreeSection.default !== "always" && worktreeSection.default !== "never") {
+      invalid(where, "worktree.default", 'must be "ask", "always", or "never"');
+    }
+    if (worktreeSection.dir !== undefined && (typeof worktreeSection.dir !== "string" || worktreeSection.dir.trim() === "")) {
+      invalid(where, "worktree.dir", "must be a non-empty path");
+    }
+  }
   const budgets = section(out, "budgets", where);
   if (budgets) {
     for (const key of ["taskUsd", "dailyUsd"]) checkNumber(budgets, key, where, { exclusiveMin: 0 }, "budgets");
     checkNumber(budgets, "softWarningRatio", where, { min: 0, max: 1 }, "budgets");
     checkNumber(budgets, "unknownCallUsd", where, { min: 0 }, "budgets");
     for (const key of ["idleWarnMinutes", "idleWarnTokens"]) checkNumber(budgets, key, where, { min: 0, integer: true }, "budgets");
+    if (budgets.idleAction !== undefined && budgets.idleAction !== "warn" && budgets.idleAction !== "block" && budgets.idleAction !== "off") {
+      invalid(where, "budgets.idleAction", 'must be "warn", "block", or "off"');
+    }
+    if (budgets.timeZone !== undefined) {
+      if (typeof budgets.timeZone !== "string" || budgets.timeZone.trim() === "") invalid(where, "budgets.timeZone", "must be an IANA timezone name such as America/New_York");
+      try {
+        new Intl.DateTimeFormat("en-CA", { timeZone: budgets.timeZone });
+      } catch {
+        invalid(where, "budgets.timeZone", `is not a valid IANA timezone (${budgets.timeZone})`);
+      }
+    }
   }
   for (const key of ["checks", "setup"] as const) {
     const list = out[key];
@@ -370,6 +439,23 @@ function normalizeRaw(input: unknown, where: string, ignored: Set<string>): Reco
     if (review.model !== undefined && typeof review.model !== "boolean") invalid(where, "review.model", "must be a boolean");
     if (review.tickets !== undefined && typeof review.tickets !== "boolean") invalid(where, "review.tickets", "must be a boolean");
     checkNumber(review, "timeoutMs", where, { min: 1000, integer: true }, "review");
+    for (const key of ["reviewers", "highRiskReviewers"] as const) {
+      const list = review[key];
+      if (list === undefined) continue;
+      if (!Array.isArray(list)) invalid(where, `review.${key}`, "must be a list of models or { model, name?, focus? } mappings");
+      list.forEach((entry, index) => {
+        const field = `review.${key}[${index}]`;
+        if (typeof entry === "string") {
+          if (!entry.trim()) invalid(where, field, "must be a non-empty model string");
+          return;
+        }
+        if (!isRecord(entry) || typeof entry.model !== "string" || !entry.model.trim()) {
+          invalid(where, field, "must be a model string or a mapping with a non-empty string model");
+        }
+        if (entry.name !== undefined && (typeof entry.name !== "string" || !entry.name.trim())) invalid(where, `${field}.name`, "must be a non-empty string");
+        if (entry.focus !== undefined && (typeof entry.focus !== "string" || !entry.focus.trim())) invalid(where, `${field}.focus`, "must be a non-empty string");
+      });
+    }
   }
   const local = normalizeLocal(out.local, where);
   if (local) out.local = local;
@@ -385,16 +471,26 @@ function ignoredWarning(ignored: Set<string>): string[] {
   return [`Ignored settings that are no longer used: ${[...ignored].join(", ")}. See ${CONFIG_DOCS} for the current settings.`];
 }
 
-/** Throws unless every `models` value is valid under the agents the merged config defines. */
+/** Throws unless every `models` value and reviewer list entry is valid under the agents the merged config defines. */
 function validateModels(config: WorkflowConfig, where: string): void {
   for (const key of MODEL_KEYS) {
     const problem = ticketModelProblem(config.models[key], config);
     if (problem) invalid(where, `models.${key}`, `is not valid: ${problem}`);
   }
+  for (const key of ["reviewers", "highRiskReviewers"] as const) {
+    const list = config.review[key];
+    if (!list) continue;
+    list.forEach((entry, index) => {
+      const model = normalizeReviewerSpec(entry).model;
+      const problem = ticketModelProblem(model, config);
+      if (problem) invalid(where, `review.${key}[${index}]`, `is not valid: ${problem}`);
+    });
+  }
 }
 
 function build(norm: Record<string, unknown>): WorkflowConfig {
   const obj = (key: string): Record<string, unknown> => (isRecord(norm[key]) ? (norm[key] as Record<string, unknown>) : {});
+  const worktreeRaw = isRecord(norm.worktree) ? (norm.worktree as Record<string, unknown>) : undefined;
   const config: WorkflowConfig = {
     workspaceDir: typeof norm.workspaceDir === "string" ? norm.workspaceDir : DEFAULTS.workspaceDir,
     models: { ...DEFAULT_MODELS, ...obj("models") } as ModelsConfig,
@@ -402,12 +498,14 @@ function build(norm: Record<string, unknown>): WorkflowConfig {
     agents: isRecord(norm.agents) ? (norm.agents as Record<string, AgentDef>) : {},
     routing: { ...DEFAULTS.routing, ...obj("routing") } as WorkflowConfig["routing"],
     build: { ...DEFAULTS.build, ...obj("build") } as WorkflowConfig["build"],
+    ...(worktreeRaw ? { worktree: { default: (worktreeRaw.default as WorktreeConfig["default"]) ?? "ask", ...(typeof worktreeRaw.dir === "string" ? { dir: worktreeRaw.dir } : {}) } } : {}),
     branchPrefix: typeof norm.branchPrefix === "string" ? norm.branchPrefix : DEFAULTS.branchPrefix,
     budgets: { ...DEFAULTS.budgets, ...obj("budgets") } as WorkflowConfig["budgets"],
     checks: Array.isArray(norm.checks) ? (norm.checks as CheckConfig[]).map((check) => ({ ...check, args: check.args ?? [] })) : DEFAULTS.checks,
     setup: Array.isArray(norm.setup) ? (norm.setup as CheckConfig[]).map((check) => ({ ...check, args: check.args ?? [] })) : DEFAULTS.setup,
     review: { ...DEFAULTS.review, ...obj("review") } as WorkflowConfig["review"],
-    pricing: Array.isArray(norm.pricing) ? (norm.pricing as PricingRow[]) : [],
+    // Built-in 2026 pricing defaults sit underneath user rows; user rows always win on matching (provider, model, effectiveFrom) or later dates.
+    pricing: [...DEFAULT_PRICING, ...(Array.isArray(norm.pricing) ? (norm.pricing as PricingRow[]) : [])],
   };
   return config;
 }
@@ -502,10 +600,16 @@ function readConfigText(text: string, file: string, ignored: Set<string>): Recor
   return normalizeRaw(parsed ?? {}, file, ignored);
 }
 
-export function loadConfig(cwd: string): WorkflowConfig {
-  const { projectPath, userPath } = configPaths(cwd);
+export function loadConfig(cwd: string, fallbackProjectRoot?: string): WorkflowConfig {
+  const { projectPath: ownProjectPath, userPath } = configPaths(cwd);
+  const useFallback =
+    !existsSync(ownProjectPath) &&
+    !!fallbackProjectRoot &&
+    path.resolve(fallbackProjectRoot) !== path.resolve(cwd);
+  const projectBase = useFallback ? path.join(fallbackProjectRoot!, ".shepherd", "config") : path.join(cwd, ".shepherd", "config");
+  const projectPath = useFallback ? pickYaml(projectBase).path : ownProjectPath;
   const warnings: string[] = [];
-  for (const base of [path.join(cwd, ".shepherd", "config"), path.join(homedir(), ".claude", "shepherd")]) {
+  for (const base of [projectBase, path.join(homedir(), ".claude", "shepherd")]) {
     const { path: used, ignored } = pickYaml(base);
     if (ignored) warnings.push(`${displayPath(ignored)} is ignored because ${displayPath(used)} exists; delete one of them.`);
   }
@@ -526,9 +630,16 @@ export function loadConfig(cwd: string): WorkflowConfig {
   return config;
 }
 
+const BUILTIN_PRICE_ROWS = new WeakSet<PricingRow>(DEFAULT_PRICING);
+
+/** True when `row` came from the built-in `DEFAULT_PRICING` table rather than user config. */
+export function isBuiltinPriceRow(row: PricingRow): boolean {
+  return BUILTIN_PRICE_ROWS.has(row);
+}
+
 interface PriceIndex {
   length: number;
-  byKey: Map<string, { day: string; row: PricingRow }[]>;
+  byKey: Map<string, { user: { day: string; row: PricingRow }[]; builtin: { day: string; row: PricingRow }[] }>;
 }
 const priceIndexes = new WeakMap<PricingRow[], PriceIndex>();
 
@@ -544,35 +655,58 @@ function priceIndex(pricing: PricingRow[]): PriceIndex {
     const day = normalizeEffectiveFrom(row.effectiveFrom);
     if (!day) return;
     const key = priceKey(row.provider, row.model);
-    const list = byKey.get(key);
-    if (list) list.push({ day, row });
-    else byKey.set(key, [{ day, row }]);
+    let bucket = byKey.get(key);
+    if (!bucket) {
+      bucket = { user: [], builtin: [] };
+      byKey.set(key, bucket);
+    }
+    (BUILTIN_PRICE_ROWS.has(row) ? bucket.builtin : bucket.user).push({ day, row });
   });
+  const byDay = (a: { day: string }, b: { day: string }) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0);
   // Array.prototype.sort is stable, so among equal dates the later row in the file stays last and wins.
-  for (const list of byKey.values()) list.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+  for (const bucket of byKey.values()) {
+    bucket.user.sort(byDay);
+    bucket.builtin.sort(byDay);
+  }
   const index = { length: pricing.length, byKey };
   priceIndexes.set(pricing, index);
   return index;
 }
 
-/**
- * Newest row for provider+model whose effectiveFrom is on or before `at` (UTC day).
- * Equal effective dates resolve to the later row in the list. The index is built once per array.
- */
-export function priceFor(pricing: PricingRow[], provider: string, model: string, at: Date): PricingRow | undefined {
-  if (Number.isNaN(at.getTime())) return undefined;
-  const list = priceIndex(pricing).byKey.get(priceKey(provider, model));
-  // A model on your own machine has no per-token charge: an unpriced local model is a known $0, not unknown.
-  if (!list) return provider === "local" ? { provider, model, effectiveFrom: "1970-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0 } : undefined;
-  const day = at.toISOString().slice(0, 10);
+function newestOnOrBefore(list: { day: string; row: PricingRow }[], day: string): PricingRow | undefined {
   let lo = 0;
   let hi = list.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (list[mid].day <= day) lo = mid + 1;
+    if (list[mid]!.day <= day) lo = mid + 1;
     else hi = mid;
   }
-  return lo === 0 ? undefined : list[lo - 1].row;
+  return lo === 0 ? undefined : list[lo - 1]!.row;
+}
+
+/**
+ * Newest row for provider+model whose effectiveFrom is on or before `at` (UTC day).
+ * User-configured rows always take precedence over built-in defaults (even when a user row is dated earlier
+ * than a 2026 built-in default); if no user row is effective yet on `at`, built-in defaults apply.
+ * Tries exact match first, then falls back to `canonicalModelId`.
+ */
+export function priceFor(pricing: PricingRow[], provider: string, model: string, at: Date): PricingRow | undefined {
+  if (Number.isNaN(at.getTime())) return undefined;
+  const index = priceIndex(pricing);
+  const canonical = canonicalModelId(provider, model);
+  const exactBucket = index.byKey.get(priceKey(provider, model));
+  const canonBucket = canonical !== model ? index.byKey.get(priceKey(provider, canonical)) : undefined;
+  if (!exactBucket && !canonBucket) {
+    // A model on your own machine has no per-token charge: an unpriced local model is a known $0, not unknown.
+    return provider === "local" ? { provider, model, effectiveFrom: "1970-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0 } : undefined;
+  }
+  const day = at.toISOString().slice(0, 10);
+  return (
+    (exactBucket ? newestOnOrBefore(exactBucket.user, day) : undefined) ??
+    (canonBucket ? newestOnOrBefore(canonBucket.user, day) : undefined) ??
+    (exactBucket ? newestOnOrBefore(exactBucket.builtin, day) : undefined) ??
+    (canonBucket ? newestOnOrBefore(canonBucket.builtin, day) : undefined)
+  );
 }
 
 const MICRO = 1_000_000;
@@ -593,8 +727,9 @@ export function estimateUsd(
 ): number | null {
   if (!row) return null;
   if (usage.input === null || usage.output === null) return null;
-  const cachePriced = (row.cacheReadPerMillionUsd ?? 0) > 0 || (row.cacheWritePerMillionUsd ?? 0) > 0;
-  if (cachePriced && (usage.cacheRead === null || usage.cacheWrite === null)) return null;
+  // Require only the cache counter(s) the provider actually prices separately (OpenAI/Google/xAI price cacheRead only).
+  if ((row.cacheReadPerMillionUsd ?? 0) > 0 && usage.cacheRead === null) return null;
+  if ((row.cacheWritePerMillionUsd ?? 0) > 0 && usage.cacheWrite === null) return null;
   // A row without cache rates bills cache tokens at the input rate, never free.
   // Prices become integer micro-USD per million tokens, so tokens * price is an exact integer
   // sum and dividing by one million yields micro-USD for the call.
@@ -606,15 +741,28 @@ export function estimateUsd(
   return fromMicroUsd(Math.round(scaled / MICRO));
 }
 
-/** `provider/id` of every Pi model the config uses (the four `models`) that has no pricing row at all. Local models are $0 and agents are not metered. */
-export function unpricedConfigModels(config: WorkflowConfig): string[] {
-  const priced = new Set(config.pricing.map((row) => `${row.provider}/${row.model}`));
+/** `provider/id` of every model the config uses (Pi models and metered external agents with explicit models) that has no pricing row at all. Local models are $0. */
+export function unpricedConfigModels(config: WorkflowConfig, at: Date = new Date()): string[] {
   const out = new Set<string>();
   for (const key of MODEL_KEYS) {
     const model = parseTicketModel(config.models[key], config);
-    if (model.kind !== "pi" || model.provider === "local") continue;
-    const name = `${model.provider}/${model.id}`;
-    if (!priced.has(name)) out.add(name);
+    if (model.kind === "pi") {
+      if (model.provider === "local") continue;
+      if (!priceFor(config.pricing, model.provider, model.id, at)) out.add(`${model.provider}/${model.id}`);
+      continue;
+    }
+    if (!model.model) continue;
+    if (model.name === "cursor-agent") {
+      const lower = model.model.toLowerCase();
+      if (lower === "auto" || lower.startsWith("auto-smart")) continue;
+      const inferred = inferProviderForModel(model.model);
+      if (inferred.provider !== "cursor" && !priceFor(config.pricing, inferred.provider, inferred.model, at)) {
+        out.add(`${inferred.provider}/${inferred.model}`);
+      }
+      continue;
+    }
+    const provider = AGENT_DEFAULT_PROVIDER[model.name];
+    if (provider && !priceFor(config.pricing, provider, model.model, at)) out.add(`${provider}/${model.model}`);
   }
   return [...out];
 }

@@ -1,5 +1,8 @@
-import { isDifficulty, WorkflowError, type AcceptedClassification, type CommandResult, type Complexity, type TaskState } from "../domain.js";
+import { mkdirSync } from "node:fs";
+import path from "node:path";
+import { isDifficulty, WorkflowError, type AcceptedClassification, type CommandResult, type Complexity, type TaskState, type WorktreeRecord } from "../domain.js";
 import { redact, redactUnknown } from "../redact.js";
+import { atomicWrite } from "../storage/store.js";
 import { defaultClassification, isSecuritySensitive, plannerClassification, type PlannerRating } from "./classification.js";
 import { initAgentWatermark } from "./agent-sweep.js";
 import { budgetState } from "./budget.js";
@@ -7,6 +10,7 @@ import { active, done, fail, guard, iso, type WorkflowContext } from "./context.
 import { move } from "./machine.js";
 import { announceParked, newTask, retireCurrent } from "./planning.js";
 import { activeTask, displayName } from "./tasks.js";
+import { resolveWorktreeBaseDir, worktreePathFor } from "./worktree.js";
 
 /** `interview.json` in the task folder: the request a /plan was started with. Older files also hold `rounds` of answered questions, which nothing reads now. */
 export interface InterviewFile {
@@ -74,8 +78,23 @@ function toPlanning(task: TaskState, at: string): TaskState {
   return move(direct.includes(task.phase) ? task : move(task, "AWAITING_PLAN_APPROVAL", at), "PLANNING", at);
 }
 
+export interface StartPlanOptions {
+  /** Create a linked git worktree for this plan: `true` uses the configured/Herdr worktree directory, or pass an explicit directory path. */
+  worktree?: boolean | string;
+  /** Base branch to branch the worktree from (default: repository's default branch). */
+  base?: string;
+}
+
+async function freshPlanBranch(ctx: WorkflowContext, name: string): Promise<string> {
+  const stem = `${ctx.config.branchPrefix}/${name}`;
+  for (let n = 1; ; n += 1) {
+    const branch = n === 1 ? stem : `${stem}-${n}`;
+    if (!(await ctx.git.branchExists(branch))) return branch;
+  }
+}
+
 /** `shepherd plan start`: starts (or resumes) the plan. Claude Code drafts the spec and tickets; nothing here runs a model. */
-export function startPlan(ctx: WorkflowContext, request: string): Promise<CommandResult> {
+export function startPlan(ctx: WorkflowContext, request: string, options: StartPlanOptions = {}): Promise<CommandResult> {
   return guard(async () => {
     const current = await activeTask(ctx);
     const text = request.trim();
@@ -83,7 +102,7 @@ export function startPlan(ctx: WorkflowContext, request: string): Promise<Comman
     const safe = redact(text);
     const at = iso(ctx);
     // Resume: no request, or the same request again, and a plan already being drafted. A different request is a new task.
-    if (current?.planning && (!text || current.request === safe)) {
+    if (!options.worktree && current?.planning && (!text || current.request === safe)) {
       if (readInterview(ctx, current.taskId)) {
         await ctx.store.update(current.taskId, "plan resumed", (task) => toPlanning(task, at));
         return done(`Resuming the plan for ${displayName(current)}. ${planningStatusText(ctx) ?? ""}`.trim(), { taskId: current.taskId, resumed: true });
@@ -96,11 +115,44 @@ export function startPlan(ctx: WorkflowContext, request: string): Promise<Comman
     const parked = await retireCurrent(ctx, current);
     // Until `plan spec` saves the planner's rating, the task has the default classification.
     const classification: AcceptedClassification = defaultClassification();
-    const state = await ctx.store.create({ ...newTask(ctx, safe, at), classification, planning: { stage: "interview" } });
+    const fresh = newTask(ctx, safe, at);
+    let worktree: WorktreeRecord | undefined;
+    const wantWorktree = options.worktree !== undefined ? options.worktree : ctx.config.worktree?.default === "always" && !(await ctx.git.isLinkedWorktree().catch(() => false));
+    if (wantWorktree) {
+      const gitProblem = await ctx.git.preflight();
+      if (gitProblem) return fail("GIT_NOT_READY", gitProblem);
+      const base = options.base || (await ctx.git.defaultBranch());
+      const baseSha = await ctx.git.startPoint(base);
+      const branch = await freshPlanBranch(ctx, fresh.name ?? fresh.taskId);
+      const common = await ctx.git.commonRoot();
+      const targetPath =
+        typeof wantWorktree === "string" && wantWorktree.trim()
+          ? path.resolve(ctx.cwd, wantWorktree.trim())
+          : worktreePathFor(common, branch, resolveWorktreeBaseDir(ctx.config, ctx.agentLogHome));
+      mkdirSync(path.dirname(targetPath), { recursive: true });
+      await ctx.git.worktreeAdd(targetPath, branch, baseSha);
+      worktree = { path: targetPath, branch, base, baseSha, createdAt: at };
+    }
+    const state = await ctx.store.create({
+      ...fresh,
+      classification,
+      planning: { stage: "interview" },
+      ...(worktree ? { worktree, build: { branch: worktree.branch, base: worktree.base, baseSha: worktree.baseSha } } : {}),
+    });
+    if (worktree) {
+      // Write the per-worktree active-task pointer inside its git dir so sessions opened in that worktree immediately resolve this task.
+      try {
+        const wtGitDir = await ctx.git.gitDir(worktree.path);
+        atomicWrite(path.join(wtGitDir, "shepherd-active.json"), JSON.stringify({ taskId: state.taskId, seenBranch: worktree.branch }, null, 2));
+      } catch {
+        /* fallback: activeTask still resolves from the worktree's checked-out branch */
+      }
+    }
     announceParked(ctx, parked);
     await initAgentWatermark(ctx);
     writeInterview(ctx, state.taskId, { version: 1, request: safe });
-    return done(`Planning ${displayName(state)}. ${planningStatusText(ctx)}`, { taskId: state.taskId });
+    const wtNote = worktree ? ` Worktree created at ${worktree.path} on branch ${worktree.branch} (base ${worktree.base}).` : "";
+    return done(`Planning ${displayName(state)}. ${planningStatusText(ctx)}${wtNote}`, { taskId: state.taskId, ...(worktree ? { worktree } : {}) });
   });
 }
 
@@ -257,6 +309,9 @@ export async function requestPlanChanges(ctx: WorkflowContext, task: TaskState, 
   await ctx.store.update(task.taskId, "plan changes requested", (current) => ({
     ...toPlanning(current, at),
     approvedVersion: undefined,
+    ...(current.approvedVersion !== undefined || current.lastApprovedVersion !== undefined
+      ? { lastApprovedVersion: Math.max(current.approvedVersion ?? 0, current.lastApprovedVersion ?? 0) }
+      : {}),
     planning: { stage: "interview", revision: text },
   }));
   return done("Sent the plan back for changes. The revised plan will be shown for review again.", { taskId: task.taskId });

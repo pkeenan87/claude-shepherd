@@ -70,7 +70,7 @@ describe("loadConfig layering", () => {
     const config = loadConfig(project);
     expect(config.models).toEqual({ low: "xai/grok-4.7", medium: "openai/gpt-6.1-sol", high: "openai/gpt-6.1-sol", review: "anthropic/claude-opus-5-5" });
     expect(config.local?.models[0]?.id).toBe("Qwen3.8-27B");
-    expect(config.pricing).toEqual([]);
+    expect(config.pricing.some((row) => row.model === "gpt-6.1-sol" && row.inputPerMillionUsd === 0)).toBe(false);
     expect(config.warnings?.join("\n")).toContain("Ignored project pricing");
   });
 

@@ -12,6 +12,7 @@
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fromMicroUsd, toMicroUsd } from "../config.js";
 import type { AgentLedgerEntry } from "../runner/agent-usage.js";
 import { listAgentLogs, meteredEntries, readAgentLog, repoPathForms } from "../runner/agent-usage.js";
 import type { AgentWatermark } from "../storage/store.js";
@@ -132,9 +133,10 @@ export async function sweepAgentLogs(ctx: WorkflowContext, options: SweepOptions
           if (entries.length === 0) continue;
           const records = recordAgentUsage(ctx, { reason, entries, tier: "agent" });
           const known = records.filter((row) => row.actualUsd !== null);
-          const usd = known.reduce((sum, row) => sum + (row.actualUsd ?? 0), 0);
+          const usdMicro = known.reduce((sum, row) => sum + toMicroUsd(row.actualUsd ?? 0), 0);
+          const usd = fromMicroUsd(usdMicro);
           const seen = summary.counted[reason] ?? { records: 0, knownUsd: 0, unknownRecords: 0 };
-          summary.counted[reason] = { records: seen.records + records.length, knownUsd: seen.knownUsd + usd, unknownRecords: seen.unknownRecords + records.length - known.length };
+          summary.counted[reason] = { records: seen.records + records.length, knownUsd: fromMicroUsd(toMicroUsd(seen.knownUsd) + usdMicro), unknownRecords: seen.unknownRecords + records.length - known.length };
           if (reason === "outside chef") notes.push(known.length === records.length && usd > 0 ? `${formatUsd(usd)} of ${name} use` : `${records.length} ${name} call(s) of unknown cost`);
         }
       }

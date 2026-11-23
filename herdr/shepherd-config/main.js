@@ -1,20 +1,67 @@
-// shepherd-config: a herdr side panel for shepherd. Four collapsible sections: the model for each ticket difficulty
-// (a Pi-worker model, local model or external agent, with Cursor's models offered), the local model server, the plans of the
-// project, and what they cost. It reads and writes ~/.claude/shepherd.yaml.
-// Everything is read and written through the shepherd CLI named in install.json (written by `shepherd herdr-install`):
-// `show` for the data, `set` / `local-add` / `local-remove` / `plan-activate` / `plan-close` for changes. Writes to the
-// user config carry --expect with the file's sha256 from the last show. This mod never writes a file itself and never
-// logs a value.
+// shepherd-config: Mission-Control Herdr side panel for shepherd.
+// Features: gpui-base Select + Popup dropdowns with knownAgents() icons & installed badges,
+// unified 2026 live+curated model discovery, live sub-agent activity strip (Peek/Keep + alerts),
+// phase-aware Quick Actions cockpit bar, expandable interactive ticket progress board,
+// multi-model reviewers editor, idle-cache action control, and cross-repo spend telemetry.
+// Everything is read and written through the shepherd-config CLI named in install.json.
 
-import { View, div } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, NumberInput } from "gpui-base";
-import { exec, props, focused, spaces, theme, appHome, home, readTextFile, watchFolder } from "herdr";
-import { agentPick, ctxText, fmtUsd, modelValue, numberText, parseResult, positive, ratio, setArgv, ticketsText } from "./lib.js";
+import { View, div, svg, image } from "gpui-kit";
+import { v_flex, h_flex, InputState, Input, NumberInput, Select, Popup } from "gpui-base";
+import {
+  checking,
+  exec,
+  props,
+  focused,
+  spaces,
+  terminals,
+  knownAgents,
+  theme,
+  appHome,
+  home,
+  readTextFile,
+  watchFolder,
+  run,
+  openOverlay,
+  notify,
+  playSound,
+} from "herdr";
+import {
+  THINKING_LEVELS,
+  agentPick,
+  ctxText,
+  filterShepherdTerminals,
+  fmtUsd,
+  formatCtxPill,
+  modelValue,
+  numberText,
+  parseResult,
+  positive,
+  ratio,
+  setArgv,
+  splitThinking,
+  ticketsText,
+  withThinking,
+} from "./lib.js";
 
 const REFRESH_MS = 8000;
+const AGENT_POLL_MS = 2000;
 const MODEL_KEYS = ["low", "medium", "high", "review"];
 const KINDS = [["pi", "Pi"], ["local", "Local"], ["agent", "Agent"]];
-const SECTIONS = [["models", "Models"], ["local", "Local model"], ["plans", "Plans"], ["costs", "Costs"]];
+const IDLE_ACTIONS = [
+  { value: "warn", label: "warn (non-blocking)" },
+  { value: "block", label: "block (once per idle)" },
+  { value: "off", label: "off (silent)" },
+];
+const REVIEWER_PRESETS = [
+  { label: "Astra + Argon", models: ["agent:codex/gpt-6.2-astra", "agent:agy/gemini-4-argon"] },
+  { label: "Opus + Astra", models: ["agent:claude/opus", "agent:codex/gpt-6.2-astra"] },
+];
+const SECTIONS = [
+  ["models", "Models"],
+  ["local", "Local model"],
+  ["plans", "Plans"],
+  ["costs", "Costs"],
+];
 
 export default class ShepherdConfig extends View {
   init(_props, cx) {
@@ -24,43 +71,84 @@ export default class ShepherdConfig extends View {
     this.failure = null;
     this.loading = false;
     this.pending = false;
-    this.watching = new Set();
+    this.watches = new Map();       // dir -> FolderWatch handle
     this.wanted = new Set();
-    this.files = new Set();
-    this.notes = {};            // note key -> { kind: "ok" | "warn" | "err", text, needsForce? }
-    this.busy = new Set();      // note keys with a CLI call in flight
-    this.draft = {};            // model key -> { kind }: a kind picked but not saved yet
-    this.detected = null;       // the last local-detect result
-    this.detectedFor = null;    // the root it was run for (the first load of a root detects once)
-    this.cursor = null;         // the Cursor models to offer ([{ model, value }]); null until asked once
-    this.scope = "today";       // costs breakdown: "today" | "plan"
-    this.seq = 0;               // bumped by every write; a load that started earlier is dropped
-    try { this.collapsed = JSON.parse(localStorage.getItem("collapsed") ?? "{}"); } catch { this.collapsed = {}; }
-    this.inputs = {};           // name -> { state, synced, focused }; made once, here, never in render
+    this.notes = {};                // note key -> { kind: "ok" | "warn" | "err", text, needsForce? }
+    this.busy = new Set();
+    this.draft = {};                // model key -> { kind }
+    this.detected = null;
+    this.detectedFor = null;
+    this.catalog = null;            // { agents: { name: { source, smart, models } }, piModels }
+    this.agentMeta = new Map();     // agent name -> Program & { installed }
+    this.scope = "today";
+    this.seq = 0;
+    this.panelWidth = 360;
+    this.ticketsOpen = false;
+    this.openSelect = null;         // currently open Select id
+    this.highlightIdx = 0;
+    this.prevTermStatus = new Map();// address -> status (for blocked/done alerts)
+    this.writeQueue = Promise.resolve();
+    try {
+      this.collapsed = JSON.parse(localStorage.getItem("collapsed") ?? "{}");
+    } catch {
+      this.collapsed = {};
+    }
+
+    // Allocate all InputStates and Select FocusHandle pairs once in init(), never in render().
+    this.inputs = {};
+    this.focusHandles = {};
+    const allocSelect = (id) => {
+      this.focusHandles[id] = { trigger: cx.focus_handle(), list: cx.focus_handle() };
+    };
     for (const k of MODEL_KEYS) {
       this.field(`pi:${k}`, "provider/id");
       this.field(`am:${k}`, "model (blank = agent default)");
+      allocSelect(`agent:${k}`);
+      allocSelect(`am:${k}`);
+      allocSelect(`pi:${k}`);
+      allocSelect(`think:${k}`);
+      allocSelect(`local:${k}`);
     }
+    allocSelect("idleAction");
+    allocSelect("addReviewer");
     this.field("base", "http://127.0.0.1:8080/v1");
     this.field("ctx", "context window", true);
     this.field("taskUsd", "20", true);
     this.field("dailyUsd", "75", true);
+
+    if (checking()) return;
     this.refresh(cx);
+    this.loadKnownAgents(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.refresh(cx));
+    cx.timer.every(AGENT_POLL_MS, (cx) => this.checkSubAgentAlerts(cx));
+  }
+
+  async close(_cx) {
+    this.wanted.clear();
+    for (const handle of this.watches.values()) {
+      try {
+        handle?.cancel?.();
+      } catch { /* ignore */ }
+    }
+    this.watches.clear();
   }
 
   field(name, placeholder, numeric) {
     const state = InputState.new({ placeholder });
-    if (numeric) { state.set_step(1); state.set_min(0); }
-    const slot = this.inputs[name] = { state, synced: "", focused: false };
+    if (numeric) {
+      state.set_step(1);
+      state.set_min(1);
+    }
+    const slot = (this.inputs[name] = { state, synced: "", focused: false });
     state.on("focus", () => { slot.focused = true; });
     state.on("blur", (_e, cx) => { slot.focused = false; this.commit(name, cx); });
     state.on("submit", (_e, cx) => this.commit(name, cx));
   }
 
-  text(name) { return this.inputs[name].state.value(); }
+  text(name) {
+    return this.inputs[name].state.value();
+  }
 
-  // The input follows the saved value unless the person is typing in it.
   follow(name, text) {
     const slot = this.inputs[name];
     if (!slot || slot.focused || slot.synced === text) return;
@@ -81,22 +169,23 @@ export default class ShepherdConfig extends View {
     this.follow("dailyUsd", numberText(d.budgets.dailyUsd));
   }
 
-  // ---- loading
+  // ---- loading & discovery
 
   location() {
     const forced = props()?.folder;
     const cwd = focused()?.cwd;
     if (forced) return forced;
     if (cwd) return cwd;
-    // The panel itself has the keyboard (no cwd): keep the project it showed rather than flip to the space's folder.
     if (this.start) return this.start;
     return spaces().find((sp) => sp.active)?.folder || home();
   }
 
-  // One load at a time; a request during a load queues exactly one more.
   refresh(cx) {
     this.start = this.location();
-    if (this.loading) { this.pending = true; return; }
+    if (this.loading) {
+      this.pending = true;
+      return;
+    }
     this.loading = true;
     cx.spawn(async (cx) => {
       do {
@@ -115,39 +204,126 @@ export default class ShepherdConfig extends View {
 
   async load(cx) {
     const raw = await readTextFile(`${appHome()}/mods/shepherd-config/install.json`);
-    if (!raw) { this.failure = "install.json is missing: run `shepherd herdr-install` (in Claude Code: `! shepherd herdr-install`)."; return; }
+    if (!raw) {
+      this.failure = "install.json is missing: run `shepherd herdr-install`.";
+      return;
+    }
     const cli = JSON.parse(raw).cli;
-    if (!Array.isArray(cli) || cli.length === 0) { this.failure = "install.json has no `cli` argv array: run `shepherd herdr-install` again."; return; }
+    if (!Array.isArray(cli) || cli.length === 0) {
+      this.failure = "install.json has no `cli` argv array: run `shepherd herdr-install` again.";
+      return;
+    }
     this.cli = cli;
     const start = this.start;
-    if (!start) { this.failure = "No project folder: open the panel from a space with a folder."; return; }
+    if (!start) {
+      this.failure = "No project folder: open the panel from a space with a folder.";
+      return;
+    }
     let root = start;
     try {
       const g = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: start });
       if (g.code === 0 && g.stdout.trim()) root = g.stdout.trim();
-    } catch { /* not a repo: use the folder itself */ }
+    } catch { /* not a git repo: use the folder itself */ }
     const mine = this.seq;
     const json = await this.call(["show", "--cwd", root]);
-    if (mine !== this.seq || this.busy.size > 0) return; // a write finished or is running: its result is newer
-    if (json.ok === false) { this.failure = json.error ?? "shepherd-config failed"; return; }
+    if (mine !== this.seq || this.busy.size > 0) return;
+    if (json.ok === false) {
+      this.failure = json.error ?? "shepherd-config failed";
+      return;
+    }
     this.failure = null;
-    if (root !== this.root) { this.root = root; this.notes = {}; this.draft = {}; this.detected = null; }
+    if (root !== this.root) {
+      this.root = root;
+      this.notes = {};
+      this.draft = {};
+      this.detected = null;
+    }
     this.data = json;
-    for (const key of Object.keys(this.notes)) if (this.notes[key].kind === "ok") delete this.notes[key];
+    for (const key of Object.keys(this.notes)) {
+      if (this.notes[key].kind === "ok") delete this.notes[key];
+    }
     this.syncInputs();
-    if (json.local.configured && this.detectedFor !== root) { this.detectedFor = root; this.detect(cx, true); }
-    if (this.cursor === null) this.loadCursor(cx);
+    if (json.local.configured && this.detectedFor !== root) {
+      this.detectedFor = root;
+      this.detect(cx, true);
+    }
+    if (this.catalog === null) this.loadCatalog(cx, false);
   }
 
-  // The Cursor picker: `auto`, and the auto-smart settings when `cursor-agent --list-models` lists auto-smart. Asked once
-  // (the CLI caches the list); not metered, and the router needs a Teams or Enterprise plan.
-  loadCursor(cx) {
-    this.cursor = [];
+  loadCatalog(cx, forceRefresh) {
+    if (this.busy.has("catalog")) return;
+    if (!this.cli) return;
+    this.busy.add("catalog");
+    if (this.catalog === null) this.catalog = { agents: {}, piModels: [] };
+    cx.notify();
     cx.spawn(async (cx) => {
-      const json = await this.call(["cursor-models"]);
-      this.cursor = json.ok === false || !Array.isArray(json.models) ? [] : json.models;
+      const args = ["agent-models", ...(this.root ? ["--cwd", this.root] : []), ...(forceRefresh ? ["--refresh"] : [])];
+      const json = await this.call(args);
+      this.busy.delete("catalog");
+      if (json.ok !== false && json.agents) this.catalog = json;
       cx.notify();
     });
+  }
+
+  loadKnownAgents(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const list = await knownAgents({ on: null });
+        if (!Array.isArray(list)) return;
+        const map = new Map();
+        for (const item of list) {
+          const bin = Array.isArray(item.run) && item.run[0] ? String(item.run[0]).split("/").pop() : item.key;
+          if (item.key) map.set(item.key, item);
+          if (bin) map.set(bin, item);
+        }
+        this.agentMeta = map;
+        cx.notify();
+      } catch { /* knownAgents unavailable */ }
+    });
+  }
+
+  checkSubAgentAlerts(cx) {
+    let list;
+    try {
+      list = filterShepherdTerminals(terminals());
+    } catch {
+      return;
+    }
+    const seen = new Set();
+    let changed = false;
+    for (const term of list) {
+      const addr = term.address;
+      if (!addr) continue;
+      seen.add(addr);
+      const prev = this.prevTermStatus.get(addr);
+      const next = term.status ?? "idle";
+      if (prev !== next) {
+        changed = true;
+        this.prevTermStatus.set(addr, next);
+        if (next === "blocked") {
+          try {
+            playSound("blocked");
+            notify({
+              title: "Shepherd sub-agent needs input",
+              body: term.name || addr,
+              level: "warning",
+              action: { name: "terminal.peek", args: { terminal: addr } },
+            });
+          } catch { /* ignore notification errors */ }
+        } else if (prev === "working" && next === "done") {
+          try {
+            playSound("done");
+          } catch { /* ignore */ }
+        }
+      }
+    }
+    for (const addr of [...this.prevTermStatus.keys()]) {
+      if (!seen.has(addr)) {
+        this.prevTermStatus.delete(addr);
+        changed = true;
+      }
+    }
+    if (changed) cx.notify();
   }
 
   async call(args) {
@@ -158,59 +334,88 @@ export default class ShepherdConfig extends View {
     }
   }
 
-  // Refresh when the user config or the plans / ledger change. Only the user file counts in ~/.claude (it holds Claude Code's own files too).
+  // Watch ~/.claude/shepherd.yaml and .shepherd subdirs directly (Linux skips git-ignored roots).
   watch(cx) {
     const f = this.data?.files;
     if (!f) return;
-    const dirs = new Map([[f.user.path.slice(0, f.user.path.lastIndexOf("/")), f.user.path], [f.workspace, null]]);
-    this.wanted = new Set(dirs.keys());
-    this.files = new Set([f.user.path]);
+    const userDir = f.user.path.slice(0, f.user.path.lastIndexOf("/"));
+    const dirs = new Map([
+      [userDir, f.user.path],
+      [f.workspace, null],
+      [`${f.workspace}/tasks`, null],
+      [`${f.workspace}/cost`, null],
+    ]);
+    const nextWanted = new Set(dirs.keys());
+    for (const [dir, handle] of this.watches) {
+      if (!nextWanted.has(dir)) {
+        try { handle?.cancel?.(); } catch { /* ignore */ }
+        this.watches.delete(dir);
+      }
+    }
+    this.wanted = nextWanted;
     for (const [dir, only] of dirs) {
-      if (this.watching.has(dir)) continue;
-      this.watching.add(dir);
+      if (this.watches.has(dir)) continue;
+      this.watches.set(dir, null);
       cx.spawn(async (cx) => {
         try {
           while (this.wanted.has(dir)) {
-            const changed = await watchFolder(dir);
+            const handle = watchFolder(dir);
+            this.watches.set(dir, handle);
+            const changed = await handle;
             if (!this.wanted.has(dir)) break;
-            // Anything but a non-empty list of paths (a missing folder, say) would spin: the timer covers it.
             if (!Array.isArray(changed) || changed.length === 0) break;
             const abs = (p) => (p.startsWith("/") ? p : `${dir}/${p}`);
             if (only === null || changed.some((p) => p === dir || abs(p) === only)) this.refresh(cx);
           }
-        } catch { /* cannot watch here: the timer covers it */ }
-        this.watching.delete(dir);
+        } catch { /* timer covers unwatched folders */ }
+        this.watches.delete(dir);
       });
     }
   }
 
-  // ---- writes
+  // ---- serialized writes (prevents stale --expect sha256 races on rapid clicks)
 
-  // Runs one CLI call that changes something. `noteKey` says where its outcome shows. The answer is a fresh `show`.
-  mutate(noteKey, args, cx, done) {
-    if (!this.root || !this.cli || this.busy.has(noteKey)) return;
+  mutate(noteKey, argsOrFactory, cx, done) {
+    if (!this.root || !this.cli) return;
     this.busy.add(noteKey);
     delete this.notes[noteKey];
     cx.notify();
-    cx.spawn(async (cx) => {
+    const runOne = async () => {
+      const args = typeof argsOrFactory === "function" ? argsOrFactory() : argsOrFactory;
       const json = await this.call(args);
       this.seq++;
       this.busy.delete(noteKey);
       if (json.ok === false) {
-        this.notes[noteKey] = { kind: "err", text: json.error ?? "shepherd-config refused the change", needsForce: json.needsForce === true };
+        this.notes[noteKey] = {
+          kind: "err",
+          text: json.error ?? "shepherd-config refused the change",
+          needsForce: json.needsForce === true,
+        };
         if (/changed since it was read/.test(json.error ?? "")) this.refresh(cx);
       } else {
-        if (Array.isArray(json.plans)) { this.data = json; this.syncInputs(); }
+        if (Array.isArray(json.plans)) {
+          this.data = json;
+          this.syncInputs();
+        }
         this.notes[noteKey] = { kind: json.note ? "warn" : "ok", text: json.note ?? "Saved." };
         if (done) done(json, cx);
       }
       cx.notify();
-    });
+    };
+    this.writeQueue = this.writeQueue.then(
+      () => new Promise((resolve) => { cx.spawn(async () => { try { await runOne(); } finally { resolve(); } }); }),
+      () => new Promise((resolve) => { cx.spawn(async () => { try { await runOne(); } finally { resolve(); } }); }),
+    );
   }
 
-  note(key, kind, text, cx) { this.notes[key] = { kind, text }; cx.notify(); }
+  note(key, kind, text, cx) {
+    this.notes[key] = { kind, text };
+    cx.notify();
+  }
 
-  sha() { return this.data?.files?.user?.sha256; }
+  sha() {
+    return this.data?.files?.user?.sha256;
+  }
 
   commit(name, cx) {
     const d = this.data;
@@ -219,8 +424,9 @@ export default class ShepherdConfig extends View {
     if (kind === "pi") this.saveModel(key, "pi", {}, cx);
     else if (kind === "am") {
       const row = d.models[key];
-      // A model for the agent already chosen; with none chosen yet, it is read when one is picked.
-      if (row.kind === "agent" && this.text(name) !== (row.agentModel ?? "")) this.saveModel(key, "agent", { agent: row.agent }, cx);
+      if (row.kind === "agent" && this.text(name) !== (row.agentModel ?? "")) {
+        this.saveModel(key, "agent", { agent: row.agent }, cx);
+      }
     } else if (name === "base") this.saveBase(cx);
     else if (name === "taskUsd" || name === "dailyUsd") this.saveBudget(name, cx);
   }
@@ -230,13 +436,34 @@ export default class ShepherdConfig extends View {
     const parts = { piText: this.text(`pi:${key}`), agentModel: this.text(`am:${key}`), ...pick };
     const r = modelValue(kind, parts);
     if (r.error) {
-      // Leaving an empty Pi field alone while another kind is saved is not an error.
       if (kind === "pi" && parts.piText.trim() === "" && row.kind !== "pi") return;
       this.note(`m:${key}`, "err", r.error, cx);
       return;
     }
-    if (r.value === row.value) { delete this.notes[`m:${key}`]; cx.notify(); return; }
-    this.mutate(`m:${key}`, setArgv(this.root, `models.${key}`, r.value, this.sha()), cx, () => { delete this.draft[key]; });
+    if (r.value === row.value) {
+      delete this.notes[`m:${key}`];
+      cx.notify();
+      return;
+    }
+    this.mutate(`m:${key}`, () => setArgv(this.root, `models.${key}`, r.value, this.sha()), cx, () => {
+      delete this.draft[key];
+    });
+  }
+
+  saveReviewers(nextList, cx) {
+    const payload = nextList.length > 0 ? JSON.stringify(nextList) : "";
+    this.mutate("reviewers", () => setArgv(this.root, "review.reviewers", payload, this.sha()), cx);
+  }
+
+  saveIdleAction(action, cx) {
+    if (action === this.data?.budgets?.idleAction) return;
+    this.mutate("budgets", () => setArgv(this.root, "budgets.idleAction", action, this.sha()), cx);
+  }
+
+  toggleAgentBilling(agent, cx) {
+    const current = this.data?.agentsBilling?.[agent] ?? "api";
+    const next = current === "subscription" ? "api" : "subscription";
+    this.mutate(`billing:${agent}`, () => setArgv(this.root, `agents.${agent}.billing`, next, this.sha()), cx);
   }
 
   saveBudget(name, cx) {
@@ -249,15 +476,18 @@ export default class ShepherdConfig extends View {
       return;
     }
     if (n === saved) return;
-    this.mutate("budgets", setArgv(this.root, `budgets.${name}`, String(n), this.sha()), cx);
+    this.mutate("budgets", () => setArgv(this.root, `budgets.${name}`, String(n), this.sha()), cx);
   }
 
   saveBase(cx) {
     const d = this.data;
     const url = this.text("base").trim();
     if (!d.local.configured || url === d.local.baseUrl) return;
-    if (url === "") { this.follow("base", d.local.baseUrl); return; }
-    this.mutate("local", setArgv(this.root, "local.baseUrl", url, this.sha()), cx, (_j, cx) => this.detect(cx, true));
+    if (url === "") {
+      this.follow("base", d.local.baseUrl);
+      return;
+    }
+    this.mutate("local", () => setArgv(this.root, "local.baseUrl", url, this.sha()), cx, (_j, cx) => this.detect(cx, true));
   }
 
   preset(url, cx) {
@@ -268,7 +498,10 @@ export default class ShepherdConfig extends View {
 
   detect(cx, quiet) {
     const url = this.text("base").trim() || this.data?.local?.baseUrl || "";
-    if (!url) { if (!quiet) this.note("local", "err", "Enter the server URL or pick a preset first.", cx); return; }
+    if (!url) {
+      if (!quiet) this.note("local", "err", "Enter the server URL or pick a preset first.", cx);
+      return;
+    }
     if (this.busy.has("detect")) return;
     this.busy.add("detect");
     cx.notify();
@@ -276,63 +509,263 @@ export default class ShepherdConfig extends View {
       const json = await this.call(["local-detect", "--base-url", url, "--cwd", this.root]);
       this.busy.delete("detect");
       this.detected = json;
-      if (json.ok !== false && json.reachable && json.baseUrl !== url && !this.inputs.base.focused) this.inputs.base.state.set_value(json.baseUrl);
+      if (json.ok !== false && json.reachable && json.baseUrl !== url && !this.inputs.base.focused) {
+        this.inputs.base.state.set_value(json.baseUrl);
+      }
       cx.notify();
     });
   }
 
   addLocal(m, cx) {
     const ctx = m.contextWindow ?? positive(this.text("ctx"));
-    if (!ctx) { this.note("local", "err", "The server did not report a context window: enter one below.", cx); return; }
-    const args = ["local-add", "--cwd", this.root, "--id", m.id, "--context-window", String(Math.round(ctx))];
+    if (!ctx) {
+      this.note("local", "err", "The server did not report a context window: enter one below.", cx);
+      return;
+    }
     const url = this.detected?.baseUrl || this.text("base").trim();
-    if (url) args.push("--base-url", url);
-    if (this.sha()) args.push("--expect", this.sha());
-    this.mutate("local", args, cx, (_j, cx) => this.detect(cx, true));
+    this.mutate(
+      "local",
+      () => [
+        "local-add",
+        "--cwd",
+        this.root,
+        "--id",
+        m.id,
+        "--context-window",
+        String(Math.round(ctx)),
+        ...(url ? ["--base-url", url] : []),
+        ...(this.sha() ? ["--expect", this.sha()] : []),
+      ],
+      cx,
+      (_j, cx) => this.detect(cx, true),
+    );
   }
 
   removeLocal(id, cx) {
-    const args = ["local-remove", "--cwd", this.root, "--id", id];
-    if (this.sha()) args.push("--expect", this.sha());
-    this.mutate("local", args, cx, (_j, cx) => this.detect(cx, true));
+    this.mutate(
+      "local",
+      () => ["local-remove", "--cwd", this.root, "--id", id, ...(this.sha() ? ["--expect", this.sha()] : [])],
+      cx,
+      (_j, cx) => this.detect(cx, true),
+    );
   }
 
-  activate(id, cx) { this.mutate(`p:${id}`, ["plan-activate", "--cwd", this.root, "--id", id], cx); }
-  closePlan(id, force, cx) { this.mutate(`p:${id}`, ["plan-close", "--cwd", this.root, "--id", id, ...(force ? ["--force"] : [])], cx); }
+  activate(id, cx) {
+    this.mutate(`p:${id}`, () => ["plan-activate", "--cwd", this.root, "--id", id], cx);
+  }
+
+  closePlan(id, force, cx) {
+    this.mutate(`p:${id}`, () => ["plan-close", "--cwd", this.root, "--id", id, ...(force ? ["--force"] : [])], cx);
+  }
+
+  openDoc(file) {
+    if (!file) return;
+    openOverlay({
+      kind: "window",
+      mod: "shepherd-viewer",
+      key: "shepherd-viewer",
+      props: { file },
+      width: 780,
+      height: 640,
+    });
+  }
+
+  sendToSession(commandText, cx) {
+    const target = focused()?.terminal;
+    if (!target) {
+      notify({ title: "Shepherd", body: `Focus your Claude Code terminal to run ${commandText}`, level: "info" });
+      return;
+    }
+    cx.spawn(async () => {
+      try {
+        await exec("hc", ["send", target, `${commandText}\n`], { timeout: 5000 });
+      } catch (e) {
+        notify({ title: "Shepherd action failed", body: String(e?.message ?? e), level: "error" });
+      }
+    });
+  }
+
+  openOrJumpSpace(name, folder) {
+    if (!folder) return;
+    const match = spaces().find((sp) => sp.folder === folder);
+    if (match) run("space.select", { id: match.id });
+    else run("space.new", { name, folder });
+  }
 
   toggle(id, cx) {
     this.collapsed[id] = !this.collapsed[id];
-    try { localStorage.setItem("collapsed", JSON.stringify(this.collapsed)); } catch { /* not persisted */ }
+    try {
+      localStorage.setItem("collapsed", JSON.stringify(this.collapsed));
+    } catch { /* not persisted */ }
     cx.notify();
   }
 
-  // ---- pieces
+  // ---- reusable UI primitives
 
-  button(id, label, t, { selected, disabled, onClick }) {
-    return div().id(id).px(7).py(2).rounded(4).text_size(11).flex_none()
-      .bg(selected ? t.selected : t.raised)
-      .text_color(disabled ? t.dim : selected ? t.foreground : t.muted)
-      .when(!disabled, (el) => el.hover((s) => s.bg(t.hover)).on_click(onClick))
+  button(id, label, t, { selected, disabled, accent, onClick }) {
+    return div()
+      .id(id)
+      .px(7)
+      .py(2)
+      .rounded(4)
+      .text_size(11)
+      .flex_none()
+      .bg(accent ? t.accent : selected ? t.selected : t.raised)
+      .text_color(disabled ? t.dim : accent ? (t.accent_foreground ?? t.foreground) : selected ? t.foreground : t.muted)
+      .when(!disabled, (el) => el.hover((s) => s.bg(accent ? t.accent : t.hover)).on_click(onClick))
       .child(label);
   }
 
   input(name, t, busy) {
-    return Input.new(this.inputs[name].state).disabled(!!busy).h(26).px(7).items_center().rounded(4).border(1).border_color(t.input).bg(t.background).text_color(t.foreground).text_size(12);
+    return Input.new(this.inputs[name].state)
+      .disabled(!!busy)
+      .h(26)
+      .px(7)
+      .items_center()
+      .rounded(4)
+      .border(1)
+      .border_color(t.input)
+      .bg(t.background)
+      .text_color(t.foreground)
+      .text_size(12);
   }
 
   numberInput(name, t, busy, onStep) {
-    return div().w(96).child(NumberInput.new(this.inputs[name].state).disabled(!!busy)
-      .on_step((action, cx) => onStep(action === "increment" ? 1 : -1, cx))
-      .controls_right()
-      .decrement_button(div().px(5).text_size(12).child("−"))
-      .increment_button(div().px(5).text_size(12).child("+")));
+    return div()
+      .w(96)
+      .child(
+        NumberInput.new(this.inputs[name].state)
+          .disabled(!!busy)
+          .on_step((action, cx) => onStep(action === "increment" ? 1 : -1, cx))
+          .controls_right()
+          .decrement_button(div().px(5).text_size(12).child("−"))
+          .increment_button(div().px(5).text_size(12).child("+")),
+      );
   }
 
   stepBudget(name, dir, cx) {
     const cur = positive(this.text(name)) ?? this.data.budgets[name];
-    const next = Math.max(0, Math.round((cur + dir) * 100) / 100);
+    const next = Math.max(1, Math.round((cur + dir) * 100) / 100);
     this.inputs[name].state.set_value(String(next));
     this.saveBudget(name, cx);
+  }
+
+  agentIcon(agentName, t) {
+    const meta = this.agentMeta.get(agentName);
+    if (!meta?.icon) return null;
+    return meta.tint
+      ? svg(meta.icon).size(12).text_color(t.muted)
+      : image(meta.icon).size(12);
+  }
+
+  // Native gpui-base Select + Popup dropdown with keyboard navigation and optional icons/sublabels.
+  selectDropdown(id, displayLabel, items, currentValue, t, { disabled, onSelect, width }) {
+    const handles = this.focusHandles[id];
+    const open = this.openSelect === id;
+    const trigger = h_flex()
+      .id(`sel-trig-${id}`)
+      .h(26)
+      .px(8)
+      .gap(6)
+      .items_center()
+      .rounded(4)
+      .border(1)
+      .border_color(open ? t.accent : t.input)
+      .bg(t.background)
+      .text_size(11)
+      .text_color(disabled ? t.dim : t.foreground)
+      .when(!disabled, (el) =>
+        el.hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
+          this.openSelect = open ? null : id;
+          this.highlightIdx = Math.max(0, items.findIndex((item) => item.value === currentValue));
+          cx.notify();
+        }),
+      )
+      .child(div().flex_1().min_w(0).truncate().child(displayLabel))
+      .child(div().text_size(9).text_color(t.dim).child(open ? "▴" : "▾"));
+
+    const listEl = v_flex()
+      .id(`sel-list-${id}`)
+      .min_w(width ?? 230)
+      .max_w(320)
+      .max_h(230)
+      .overflow_y_scrollbar()
+      .p(4)
+      .gap(2)
+      .rounded(6)
+      .bg(t.popover ?? t.raised)
+      .border(1)
+      .border_color(t.border)
+      .shadow_md()
+      .on_key_down((e, cx) => {
+        if (items.length === 0) return;
+        if (e.key === "down") {
+          this.highlightIdx = (this.highlightIdx + 1) % items.length;
+          cx.notify();
+        } else if (e.key === "up") {
+          this.highlightIdx = (this.highlightIdx - 1 + items.length) % items.length;
+          cx.notify();
+        } else if (e.key === "enter") {
+          const chosen = items[this.highlightIdx];
+          this.openSelect = null;
+          if (chosen) onSelect(chosen.value, cx);
+          cx.notify();
+        } else if (e.key === "escape") {
+          this.openSelect = null;
+          cx.notify();
+        }
+      })
+      .children(
+        items.length === 0
+          ? [div().px(6).py(4).text_size(11).text_color(t.dim).child("No options")]
+          : items.map((item, idx) => {
+              const active = item.value === currentValue;
+              const hi = idx === this.highlightIdx;
+              const row = h_flex()
+                .id(`sel-opt-${id}-${idx}`)
+                .role("list_box_option")
+                .gap(6)
+                .px(6)
+                .py(4)
+                .rounded(4)
+                .items_center()
+                .bg(active ? t.selected : hi ? t.hover : "transparent")
+                .hover((s) => s.bg(t.hover))
+                .on_click((_e, cx) => {
+                  this.openSelect = null;
+                  onSelect(item.value, cx);
+                  cx.notify();
+                });
+              if (hi) row.aria_active_descendant();
+              if (item.icon) row.child(item.icon);
+              row.child(
+                v_flex()
+                  .flex_1()
+                  .min_w(0)
+                  .child(div().truncate().text_size(11).text_color(active ? t.foreground : t.foreground).child(item.label))
+                  .when(!!item.sub, (el) => el.child(div().truncate().text_size(10).text_color(t.dim).child(item.sub))),
+              );
+              if (item.badge) {
+                row.child(div().px(4).py(1).rounded(3).bg(t.raised).text_size(9).text_color(item.badgeColor ?? t.dim).child(item.badge));
+              }
+              return row;
+            }),
+      );
+
+    return Select.new(`sel-${id}`)
+      .accessibility_label(displayLabel)
+      .open(open)
+      .track_focus(handles.trigger)
+      .content_focus_handle(handles.list)
+      .on_open_change((nextOpen, cx) => {
+        this.openSelect = nextOpen ? id : null;
+        cx.notify();
+      })
+      .child(
+        Popup.new(`sel-pop-${id}`, trigger)
+          .anchor("bottom_left")
+          .when(open, (el) => el.content(listEl)),
+      );
   }
 
   noteLine(key, t) {
@@ -344,14 +777,219 @@ export default class ShepherdConfig extends View {
 
   section(id, title, summary, body, t) {
     const open = !this.collapsed[id];
-    return v_flex().id(`sec-${id}`).border_b(1).border_color(t.border)
-      .child(h_flex().id(`sec-head-${id}`).gap(6).px(10).py(7).items_center().hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => this.toggle(id, cx))
-        .child(div().w(10).text_size(10).text_color(t.dim).child(open ? "▾" : "▸"))
-        .child(div().font_semibold().text_size(12).child(title))
-        .child(div().flex_1())
-        .child(div().text_size(11).text_color(summary.color ?? t.dim).child(summary.text ?? "")))
+    return v_flex()
+      .id(`sec-${id}`)
+      .border_b(1)
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .id(`sec-head-${id}`)
+          .gap(6)
+          .px(10)
+          .py(7)
+          .items_center()
+          .hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => this.toggle(id, cx))
+          .child(div().w(10).text_size(10).text_color(t.dim).child(open ? "▾" : "▸"))
+          .child(div().font_semibold().text_size(12).child(title))
+          .child(div().flex_1())
+          .child(div().text_size(11).text_color(summary.color ?? t.dim).child(summary.text ?? "")),
+      )
       .when(open, (el) => el.child(v_flex().gap(8).px(10).pb(10).child(body)));
+  }
+
+  // ---- live sub-agent activity strip
+
+  liveSubAgentsBar(t) {
+    let active = [];
+    try {
+      active = filterShepherdTerminals(terminals());
+    } catch {
+      return null;
+    }
+    if (active.length === 0) return null;
+    return v_flex()
+      .id("sub-agents-strip")
+      .gap(4)
+      .px(10)
+      .py(6)
+      .border_b(1)
+      .border_color(t.border)
+      .bg(t.chrome ?? t.surface)
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(div().text_size(10).font_semibold().text_color(t.dim).child(`LIVE SUB-AGENTS (${active.length})`)),
+      )
+      .children(
+        active.map((term, idx) => {
+          const st = term.status ?? "working";
+          const color = st === "blocked" ? t.blocked : st === "done" ? t.done : st === "working" ? t.working : t.dim;
+          const dot = div().size(7).rounded(4).bg(color);
+          if (st === "working") dot.loop("opacity", { from: 0.3, to: 1, period: 1400 });
+          const label = term.labels?.["shepherd.ticket"]
+            ? `ticket ${term.labels["shepherd.ticket"]}`
+            : term.labels?.["shepherd.review"]
+              ? "review"
+              : term.labels?.["shepherd.ticket-review"]
+                ? `review #${term.labels["shepherd.ticket-review"]}`
+                : term.name || term.address;
+          return h_flex()
+            .id(`subagent-${idx}`)
+            .gap(6)
+            .px(6)
+            .py(4)
+            .rounded(4)
+            .bg(t.raised)
+            .items_center()
+            .child(dot)
+            .child(
+              v_flex()
+                .flex_1()
+                .min_w(0)
+                .child(div().truncate().text_size(11).font_semibold().child(label))
+                .child(div().truncate().text_size(10).text_color(color).child(`${st}${term.program?.name ? ` · ${term.program.name}` : ""}`)),
+            )
+            .child(this.button(`peek-${idx}`, "Peek", t, { selected: false, disabled: false, onClick: () => run("terminal.peek", { terminal: term.address }) }))
+            .child(this.button(`keep-${idx}`, "Keep", t, { selected: false, disabled: false, onClick: () => run("terminal.keep", { terminal: term.address }) }));
+        }),
+      );
+  }
+
+  // ---- phase-aware quick actions cockpit bar
+
+  cockpitBar(current, d, t) {
+    const actions = [];
+    if (d.planFile) {
+      actions.push({ id: "qa-plan", label: "Plan", onClick: () => this.openDoc(d.planFile) });
+    }
+    if (current) {
+      const doneAll = current.ticketsTotal > 0 && current.ticketsDone >= current.ticketsTotal;
+      if (d.liveBuild && !d.buildClaimRunning) {
+        actions.push({ id: "qa-pause", label: "Pause", onClick: (_e, cx) => this.sendToSession("! shepherd build pause", cx) });
+      } else if (
+        !d.liveBuild &&
+        (current.phase === "AWAITING_PLAN_APPROVAL" || current.phase === "PAUSED" || (current.phase === "IMPLEMENTING" && !doneAll))
+      ) {
+        actions.push({ id: "qa-build", label: current.phase === "PAUSED" ? "Resume" : "Build", accent: true, onClick: (_e, cx) => this.sendToSession("/shepherd:build", cx) });
+      }
+      if (doneAll || current.phase === "REVIEWING") {
+        actions.push({ id: "qa-review", label: "Review", accent: true, onClick: (_e, cx) => this.sendToSession("/shepherd:review", cx) });
+      }
+      if (d.latestReviewFile) {
+        actions.push({ id: "qa-vrev", label: "Report", onClick: () => this.openDoc(d.latestReviewFile) });
+      }
+      if (doneAll) {
+        actions.push({ id: "qa-ship", label: "Ship", onClick: (_e, cx) => this.sendToSession("/shepherd:ship", cx) });
+      }
+    }
+    actions.push({ id: "qa-clean", label: "Cleanup", onClick: (_e, cx) => this.sendToSession("/shepherd:cleanup", cx) });
+
+    const ctxPill = formatCtxPill(d.sessionContext);
+    return h_flex()
+      .id("cockpit-bar")
+      .gap(4)
+      .px(10)
+      .py(5)
+      .flex_wrap()
+      .items_center()
+      .border_b(1)
+      .border_color(t.border)
+      .children(actions.map((a) => this.button(a.id, a.label, t, { selected: false, disabled: false, accent: a.accent, onClick: a.onClick })))
+      .child(div().flex_1())
+      .when(!!ctxPill, (el) =>
+        el.child(
+          div()
+            .px(5)
+            .py(1)
+            .rounded(4)
+            .bg(t.raised)
+            .text_size(10)
+            .text_color(d.sessionContext.warm ? t.done : t.working)
+            .child(ctxPill),
+        ),
+      );
+  }
+
+  // ---- expandable interactive ticket progress board
+
+  ticketBoard(t) {
+    const tickets = this.data?.activeTickets ?? [];
+    if (tickets.length === 0) return null;
+    const colorFor = (st) => (st === "done" ? t.done : st === "in-progress" ? t.working : st === "failed" ? t.blocked : t.raised);
+    return v_flex()
+      .id("ticket-board")
+      .gap(4)
+      .px(10)
+      .py(6)
+      .border_b(1)
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .id("ticket-bar-toggle")
+          .gap(6)
+          .items_center()
+          .hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => {
+            this.ticketsOpen = !this.ticketsOpen;
+            cx.notify();
+          })
+          .child(
+            h_flex()
+              .flex_1()
+              .gap(2)
+              .h(6)
+              .children(
+                tickets.map((tk) => {
+                  const seg = div().flex_1().h(6).rounded(2).bg(colorFor(tk.status));
+                  if (tk.status === "in-progress") seg.loop("opacity", { from: 0.4, to: 1, period: 1200 });
+                  return seg;
+                }),
+              ),
+          )
+          .child(div().text_size(10).text_color(t.dim).child(this.ticketsOpen ? "▾ tickets" : "▸ tickets")),
+      )
+      .when(this.ticketsOpen, (el) =>
+        el.child(
+          v_flex()
+            .gap(3)
+            .pt(2)
+            .children(
+              tickets.map((tk) =>
+                h_flex()
+                  .id(`tk-${tk.id}`)
+                  .gap(6)
+                  .px(4)
+                  .py(3)
+                  .rounded(4)
+                  .bg(t.raised)
+                  .items_center()
+                  .child(div().size(6).rounded(3).bg(colorFor(tk.status)))
+                  .child(div().w(20).font_semibold().text_size(10).text_color(t.muted).child(tk.id))
+                  .child(
+                    v_flex()
+                      .flex_1()
+                      .min_w(0)
+                      .child(div().truncate().text_size(11).child(tk.title))
+                      .child(
+                        div()
+                          .truncate()
+                          .text_size(10)
+                          .text_color(t.dim)
+                          .child(`${tk.difficulty}${tk.model ? ` · ${tk.model}` : ""}${tk.review && tk.review !== "-" ? ` · rev ${tk.review}` : ""}`),
+                      ),
+                  )
+                  .child(
+                    div()
+                      .text_size(10)
+                      .text_color(tk.status === "failed" ? t.blocked : t.muted)
+                      .child(tk.notMetered && !tk.costUsd ? "sub" : tk.costUsd !== undefined ? fmtUsd(tk.costUsd) : tk.status),
+                  ),
+              ),
+            ),
+        ),
+      );
   }
 
   // ---- models
@@ -363,61 +1001,295 @@ export default class ShepherdConfig extends View {
     const busy = this.busy.has(`m:${key}`);
     const unsaved = kind !== row.kind;
     let editor;
+
     if (kind === "pi") {
-      editor = this.input(`pi:${key}`, t, busy);
+      const piModels = this.catalog?.piModels ?? [];
+      const split = splitThinking(row.kind === "pi" ? row.value : this.text(`pi:${key}`));
+      const piOptions = piModels.map((m) => ({
+        value: m.value,
+        label: m.value,
+        sub: m.pricing ? `$${m.pricing.input}/M in · $${m.pricing.output}/M out` : undefined,
+        badge: m.group,
+      }));
+      const thinkOptions = THINKING_LEVELS.map((lvl) => ({ value: lvl, label: lvl === "default" ? "thinking: default" : `thinking: ${lvl}` }));
+      editor = v_flex()
+        .gap(4)
+        .when(piOptions.length > 0, (el) =>
+          el.child(
+            this.selectDropdown(`pi:${key}`, split.base || "Pick Pi model…", piOptions, split.base, t, {
+              disabled: busy,
+              onSelect: (val, cx) => {
+                const full = withThinking(val, split.thinking);
+                this.inputs[`pi:${key}`].state.set_value(full);
+                this.inputs[`pi:${key}`].synced = full;
+                this.saveModel(key, "pi", { piText: full }, cx);
+              },
+            }),
+          ),
+        )
+        .child(
+          h_flex()
+            .gap(4)
+            .items_center()
+            .child(div().flex_1().child(this.input(`pi:${key}`, t, busy)))
+            .child(
+              div()
+                .w(116)
+                .child(
+                  this.selectDropdown(`think:${key}`, split.thinking === "default" ? "think: auto" : `:${split.thinking}`, thinkOptions, split.thinking, t, {
+                    disabled: busy || !split.base,
+                    width: 140,
+                    onSelect: (lvl, cx) => {
+                      const full = withThinking(split.base, lvl);
+                      if (!full) return;
+                      this.inputs[`pi:${key}`].state.set_value(full);
+                      this.inputs[`pi:${key}`].synced = full;
+                      this.saveModel(key, "pi", { piText: full }, cx);
+                    },
+                  }),
+                ),
+            ),
+        );
     } else if (kind === "local") {
       const ids = d.local.models.map((m) => m.id);
-      editor = ids.length === 0
-        ? div().text_size(11).text_color(t.dim).child("No local models yet: add one under Local model.")
-        : h_flex().gap(4).flex_wrap().children(ids.map((id) => this.button(`lm-${key}-${id}`, id, t, {
-          selected: row.kind === "local" && row.id === id, disabled: busy,
-          onClick: (_e, cx) => this.saveModel(key, "local", { localId: id }, cx),
-        })));
+      const localItems = d.local.models.map((m) => ({ value: m.id, label: m.id, sub: `${ctxText(m.contextWindow)} context` }));
+      editor =
+        ids.length === 0
+          ? div().text_size(11).text_color(t.dim).child("No local models yet: add one under Local model.")
+          : this.selectDropdown(`local:${key}`, row.kind === "local" && row.id ? row.id : "Pick local model…", localItems, row.kind === "local" ? row.id : "", t, {
+              disabled: busy,
+              onSelect: (id, cx) => this.saveModel(key, "local", { localId: id }, cx),
+            });
     } else {
-      editor = v_flex().gap(4)
-        .child(h_flex().gap(4).flex_wrap().children(d.agents.map((name) => this.button(`ag-${key}-${name}`, name, t, {
-          selected: row.kind === "agent" && row.agent === name, disabled: busy,
-          onClick: (_e, cx) => {
-            const pick = agentPick(row, name);
-            // A model typed for the earlier agent is cleared with the change, in the field too.
-            const slot = this.inputs[`am:${key}`];
-            if (pick.agentModel === "" && slot) { slot.state.set_value(""); slot.synced = ""; }
-            this.saveModel(key, "agent", pick, cx);
-          },
-        }))))
-        .child(this.input(`am:${key}`, t, busy))
-        .when(row.kind === "agent" && row.agent === "cursor-agent" && (this.cursor ?? []).length > 0, (el) => el.child(v_flex().gap(4)
-          .child(div().text_size(11).text_color(t.dim).child("Cursor models (not metered; auto-smart needs a Teams or Enterprise plan)"))
-          .child(h_flex().gap(4).flex_wrap().children(this.cursor.map((c) => this.button(`cm-${key}-${c.model}`, c.model, t, {
-            selected: row.agentModel === c.model, disabled: busy,
-            onClick: (_e, cx) => {
-              const slot = this.inputs[`am:${key}`];
-              if (slot) { slot.state.set_value(c.model); slot.synced = c.model; }
-              this.saveModel(key, "agent", { agent: "cursor-agent", agentModel: c.model }, cx);
-            },
-          }))))));
+      const selectedAgent = row.kind === "agent" ? row.agent : "";
+      const supportsModelFlag = !selectedAgent || (d.agentsWithModelFlag ?? []).includes(selectedAgent);
+      const billing = selectedAgent ? (d.agentsBilling?.[selectedAgent] ?? "api") : null;
+      const agentItems = d.agents.map((name) => {
+        const meta = this.agentMeta.get(name);
+        const installed = meta ? meta.installed : undefined;
+        const b = d.agentsBilling?.[name] ?? "api";
+        return {
+          value: name,
+          label: meta?.name ? `${name} (${meta.name})` : name,
+          icon: this.agentIcon(name, t),
+          badge: installed === false ? "missing" : b === "subscription" ? "sub" : installed ? "ready" : undefined,
+          badgeColor: installed === false ? t.blocked : b === "subscription" ? t.accent : t.done,
+        };
+      });
+      const catEntry = selectedAgent ? this.catalog?.agents?.[selectedAgent] : undefined;
+      const modelOptions = [
+        { value: "", label: "(agent default)", sub: "let the CLI choose its default model" },
+        ...(catEntry?.models ?? []).map((m) => ({
+          value: m.id,
+          label: m.label || m.id,
+          sub: [m.id, m.pricing ? `$${m.pricing.input}/$${m.pricing.output}` : m.note].filter(Boolean).join(" · "),
+          badge: m.source === "live" ? "live" : undefined,
+          badgeColor: t.done,
+        })),
+      ];
+
+      editor = v_flex()
+        .gap(4)
+        .child(
+          h_flex()
+            .gap(4)
+            .items_center()
+            .child(
+              div()
+                .flex_1()
+                .child(
+                  this.selectDropdown(`agent:${key}`, selectedAgent || "Pick agent…", agentItems, selectedAgent, t, {
+                    disabled: busy,
+                    onSelect: (name, cx) => {
+                      const pick = agentPick(row, name);
+                      const slot = this.inputs[`am:${key}`];
+                      if (pick.agentModel === "" && slot) {
+                        slot.state.set_value("");
+                        slot.synced = "";
+                      }
+                      this.saveModel(key, "agent", pick, cx);
+                    },
+                  }),
+                ),
+            )
+            .when(!!selectedAgent, (el) =>
+              el.child(
+                this.button(`bill-${key}`, billing === "subscription" ? "Sub ($0)" : "API", t, {
+                  selected: billing === "subscription",
+                  disabled: this.busy.has(`billing:${selectedAgent}`),
+                  onClick: (_e, cx) => this.toggleAgentBilling(selectedAgent, cx),
+                }),
+              ),
+            ),
+        )
+        .when(supportsModelFlag, (el) =>
+          el
+            .child(
+              h_flex()
+                .gap(4)
+                .items_center()
+                .child(
+                  div()
+                    .flex_1()
+                    .child(
+                      this.selectDropdown(
+                        `am:${key}`,
+                        row.kind === "agent" && row.agentModel ? row.agentModel : "Pick model (or type below)…",
+                        modelOptions,
+                        row.kind === "agent" ? (row.agentModel ?? "") : "",
+                        t,
+                        {
+                          disabled: busy || !selectedAgent,
+                          onSelect: (modelId, cx) => {
+                            const slot = this.inputs[`am:${key}`];
+                            if (slot) {
+                              slot.state.set_value(modelId);
+                              slot.synced = modelId;
+                            }
+                            this.saveModel(key, "agent", { agent: selectedAgent, agentModel: modelId }, cx);
+                          },
+                        },
+                      ),
+                    ),
+                )
+                .child(
+                  this.button(`ref-am-${key}`, this.busy.has("catalog") ? "…" : "↻", t, {
+                    selected: false,
+                    disabled: this.busy.has("catalog"),
+                    onClick: (_e, cx) => this.loadCatalog(cx, true),
+                  }),
+                ),
+            )
+            .child(this.input(`am:${key}`, t, busy)),
+        )
+        .when(!supportsModelFlag, (el) =>
+          el.child(div().text_size(10).text_color(t.dim).child(`${selectedAgent} does not accept a model flag.`)),
+        );
     }
+
     const what = kind === "pi" ? "a model" : kind === "local" ? "a local model" : "an agent";
-    return v_flex().id(`model-${key}`).gap(4)
-      .child(h_flex().gap(6).items_center()
-        .child(div().w(50).font_semibold().text_size(12).child(key))
-        .child(h_flex().gap(3).children(KINDS.map(([id, label]) => this.button(`kind-${key}-${id}`, label, t, {
-          selected: kind === id, disabled: false,
-          onClick: (_e, cx) => { if (id === row.kind) delete this.draft[key]; else this.draft[key] = { kind: id }; cx.notify(); },
-        }))))
-        .child(div().flex_1())
-        .when(row.source !== "default", (el) => el.child(div().text_size(10).text_color(row.source === "project" ? t.working : t.dim).child(row.source))))
+    return v_flex()
+      .id(`model-${key}`)
+      .gap(4)
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(div().w(50).font_semibold().text_size(12).child(key))
+          .child(
+            h_flex()
+              .gap(3)
+              .children(
+                KINDS.map(([id, label]) =>
+                  this.button(`kind-${key}-${id}`, label, t, {
+                    selected: kind === id,
+                    disabled: false,
+                    onClick: (_e, cx) => {
+                      if (id === row.kind) delete this.draft[key];
+                      else this.draft[key] = { kind: id };
+                      cx.notify();
+                    },
+                  }),
+                ),
+              ),
+          )
+          .child(div().flex_1())
+          .when(row.source !== "default", (el) =>
+            el.child(div().text_size(10).text_color(row.source === "project" ? t.working : t.dim).child(row.source)),
+          ),
+      )
       .child(editor)
       .when(unsaved, (el) => el.child(div().text_size(11).text_color(t.dim).child(`Saved: ${row.value}. Choose ${what} to change it.`)))
       .when(!!row.problem, (el) => el.child(div().text_size(11).text_color(t.blocked).child(row.problem)))
       .child(this.noteLine(`m:${key}`, t));
   }
 
+  reviewersBlock(t) {
+    const d = this.data;
+    const current = d.reviewReviewers ?? [];
+    const busy = this.busy.has("reviewers");
+    const addOptions = [
+      { value: "agent:codex/gpt-6.2-astra", label: "Codex · GPT-6.2 Astra", sub: "correctness & edge cases" },
+      { value: "agent:agy/gemini-4-argon", label: "AGY · Gemini 4 Argon", sub: "architecture & security" },
+      { value: "agent:claude/opus", label: "Claude · Opus", sub: "deep reasoning" },
+      { value: "agent:claude/fable", label: "Claude · Fable", sub: "high-end advisor" },
+      { value: "openai/gpt-6.2-astra", label: "Pi · openai/gpt-6.2-astra" },
+      { value: "google/gemini-4-argon", label: "Pi · google/gemini-4-argon" },
+    ];
+    return v_flex()
+      .gap(5)
+      .pt(6)
+      .border_t(1)
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .gap(4)
+          .items_center()
+          .child(div().text_size(10).text_color(t.dim).child("MULTI-MODEL /REVIEW PANEL"))
+          .child(div().flex_1())
+          .children(
+            REVIEWER_PRESETS.map((p, idx) =>
+              this.button(`rev-pre-${idx}`, p.label, t, {
+                selected: false,
+                disabled: busy,
+                onClick: (_e, cx) => this.saveReviewers(p.models, cx),
+              }),
+            ),
+          ),
+      )
+      .when(current.length === 0, (el) =>
+        el.child(div().text_size(11).text_color(t.dim).child("Single reviewer (uses models.review). Add reviewers below for parallel consensus.")),
+      )
+      .children(
+        current.map((rev, idx) =>
+          h_flex()
+            .id(`rev-item-${idx}`)
+            .gap(6)
+            .px(6)
+            .py(3)
+            .rounded(4)
+            .bg(t.raised)
+            .items_center()
+            .child(
+              v_flex()
+                .flex_1()
+                .min_w(0)
+                .child(div().truncate().text_size(11).child(rev.name ? `${rev.name} (${rev.model})` : rev.model))
+                .when(!!rev.focus, (e) => e.child(div().truncate().text_size(10).text_color(t.dim).child(rev.focus))),
+            )
+            .child(
+              this.button(`rev-rm-${idx}`, "✕", t, {
+                selected: false,
+                disabled: busy,
+                onClick: (_e, cx) => {
+                  const next = current.filter((_, i) => i !== idx).map((r) => (r.name || r.focus ? r : r.model));
+                  this.saveReviewers(next, cx);
+                },
+              }),
+            ),
+        ),
+      )
+      .child(
+        this.selectDropdown("addReviewer", "+ Add reviewer…", addOptions, "", t, {
+          disabled: busy,
+          onSelect: (model, cx) => {
+            const next = [...current.map((r) => (r.name || r.focus ? r : r.model)), model];
+            this.saveReviewers(next, cx);
+          },
+        }),
+      )
+      .child(this.noteLine("reviewers", t));
+  }
+
   modelsBody(t) {
     const d = this.data;
-    return v_flex().gap(10)
-      .when(d.modelsShadowedByProject, (el) => el.child(div().text_size(11).text_color(t.working).child("This project's config sets models: it replaces the whole section, so changes here show but do not apply in this project.")))
-      .children(MODEL_KEYS.map((k) => this.modelRow(k, t)));
+    return v_flex()
+      .gap(10)
+      .when(d.modelsShadowedByProject, (el) =>
+        el.child(div().text_size(11).text_color(t.working).child("This project's config sets models: it replaces the whole section, so changes here show but do not apply in this project.")),
+      )
+      .children(MODEL_KEYS.map((k) => this.modelRow(k, t)))
+      .child(this.reviewersBlock(t));
   }
 
   // ---- local server
@@ -438,48 +1310,99 @@ export default class ShepherdConfig extends View {
     const busy = this.busy.has("local");
     const served = x?.reachable ? x.models : [];
     const needCtx = served.some((m) => !m.contextWindow && m.configured === undefined);
-    return v_flex().gap(6)
-      .child(h_flex().gap(6).items_center()
-        .child(div().size(7).rounded(4).bg(status.color))
-        .child(div().text_size(11).text_color(status.color).child(status.text))
-        .child(div().flex_1())
-        .child(this.button("detect", "Detect", t, { selected: false, disabled: this.busy.has("detect"), onClick: (_e, cx) => this.detect(cx, false) })))
+    return v_flex()
+      .gap(6)
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(div().size(7).rounded(4).bg(status.color))
+          .child(div().text_size(11).text_color(status.color).child(status.text))
+          .child(div().flex_1())
+          .child(this.button("detect", "Detect", t, { selected: false, disabled: this.busy.has("detect"), onClick: (_e, cx) => this.detect(cx, false) })),
+      )
       .child(this.input("base", t, busy))
-      .child(h_flex().gap(4).flex_wrap().children(d.local.presets.map((p) => this.button(`preset-${p.name}`, p.name, t, {
-        selected: this.text("base").trim() === p.baseUrl, disabled: busy, onClick: (_e, cx) => this.preset(p.baseUrl, cx),
-      }))))
+      .child(
+        h_flex()
+          .gap(4)
+          .flex_wrap()
+          .children(
+            d.local.presets.map((p) =>
+              this.button(`preset-${p.name}`, p.name, t, {
+                selected: this.text("base").trim() === p.baseUrl,
+                disabled: busy,
+                onClick: (_e, cx) => this.preset(p.baseUrl, cx),
+              }),
+            ),
+          ),
+      )
       .when(!!this.detected && this.detected.ok === false, (el) => el.child(div().text_size(11).text_color(t.blocked).child(this.detected.error)))
       .when(!!x && !x.reachable, (el) => el.child(div().text_size(11).text_color(t.dim).child(x.error)))
-      .when(served.length > 0, (el) => el.child(v_flex().gap(3)
-        .child(div().text_size(10).text_color(t.dim).child("SERVED"))
-        .children(served.map((m) => this.servedRow(m, t, busy)))
-        .when(needCtx, (e) => e.child(h_flex().gap(6).items_center()
-          .child(div().text_size(11).text_color(t.dim).child("context for Add"))
-          .child(this.numberInput("ctx", t, false, (dir, cx) => {
-            const cur = positive(this.text("ctx")) ?? 8192;
-            this.inputs.ctx.state.set_value(String(Math.max(4096, cur + dir * 4096)));
-            cx.notify();
-          }))))))
-      .when(d.local.models.length > 0, (el) => el.child(v_flex().gap(3)
-        .child(div().text_size(10).text_color(t.dim).child("IN CONFIG"))
-        .children(d.local.models.map((m) => h_flex().id(`cfg-${m.id}`).gap(6).items_center()
-          .child(div().flex_1().min_w(0).truncate().text_size(12).child(m.id))
-          .child(div().text_size(11).text_color(t.muted).child(ctxText(m.contextWindow)))
-          .child(this.button(`rm-${m.id}`, "✕", t, { selected: false, disabled: busy, onClick: (_e, cx) => this.removeLocal(m.id, cx) }))))))
+      .when(served.length > 0, (el) =>
+        el.child(
+          v_flex()
+            .gap(3)
+            .child(div().text_size(10).text_color(t.dim).child("SERVED"))
+            .children(served.map((m) => this.servedRow(m, t, busy)))
+            .when(needCtx, (e) =>
+              e.child(
+                h_flex()
+                  .gap(6)
+                  .items_center()
+                  .child(div().text_size(11).text_color(t.dim).child("context for Add"))
+                  .child(
+                    this.numberInput("ctx", t, false, (dir, cx) => {
+                      const cur = positive(this.text("ctx")) ?? 8192;
+                      this.inputs.ctx.state.set_value(String(Math.max(4096, cur + dir * 4096)));
+                      cx.notify();
+                    }),
+                  ),
+              ),
+            ),
+        ),
+      )
+      .when(d.local.models.length > 0, (el) =>
+        el.child(
+          v_flex()
+            .gap(3)
+            .child(div().text_size(10).text_color(t.dim).child("IN CONFIG"))
+            .children(
+              d.local.models.map((m) =>
+                h_flex()
+                  .id(`cfg-${m.id}`)
+                  .gap(6)
+                  .items_center()
+                  .child(div().flex_1().min_w(0).truncate().text_size(12).child(m.id))
+                  .child(div().text_size(11).text_color(t.muted).child(ctxText(m.contextWindow)))
+                  .child(this.button(`rm-${m.id}`, "✕", t, { selected: false, disabled: busy, onClick: (_e, cx) => this.removeLocal(m.id, cx) })),
+              ),
+            ),
+        ),
+      )
       .child(this.noteLine("local", t));
   }
 
   servedRow(m, t, busy) {
     const saved = m.configured !== undefined;
     const same = saved && (m.contextWindow === undefined || m.configured === m.contextWindow);
-    return v_flex().id(`served-${m.id}`).gap(1)
-      .child(h_flex().gap(6).items_center()
-        .child(div().flex_1().min_w(0).truncate().text_size(12).child(m.id))
-        .child(div().text_size(11).text_color(t.muted).child(m.contextWindow ? ctxText(m.contextWindow) : "ctx ?"))
-        .child(same
-          ? div().px(7).py(2).text_size(11).text_color(t.done).child("saved")
-          : this.button(`add-${m.id}`, saved ? "Update" : "Add", t, { selected: false, disabled: busy, onClick: (_e, cx) => this.addLocal(m, cx) })))
-      .when(!!m.mismatch, (el) => el.child(div().text_size(10).text_color(t.working).child(`Saved context is ${ctxText(m.configured)}; the server runs ${ctxText(m.contextWindow)}.`)));
+    return v_flex()
+      .id(`served-${m.id}`)
+      .gap(1)
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(div().flex_1().min_w(0).truncate().text_size(12).child(m.id))
+          .child(div().text_size(11).text_color(t.muted).child(m.contextWindow ? ctxText(m.contextWindow) : "ctx ?"))
+          .child(
+            same
+              ? div().px(7).py(2).text_size(11).text_color(t.done).child("saved")
+              : this.button(`add-${m.id}`, saved ? "Update" : "Add", t, { selected: false, disabled: busy, onClick: (_e, cx) => this.addLocal(m, cx) }),
+          ),
+      )
+      .when(!!m.mismatch, (el) =>
+        el.child(div().text_size(10).text_color(t.working).child(`Saved context is ${ctxText(m.configured)}; the server runs ${ctxText(m.contextWindow)}.`)),
+      );
   }
 
   // ---- plans
@@ -487,34 +1410,64 @@ export default class ShepherdConfig extends View {
   planRow(p, t) {
     const note = this.notes[`p:${p.id}`];
     const busy = this.busy.has(`p:${p.id}`);
-    return v_flex().id(`plan-${p.id}`).gap(2).py(5).border_b(1).border_color(t.border)
-      .child(h_flex().gap(6).items_center()
-        .child(div().w(8).text_size(10).text_color(t.accent).child(p.active ? "●" : ""))
-        .child(div().flex_1().min_w(0).truncate().font_semibold().text_size(12).text_color(p.closed ? t.dim : t.foreground).child(p.name))
-        .child(div().text_size(11).text_color(t.muted).child(p.unknown > 0 ? `${fmtUsd(p.spendUsd)}+?` : fmtUsd(p.spendUsd))))
+    const wt = p.worktree;
+    const hasSpace = wt ? spaces().some((sp) => sp.folder === wt) : false;
+    return v_flex()
+      .id(`plan-${p.id}`)
+      .gap(2)
+      .py(5)
+      .border_b(1)
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(div().w(8).text_size(10).text_color(t.accent).child(p.active ? "●" : ""))
+          .child(div().flex_1().min_w(0).truncate().font_semibold().text_size(12).text_color(p.closed ? t.dim : t.foreground).child(p.name))
+          .child(div().text_size(11).text_color(t.muted).child(p.unknown > 0 ? `${fmtUsd(p.spendUsd)}+?` : fmtUsd(p.spendUsd))),
+      )
       .child(div().pl(14).truncate().text_size(11).text_color(t.muted).child(p.state))
-      .child(div().pl(14).truncate().text_size(11).text_color(t.dim).child(`${ticketsText(p)}${p.branch ? ` · ${p.branch}` : ""}`))
-      .when(!p.closed, (el) => el.child(h_flex().pl(14).gap(4)
-        .when(!p.active, (e) => e.child(this.button(`act-${p.id}`, "Make active", t, { selected: false, disabled: busy, onClick: (_e, cx) => this.activate(p.id, cx) })))
-        .child(this.button(`close-${p.id}`, "Close", t, { selected: false, disabled: busy, onClick: (_e, cx) => this.closePlan(p.id, false, cx) }))
-        .when(!!note?.needsForce, (e) => e.child(this.button(`force-${p.id}`, "Close anyway", t, { selected: false, disabled: busy, onClick: (_e, cx) => this.closePlan(p.id, true, cx) })))))
-      .when(!!note, (el) => el.child(div().pl(14).text_size(11).text_color({ ok: t.done, warn: t.working, err: t.blocked }[note.kind]).child(note.text)));
+      .child(div().pl(14).truncate().text_size(11).text_color(t.dim).child(`${ticketsText(p)}${p.branch ? ` · ${p.branch}` : ""}${wt ? " · wt" : ""}`))
+      .when(!p.closed, (el) =>
+        el.child(
+          h_flex()
+            .pl(14)
+            .gap(4)
+            .flex_wrap()
+            .when(!p.active, (e) => e.child(this.button(`act-${p.id}`, "Make active", t, { selected: false, disabled: busy, onClick: (_e, cx) => this.activate(p.id, cx) })))
+            .when(!!wt, (e) =>
+              e.child(this.button(`wt-${p.id}`, hasSpace ? "Jump to Space" : "Open Space", t, { selected: false, disabled: false, onClick: () => this.openOrJumpSpace(p.name, wt) })),
+            )
+            .child(this.button(`close-${p.id}`, "Close", t, { selected: false, disabled: busy, onClick: (_e, cx) => this.closePlan(p.id, false, cx) }))
+            .when(!!note?.needsForce, (e) =>
+              e.child(this.button(`force-${p.id}`, "Close anyway", t, { selected: false, disabled: busy, onClick: (_e, cx) => this.closePlan(p.id, true, cx) })),
+            ),
+        ),
+      )
+      .when(!!note, (el) =>
+        el.child(div().pl(14).text_size(11).text_color({ ok: t.done, warn: t.working, err: t.blocked }[note.kind]).child(note.text)),
+      );
   }
 
   plansBody(t) {
     const plans = this.data.plans;
-    if (plans.length === 0) return div().text_size(11).text_color(t.dim).child("No plans in this project. /plan <request> starts one.");
+    if (plans.length === 0) return div().text_size(11).text_color(t.dim).child("No plans in this project. /shepherd:plan starts one.");
     return v_flex().children(plans.map((p) => this.planRow(p, t)));
   }
 
   // ---- costs
 
-  meter(label, spend, limit, status, t, unknown) {
+  meter(label, spend, limit, status, t, unknown, apiEquiv) {
     const color = status === "hard" ? t.blocked : status === "soft" ? t.working : t.accent;
-    return v_flex().gap(3)
-      .child(h_flex().gap(6)
-        .child(div().flex_1().min_w(0).truncate().text_size(12).child(label))
-        .child(div().text_size(12).text_color(status === "ok" ? t.foreground : color).child(`${fmtUsd(spend)}${unknown > 0 ? "+?" : ""} / ${fmtUsd(limit)}`)))
+    const equivNote = typeof apiEquiv === "number" && apiEquiv > spend + 0.0005 ? ` (API ≈ ${fmtUsd(apiEquiv)})` : "";
+    return v_flex()
+      .gap(3)
+      .child(
+        h_flex()
+          .gap(6)
+          .child(div().flex_1().min_w(0).truncate().text_size(12).child(label))
+          .child(div().text_size(12).text_color(status === "ok" ? t.foreground : color).child(`${fmtUsd(spend)}${unknown > 0 ? "+?" : ""} / ${fmtUsd(limit)}${equivNote}`)),
+      )
       .child(div().h(4).rounded(2).bg(t.raised).child(div().h(4).rounded(2).bg(color).w(`${Math.round(ratio(spend, limit) * 100)}%`)));
   }
 
@@ -523,35 +1476,91 @@ export default class ShepherdConfig extends View {
     const c = d.costs;
     const scope = this.scope === "plan" && c.plan ? c.plan : c.today;
     const rows = scope.byModel.slice(0, 8);
-    const notMetered = c.today.unknown + (c.plan?.unknown ?? 0);
-    return v_flex().gap(8)
-      .child(this.meter("Today", c.today.spendUsd, c.today.limitUsd, c.today.status, t, c.today.unknown))
-      .when(!!c.plan, (el) => el.child(this.meter(`Plan ${c.plan.name}`, c.plan.spendUsd, c.plan.limitUsd, c.plan.status, t, c.plan.unknown)))
+    const unknownHere = scope.unknown ?? 0;
+    const idleAction = d.budgets.idleAction ?? "warn";
+    return v_flex()
+      .gap(8)
+      .child(this.meter("Today (all repos)", c.today.spendUsd, c.today.limitUsd, c.today.status, t, c.today.unknown, c.today.apiEquivalentUsd))
+      .when(!!c.plan, (el) => el.child(this.meter(`Plan ${c.plan.name}`, c.plan.spendUsd, c.plan.limitUsd, c.plan.status, t, c.plan.unknown, c.plan.apiEquivalentUsd)))
       .when(!c.plan, (el) => el.child(div().text_size(11).text_color(t.dim).child("No active plan.")))
-      .child(h_flex().gap(4).items_center()
-        .child(div().text_size(10).text_color(t.dim).child("SPEND BY MODEL"))
-        .child(div().flex_1())
-        .child(this.button("scope-today", "Today", t, { selected: scope === c.today, disabled: false, onClick: (_e, cx) => { this.scope = "today"; cx.notify(); } }))
-        .child(this.button("scope-plan", "Plan", t, { selected: scope === c.plan, disabled: !c.plan, onClick: (_e, cx) => { this.scope = "plan"; cx.notify(); } })))
-      .child(scope.byModel.length === 0
-        ? div().text_size(11).text_color(t.dim).child("Nothing spent yet.")
-        : v_flex().gap(2).children(rows.map((r) => h_flex().gap(6)
-          .child(div().flex_1().min_w(0).truncate().text_size(11).child(r.name))
-          .child(div().text_size(11).text_color(t.muted).child(`${fmtUsd(r.spendUsd)}${r.unknown > 0 ? `+? (${r.unknown})` : ""}`)))))
-      .when(scope.byPhase.length > 0, (el) => el.child(h_flex().gap(4).flex_wrap().children(scope.byPhase.map((r) => div().px(6).py(1).rounded(4).bg(t.raised).text_size(11).text_color(t.muted).child(`${r.name} ${fmtUsd(r.spendUsd)}`)))))
-      .when(notMetered > 0 || c.unpriced.length > 0, (el) => el.child(v_flex().gap(2)
-        .when(notMetered > 0, (e) => e.child(div().text_size(11).text_color(t.working).child(`${notMetered} call(s) not metered or unpriced; budgets count them at an estimate (+?).`)))
-        .when(c.unpriced.length > 0, (e) => e.child(div().text_size(11).text_color(t.working).child(`No pricing row: ${c.unpriced.slice(0, 4).join(", ")}${c.unpriced.length > 4 ? "…" : ""}`)))))
-      .child(v_flex().gap(4).pt(6).border_t(1).border_color(t.border)
-        .child(div().text_size(10).text_color(t.dim).child("BUDGETS (USD)"))
-        .when(d.budgets.shadowedByProject, (el) => el.child(div().text_size(11).text_color(t.working).child("This project's config sets budgets: it replaces the whole section, so changes here do not apply in this project.")))
-        .child(h_flex().gap(6).items_center()
-          .child(div().text_size(11).text_color(t.muted).child("daily"))
-          .child(this.numberInput("dailyUsd", t, this.busy.has("budgets"), (dir, cx) => this.stepBudget("dailyUsd", dir, cx)))
+      .child(
+        h_flex()
+          .gap(4)
+          .items_center()
+          .child(div().text_size(10).text_color(t.dim).child("SPEND BY MODEL"))
           .child(div().flex_1())
-          .child(div().text_size(11).text_color(t.muted).child("task"))
-          .child(this.numberInput("taskUsd", t, this.busy.has("budgets"), (dir, cx) => this.stepBudget("taskUsd", dir, cx))))
-        .child(this.noteLine("budgets", t)));
+          .child(this.button("scope-today", "Today", t, { selected: scope === c.today, disabled: false, onClick: (_e, cx) => { this.scope = "today"; cx.notify(); } }))
+          .child(this.button("scope-plan", "Plan", t, { selected: scope === c.plan, disabled: !c.plan, onClick: (_e, cx) => { this.scope = "plan"; cx.notify(); } })),
+      )
+      .child(
+        scope.byModel.length === 0
+          ? div().text_size(11).text_color(t.dim).child("Nothing spent yet.")
+          : v_flex()
+              .gap(2)
+              .children(
+                rows.map((r) =>
+                  h_flex()
+                    .gap(6)
+                    .child(div().flex_1().min_w(0).truncate().text_size(11).child(r.name))
+                    .child(div().text_size(11).text_color(t.muted).child(`${fmtUsd(r.spendUsd)}${r.unknown > 0 ? `+? (${r.unknown})` : ""}`)),
+                ),
+              ),
+      )
+      .when(scope.byPhase.length > 0, (el) =>
+        el.child(
+          h_flex()
+            .gap(4)
+            .flex_wrap()
+            .children(scope.byPhase.map((r) => div().px(6).py(1).rounded(4).bg(t.raised).text_size(11).text_color(t.muted).child(`${r.name} ${fmtUsd(r.spendUsd)}`))),
+        ),
+      )
+      .when(unknownHere > 0 || c.unpriced.length > 0, (el) =>
+        el.child(
+          v_flex()
+            .gap(2)
+            .when(unknownHere > 0, (e) => e.child(div().text_size(11).text_color(t.working).child(`${unknownHere} unpriced call(s) in this view; budgets count them at an estimate (+?).`)))
+            .when(c.unpriced.length > 0, (e) => e.child(div().text_size(11).text_color(t.working).child(`No pricing row: ${c.unpriced.slice(0, 4).join(", ")}${c.unpriced.length > 4 ? "…" : ""}`))),
+        ),
+      )
+      .child(
+        v_flex()
+          .gap(6)
+          .pt(6)
+          .border_t(1)
+          .border_color(t.border)
+          .child(div().text_size(10).text_color(t.dim).child("BUDGETS & CACHE HOOK"))
+          .when(d.budgets.shadowedByProject, (el) =>
+            el.child(div().text_size(11).text_color(t.working).child("This project's config sets budgets: it replaces the whole section, so changes here do not apply in this project.")),
+          )
+          .child(
+            h_flex()
+              .gap(6)
+              .items_center()
+              .child(div().text_size(11).text_color(t.muted).child("daily"))
+              .child(this.numberInput("dailyUsd", t, this.busy.has("budgets"), (dir, cx) => this.stepBudget("dailyUsd", dir, cx)))
+              .child(div().flex_1())
+              .child(div().text_size(11).text_color(t.muted).child("task"))
+              .child(this.numberInput("taskUsd", t, this.busy.has("budgets"), (dir, cx) => this.stepBudget("taskUsd", dir, cx))),
+          )
+          .child(
+            h_flex()
+              .gap(6)
+              .items_center()
+              .child(div().text_size(11).text_color(t.muted).child("idle cache"))
+              .child(
+                div()
+                  .flex_1()
+                  .child(
+                    this.selectDropdown("idleAction", idleAction, IDLE_ACTIONS, idleAction, t, {
+                      disabled: this.busy.has("budgets"),
+                      width: 190,
+                      onSelect: (val, cx) => this.saveIdleAction(val, cx),
+                    }),
+                  ),
+              ),
+          )
+          .child(this.noteLine("budgets", t)),
+      );
   }
 
   // ---- render
@@ -562,10 +1571,23 @@ export default class ShepherdConfig extends View {
 
   render(cx) {
     const t = theme();
-    const root = v_flex().id("shepherd-config").size_full().bg(t.surface).text_color(t.foreground).text_size(12);
+    const root = v_flex()
+      .id("shepherd-config")
+      .size_full()
+      .bg(t.surface)
+      .text_color(t.foreground)
+      .text_size(12)
+      .on_size_change((sz, cx) => {
+        if (sz?.width && Math.abs(sz.width - this.panelWidth) > 8) {
+          this.panelWidth = sz.width;
+          cx.notify();
+        }
+      });
+
     if (this.start && this.location() !== this.start && !this.loading) this.refresh(cx);
     if (this.failure && !this.data) return root.child(this.banner(this.failure, t.blocked, t));
     if (!this.data) return root.child(div().p(12).text_color(t.muted).child("Loading…"));
+
     const d = this.data;
     const c = d.costs;
     const tone = (status) => (status === "hard" ? t.blocked : status === "soft" ? t.working : t.dim);
@@ -573,30 +1595,72 @@ export default class ShepherdConfig extends View {
     const open = d.plans.filter((p) => !p.closed).length;
     const current = d.plans.find((p) => p.active && !p.closed);
     const summaries = {
-      models: {},
+      models: { text: (d.reviewReviewers?.length ?? 0) > 0 ? `${d.reviewReviewers.length} reviewers` : "" },
       local: this.localStatus(t),
       plans: { text: current ? `${current.name}${open > 1 ? ` · ${open} open` : ""}` : `${open} open` },
-      costs: { text: `${c.plan ? `plan ${usd(c.plan)} · ` : ""}today ${usd(c.today)}`, color: tone(c.plan?.status === "hard" || c.today.status === "hard" ? "hard" : c.plan?.status === "soft" || c.today.status === "soft" ? "soft" : "ok") },
+      costs: {
+        text: `${c.plan ? `plan ${usd(c.plan)} · ` : ""}today ${usd(c.today)}`,
+        color: tone(c.plan?.status === "hard" || c.today.status === "hard" ? "hard" : c.plan?.status === "soft" || c.today.status === "soft" ? "soft" : "ok"),
+      },
     };
-    // The plan this repo is on and what it has spent, always in view (the sections below may be collapsed).
-    const planBar = h_flex().gap(6).px(10).py(6).items_center().border_b(1).border_color(t.border)
+
+    const planBar = h_flex()
+      .gap(6)
+      .px(10)
+      .py(6)
+      .items_center()
+      .border_b(1)
+      .border_color(t.border)
       .when(!current, (el) => el.child(div().text_size(11).text_color(t.dim).child("No active plan. /shepherd:plan starts one.")))
-      .when(!!current, (el) => el
-        .child(v_flex().flex_1().min_w(0)
-          .child(div().truncate().text_size(12).font_semibold().child(current.name))
-          .child(div().truncate().text_size(11).text_color(t.muted).child(current.state)))
-        .when(!!c.plan, (e) => e.child(div().text_size(12).text_color(c.plan.status === "ok" ? t.foreground : tone(c.plan.status)).child(`${usd(c.plan)} / ${fmtUsd(c.plan.limitUsd)}`))));
-    const bodies = { models: () => this.modelsBody(t), local: () => this.localBody(t), plans: () => this.plansBody(t), costs: () => this.costsBody(t) };
+      .when(!!current, (el) =>
+        el
+          .child(
+            v_flex()
+              .flex_1()
+              .min_w(0)
+              .child(div().truncate().text_size(12).font_semibold().child(current.name))
+              .child(div().truncate().text_size(11).text_color(t.muted).child(current.state)),
+          )
+          .when(!!c.plan, (e) =>
+            e.child(div().text_size(12).text_color(c.plan.status === "ok" ? t.foreground : tone(c.plan.status)).child(`${usd(c.plan)} / ${fmtUsd(c.plan.limitUsd)}`)),
+          ),
+      );
+
+    const subStrip = this.liveSubAgentsBar(t);
+    const tkBoard = this.ticketBoard(t);
+    const bodies = {
+      models: () => this.modelsBody(t),
+      local: () => this.localBody(t),
+      plans: () => this.plansBody(t),
+      costs: () => this.costsBody(t),
+    };
+
     return root
-      .child(h_flex().gap(6).px(10).py(7).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().text_size(13).child("shepherd"))
-        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.root?.split("/").pop() ?? ""))
-        .child(this.button("refresh", this.loading ? "…" : "↻", t, { selected: false, disabled: false, onClick: (_e, cx) => this.refresh(cx) })))
+      .child(
+        h_flex()
+          .gap(6)
+          .px(10)
+          .py(7)
+          .items_center()
+          .border_b(1)
+          .border_color(t.border)
+          .child(div().font_semibold().text_size(13).child("shepherd"))
+          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.root?.split("/").pop() ?? ""))
+          .child(this.button("refresh", this.loading ? "…" : "↻", t, { selected: false, disabled: false, onClick: (_e, cx) => this.refresh(cx) })),
+      )
       .child(planBar)
-      .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar()
-        .when(!!this.failure, (el) => el.child(this.banner(this.failure, t.blocked, t)))
-        .children(d.errors.map((e) => this.banner(e, t.blocked, t)))
-        .children(d.warnings.slice(0, 3).map((w) => div().px(10).pt(6).text_size(11).text_color(t.working).child(w)))
-        .children(SECTIONS.map(([id, title]) => this.section(id, title, summaries[id], bodies[id](), t))));
+      .child(this.cockpitBar(current, d, t))
+      .when(!!subStrip, (el) => el.child(subStrip))
+      .when(!!tkBoard, (el) => el.child(tkBoard))
+      .child(
+        v_flex()
+          .flex_1()
+          .min_h(0)
+          .overflow_y_scrollbar()
+          .when(!!this.failure, (el) => el.child(this.banner(this.failure, t.blocked, t)))
+          .children(d.errors.map((e) => this.banner(e, t.blocked, t)))
+          .children(d.warnings.slice(0, 3).map((w) => div().px(10).pt(6).text_size(11).text_color(t.working).child(w)))
+          .children(SECTIONS.map(([id, title]) => this.section(id, title, summaries[id], bodies[id](), t))),
+      );
   }
 }

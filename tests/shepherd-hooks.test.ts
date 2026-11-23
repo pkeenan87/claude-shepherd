@@ -201,7 +201,7 @@ describe("hook prompt: budgets", () => {
     expect(first.json?.decision).toBeUndefined();
     expect((await t.prompt("go again")).out).toBe("");
     t.clock.at += 24 * 60 * MIN; // the next day: the spend no longer counts, so no budget warning (a day idle is the idle warning's)
-    expect((await t.prompt("go")).json?.systemMessage).toBeUndefined();
+    expect(String((await t.prompt("go")).json?.systemMessage ?? "")).not.toContain("Budget warning");
   });
 
   it("counts the daily budget across every registered repo", async () => {
@@ -226,30 +226,43 @@ describe("hook prompt: idle warning", () => {
     return t;
   }
 
-  it("warns when Stop ran before the reply reached the transcript: the prompt reads the reply then", async () => {
+  it("warns non-blockingly when Stop ran before the reply reached the transcript: the prompt reads the reply then", async () => {
     const t = await setup();
     await t.begin();
     await t.stop(); // Claude Code has not written the reply yet
     appendFileSync(t.transcript, line("late", usage(10, 10, 250_000), new Date(t.clock.at).toISOString()));
     t.clock.at += 125 * MIN;
-    expect((await t.prompt("hello")).json?.decision).toBe("block");
+    const res = await t.prompt("hello");
+    expect(res.json?.decision).toBeUndefined();
+    expect(String(res.json?.systemMessage)).toContain("250k tokens");
   });
 
-  it("blocks over both thresholds, with tokens, idle time and the cache-write price", async () => {
+  it("warns non-blockingly by default over both thresholds, with tokens, idle time and the cache-write price", async () => {
     const t = await idle();
-    const blocked = await t.prompt("hello");
+    const warned = await t.prompt("hello");
+    expect(warned.json?.decision).toBeUndefined();
+    const msg = String(warned.json?.systemMessage);
+    expect(msg).toContain("250k tokens");
+    expect(msg).toContain("idle 2h 5m");
+    expect(msg).toContain("probably expired");
+    expect(msg).toContain("≈$1.56 at claude-opus-5-5 rates");
+    expect(msg).toContain("/compact");
+  });
+
+  it("blocks once per idle stretch when budgets.idleAction is block, and stays silent when off", async () => {
+    const blocking = await idle(CONFIG(", idleAction: block"));
+    const blocked = await blocking.prompt("hello");
     expect(blocked.json?.decision).toBe("block");
-    const reason = String(blocked.json?.reason);
-    expect(reason).toContain("250k tokens");
-    expect(reason).toContain("idle 2h 5m");
-    expect(reason).toContain("probably expired");
-    expect(reason).toContain("≈$1.56 at claude-opus-5-5 rates");
-    expect(reason).toContain("Send it again (or any message) to go ahead, this warning shows once per idle stretch; or run /clear");
+    expect(String(blocked.json?.reason)).toContain("250k tokens");
+    expect((await blocking.prompt("proceed")).out).toBe("");
+
+    const silent = await idle(CONFIG(", idleAction: off"));
+    expect((await silent.prompt("hello")).out).toBe("");
   });
 
   it("warns once per idle stretch: after that any message goes through, however late", async () => {
     const t = await idle();
-    expect((await t.prompt("hello")).json?.decision).toBe("block");
+    expect(String((await t.prompt("hello")).json?.systemMessage)).toContain("250k tokens");
     t.clock.at += 18 * MIN;
     expect((await t.prompt("proceed")).out).toBe(""); // a different message, long after the warning
     t.clock.at += 16 * MIN;
@@ -258,7 +271,7 @@ describe("hook prompt: idle warning", () => {
     appendFileSync(t.transcript, line("m2", usage(10, 10, 250_000), new Date(t.clock.at).toISOString()));
     await t.stop();
     t.clock.at += 125 * MIN;
-    expect((await t.prompt("hello")).json?.decision).toBe("block");
+    expect(String((await t.prompt("hello")).json?.systemMessage)).toContain("250k tokens");
     expect((await t.prompt("hello")).out).toBe("");
   });
 
@@ -281,12 +294,13 @@ describe("hook prompt: idle warning", () => {
     expect((await noTokens.prompt("hello")).out).toBe("");
   });
 
-  it("lets a background task's notification through: nobody would re-send it", async () => {
+  it("lets injected notifications through: nobody would re-send them", async () => {
     const t = await idle();
     const note = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>";
     expect((await t.prompt(note)).out).toBe("");
+    expect((await t.prompt("<bash-notification>done</bash-notification>")).out).toBe("");
     expect(existsSync(path.join(t.shepherd, "sessions", "sess1.pending.json"))).toBe(false);
-    expect((await t.prompt("proceed")).json?.decision).toBe("block"); // a typed prompt still warns
+    expect(String((await t.prompt("proceed")).json?.systemMessage)).toContain("250k tokens"); // a typed prompt still warns
   });
 
   it("stays quiet after /compact: the context is only the summary, and the compaction is the last activity", async () => {
@@ -301,12 +315,15 @@ describe("hook prompt: idle warning", () => {
     appendFileSync(t.transcript, line("after", usage(10, 10, 150_000), new Date(t.clock.at).toISOString()));
     await t.stop();
     t.clock.at += 125 * MIN;
-    expect(String((await t.prompt("hello")).json?.reason)).toContain("150k tokens");
+    expect(String((await t.prompt("hello")).json?.systemMessage)).toContain("150k tokens");
   });
 
   it("omits the dollar figure with no pricing row", async () => {
-    const t = await idle(CONFIG().replace(OPUS, "claude-other"));
-    const reason = String((await t.prompt("hello")).json?.reason);
+    const t = await setup(CONFIG().replace(OPUS, "claude-other"));
+    appendFileSync(t.transcript, line("m1", usage(100, 40, 250_000), new Date(START).toISOString(), "claude-unpriced-99"));
+    await t.stop();
+    t.clock.at += 125 * MIN;
+    const reason = String((await t.prompt("hello")).json?.systemMessage);
     expect(reason).toContain("250k tokens");
     expect(reason).not.toContain("$");
   });
@@ -391,10 +408,14 @@ describe("shepherd status and cost", () => {
     expect((await t.cli(["status"])).out).toBe("shepherd · no plan · today $0.00/$75\n");
     await addTask(workflow(t.repo), "fix");
     await t.spend(t.repo, 1_000_000);
-    expect((await t.cli(["status"])).out).toBe("shepherd · fix · plan $5.00/$20 · today $5.00/$75\n");
+    expect((await t.cli(["status"])).out).toBe("shepherd · fix [planning] · plan $5.00/$20 · today $5.00/$75\n");
     // As Claude Code's status line: the folder comes from the JSON on stdin, not the process's cwd.
     const elsewhere = mkdtempSync(path.join(tmpdir(), "elsewhere-"));
-    expect((await t.cli(["status", "--statusline"], { cwd: elsewhere, workspace: { current_dir: t.repo } }, elsewhere)).out).toBe("shepherd · fix · plan $5.00/$20 · today $5.00/$75\n");
+    expect((await t.cli(["status", "--statusline"], { cwd: elsewhere, workspace: { current_dir: t.repo } }, elsewhere)).out).toBe("shepherd · fix [planning] · plan $5.00/$20 · today $5.00/$75\n");
+    const jsonStatus = await t.cli(["status", "--json"]);
+    expect(jsonStatus.code).toBe(0);
+    expect(jsonStatus.json?.task?.name).toBe("fix");
+    expect(jsonStatus.json?.budget?.taskSpentUsd).toBe(5);
     const bare = mkdtempSync(path.join(tmpdir(), "not-a-repo-"));
     expect(await t.cli(["status"], {}, bare)).toMatchObject({ code: 0, out: "shepherd · no repo\n" });
   });

@@ -32,8 +32,12 @@ const SCREEN_HISTORY_LINES = 200;
  */
 export function tabName(task: string, ticketId: string, attempt: number, at = Date.now(), prefix = "shep"): string {
   const clean = (text: string) => text.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
-  const tail = `-${clean(ticketId)}-${attempt}-${Math.floor(at / 1000).toString(36).slice(-4)}`;
-  return `${prefix}-${clean(task || "task").slice(0, Math.max(1, 32 - prefix.length - 1 - tail.length))}${tail}`.slice(0, 32);
+  const stamp = Math.floor(at / 1000).toString(36).slice(-4);
+  const ticket = clean(ticketId).slice(0, 12);
+  const tail = `-${ticket}-${attempt}-${stamp}`;
+  const room = 32 - prefix.length - 1 - tail.length;
+  if (room >= 1) return `${prefix}-${clean(task || "task").slice(0, room)}${tail}`;
+  return `${prefix}${tail}`.slice(0, 32);
 }
 
 export const messageOf = (error: unknown): string => redact(error instanceof Error && error.message ? error.message : String(error));
@@ -121,38 +125,43 @@ export async function openTab(input: OpenTabInput): Promise<Tab> {
   const readyTimeoutMs = input.readyTimeoutMs ?? READY_TIMEOUT_MS;
   const address = await client.run({ argv: withPath(input.argv, "path" in input ? input.path : process.env.PATH), cwd: input.cwd, name: input.name, labels: { ...(input.space ? { "herdr.space": input.space, "herdr.tab": input.name } : {}), ...input.labels } });
 
-  /** Follows `current` until the tab is neither working nor blocked, or `limitMs` (counted from `started`) has passed. */
+  /** Follows `current` until the tab is neither working nor blocked, or `limitMs` of active (non-blocked) time has passed. */
   async function settle(current: WaitResult, started: number, limitMs: number): Promise<WaitResult> {
     let announced = false;
+    let blockedMs = 0;
     for (;;) {
-      const elapsed = now() - started;
+      const wall = now() - started;
+      const activeElapsed = Math.max(0, wall - blockedMs);
       if (current.status === "blocked") {
-        // Waiting for the person (an approval): keep waiting for as long as a turn may take.
+        // Waiting for the person (an approval): keep waiting up to turnTimeoutMs without burning the active limit.
         if (!announced) {
           announced = true;
           input.progress(input.blockedNotice);
         }
-        if (elapsed >= turnTimeoutMs) return { status: "timeout", exitCode: null, timedOut: true };
+        if (wall >= turnTimeoutMs) return { status: "timeout", exitCode: null, timedOut: true };
+        const pauseAt = now();
         await sleep(input.pollMs ?? 3000);
-      } else if (current.status !== "working") return current;
-      else if (elapsed >= limitMs) return { status: "timeout", exitCode: null, timedOut: true };
-      current = await client.waitIdle(address, { timeoutMs: Math.max(1000, limitMs - elapsed) });
+        blockedMs += Math.max(0, now() - pauseAt);
+        current = await client.waitIdle(address, { timeoutMs: Math.max(1000, Math.min(turnTimeoutMs - (now() - started), limitMs)) });
+        continue;
+      }
+      if (current.status !== "working") return current;
+      if (activeElapsed >= limitMs) return { status: "timeout", exitCode: null, timedOut: true };
+      current = await client.waitIdle(address, { timeoutMs: Math.max(1000, limitMs - activeElapsed) });
     }
   }
 
   const minutes = (ms: number) => Math.round(ms / 60_000);
   const readyAt = now();
-  // Verified live: an agent showing a first-run dialog (Claude Code's "trust this folder?") reports no status at all,
-  // not `blocked`. So after a short look the person is told the tab needs them, and the wait stretches to a turn's length.
-  // Nothing is ever typed before the program reports ready: a send into such a dialog would answer it.
-  // An agent with a known trust prompt and no flag to skip it (agy, grok) gets it answered for this folder, the one being
-  // built: its screen is read every few seconds until it reports ready, the prompt (with its "yes" option selected) shows,
-  // or the nudge time passes. Nothing else is ever pressed.
+  let earlyReady: WaitResult | undefined;
   if (input.trust) {
     for (;;) {
       const look = await client.waitIdle(address, { timeoutMs: TRUST_LOOK_MS });
       // A trust prompt shows as no status yet (timed out) or as `blocked` (agy, live): look at the screen for either.
-      if (!look.timedOut && look.status !== "blocked") break;
+      if (!look.timedOut && look.status !== "blocked") {
+        earlyReady = look;
+        break;
+      }
       let screen = "";
       try {
         screen = await client.read(address, 0);
@@ -167,7 +176,7 @@ export async function openTab(input: OpenTabInput): Promise<Tab> {
       if (now() - readyAt >= Math.min(READY_NUDGE_MS, readyTimeoutMs)) break;
     }
   }
-  let first = await client.waitIdle(address, { timeoutMs: Math.max(1000, Math.min(READY_NUDGE_MS, readyTimeoutMs) - (now() - readyAt)) });
+  let first = earlyReady ?? (await client.waitIdle(address, { timeoutMs: Math.max(1000, Math.min(READY_NUDGE_MS, readyTimeoutMs) - (now() - readyAt)) }));
   let readyLimit = readyTimeoutMs;
   if (first.timedOut && input.silentHint && (await client.reported(address)) === false) throw new Error(`${input.silentHint} (herdr sub-agent ${input.name} is left open)`);
   if (first.timedOut && readyTimeoutMs > READY_NUDGE_MS) {
@@ -176,7 +185,7 @@ export async function openTab(input: OpenTabInput): Promise<Tab> {
     first = await client.waitIdle(address, { timeoutMs: Math.max(1000, readyLimit - (now() - readyAt)) });
   }
   const ready = await settle(first, readyAt, readyLimit);
-  const notReady = waitProblem(ready, address, minutes(readyTimeoutMs));
+  const notReady = waitProblem(ready, address, minutes(readyLimit));
   if (notReady) throw new Error(`${notReady} before the program was ready`);
 
   return {
@@ -188,7 +197,23 @@ export async function openTab(input: OpenTabInput): Promise<Tab> {
       const quiet = await settle(await client.waitIdle(address, { timeoutMs: turnTimeoutMs }), started, turnTimeoutMs);
       const before = waitProblem(quiet, address, minutes(turnTimeoutMs));
       if (before) throw new Error(before);
-      const sent = await client.send(address, text, { timeoutMs: Math.max(1000, turnTimeoutMs - (now() - started)) });
+      // After startup or answering a trust prompt, hc send can briefly report "is still starting: its output has not settled";
+      // retry until the TUI's screen settles instead of failing the turn.
+      const sendRetryMs = input.pollMs ?? 1000;
+      const maxSettleWaitMs = Math.min(30_000, turnTimeoutMs);
+      let sent: WaitResult;
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          sent = await client.send(address, text, { timeoutMs: Math.max(1000, turnTimeoutMs - (now() - started)) });
+          break;
+        } catch (error) {
+          const msg = messageOf(error);
+          if (!/still starting|output has not settled/i.test(msg) || now() - started >= maxSettleWaitMs || attempt >= 20) {
+            throw error;
+          }
+          await sleep(sendRetryMs);
+        }
+      }
       const problem = waitProblem(await settle(sent, started, turnTimeoutMs), address, minutes(turnTimeoutMs));
       if (problem) throw new Error(problem);
     },

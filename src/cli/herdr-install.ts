@@ -54,11 +54,19 @@ export function herdrInstall(args: string[], out: (text: string) => void, err: (
   mkdirSync(target, { recursive: true });
   // The mod is a few files: copy them over a clean folder so a file removed from the plugin does not linger.
   // gpui-kit.d.ts and jsconfig.json are editor types for working on the mod; the installed mod does not need them.
-  for (const name of ["main.js", "lib.js", "edit.js", "mod.json", CLI_FILE, ...EDITOR_ONLY]) rmSync(path.join(target, name), { force: true });
+  for (const name of ["main.js", "lib.js", "link.js", "edit.js", "mod.json", CLI_FILE, ...EDITOR_ONLY]) rmSync(path.join(target, name), { force: true });
   cpSync(source, target, { recursive: true, filter: (file) => !EDITOR_ONLY.includes(path.basename(file)) });
   copyFileSync(bundle, path.join(target, CLI_FILE));
   writeFileSync(path.join(target, "install.json"), JSON.stringify({ cli: ["node", path.join(target, CLI_FILE)] }, null, 2) + "\n");
   out(`shepherd-config mod installed in ${target}\n`);
+  const viewerSource = path.join(root, "herdr", "shepherd-viewer");
+  if (existsSync(viewerSource)) {
+    const viewerTarget = path.join(appHome, "mods", "shepherd-viewer");
+    mkdirSync(viewerTarget, { recursive: true });
+    for (const name of ["main.js", "mod.json", ...EDITOR_ONLY]) rmSync(path.join(viewerTarget, name), { force: true });
+    cpSync(viewerSource, viewerTarget, { recursive: true, filter: (file) => !EDITOR_ONLY.includes(path.basename(file)) });
+    out(`shepherd-viewer mod installed in ${viewerTarget}\n`);
+  }
   if (!args.includes("--no-dock")) {
     for (const line of dockLayoutFile(appHome, layout ? { layout } : {}).lines) out(`${line}\n`);
   }

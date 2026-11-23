@@ -36,8 +36,9 @@ describe("shepherd herdr-install", () => {
     const { code, out } = await install(appHome, "--no-dock");
     expect(code).toBe(0);
     expect(out).toContain(`shepherd-config mod installed in ${mod}`);
-    expect(readdirSync(mod).sort()).toEqual(["install.json", "lib.js", "main.js", "mod.json", "shepherd-config.mjs"]);
-    expect(JSON.parse(readFileSync(path.join(mod, "mod.json"), "utf8"))).toEqual({ place: "right", size: 340 });
+    expect(readdirSync(mod).sort()).toEqual(["install.json", "lib.js", "link.js", "main.js", "mod.json", "shepherd-config.mjs"]);
+    expect(JSON.parse(readFileSync(path.join(mod, "mod.json"), "utf8"))).toMatchObject({ place: "right", size: 360, focusable: true });
+    expect(existsSync(path.join(appHome, "mods", "shepherd-viewer", "main.js"))).toBe(true);
     const cli = JSON.parse(readFileSync(path.join(mod, "install.json"), "utf8")).cli as string[];
     expect(cli).toEqual(["node", path.join(mod, "shepherd-config.mjs")]);
     expect(readFileSync(cli[1]!, "utf8")).toBe(readFileSync(path.join(repo, "dist", "shepherd-config.mjs"), "utf8"));

@@ -345,7 +345,9 @@ describe("the per-ticket review in a herdr sub-agent", () => {
     const [implementer, ...reviews] = t.fake.tabs;
     expect(implementer!.sends).toHaveLength(2);
     expect(implementer!.sends[1]).toContain("retry loops forever");
-    expect(reviews).toHaveLength(2);
+    // Round 2 reuses the warm round-1 reviewer tab instead of cold-starting a second tab.
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]!.sends).toHaveLength(2);
     expect(gitIn(t.repo, "log", "--format=%s", "-1")).not.toContain("01: Step 01");
     expect(gitIn(t.repo, "log", "--format=%s", `${before}..HEAD`)).toBe("");
   });

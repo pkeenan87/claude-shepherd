@@ -92,6 +92,9 @@ export function fakeHerdrClient(options: FakeHerdrClientOptions = {}) {
       return options.self ?? { terminal: "t0", space: "sp1" };
     },
     async run(run) {
+      if (run.name && (!/^[a-z0-9][a-z0-9_.-]{0,31}$/.test(run.name) || /^t\d+$/.test(run.name))) {
+        throw new HerdrError(`run --bg --name ${run.name} failed: bad name "${run.name}": use 1-32 of a-z 0-9 - _ . starting with a letter or digit, not shaped like an id (t7)`, "hc run");
+      }
       const refused = options.failRun?.(run);
       if (refused) throw new HerdrError(`run --bg failed: ${refused}`, "hc run");
       const address = `t${tabs.length + 1}`;

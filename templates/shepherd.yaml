@@ -37,6 +37,8 @@
 ## Agents: overrides of the built-in agents, or new ones. run is the command that starts the agent; modelFlag picks
 ## its model for agent:<name>/<model>. Built in: claude, codex, cursor-agent, grok, agy, gemini, opencode. A run you set
 ## replaces the built-in command, flags included (docs/configuration.md lists the defaults).
+## Optional per-agent billing: "api" (default) or "subscription" (records $0 billed while preserving API-equivalent value
+## in /shepherd:cost). For cursor-agent, routingFeePerMillionUsd adds a third-party router surcharge (e.g. 0.25).
 
 # agents:
 #   claude: { run: [claude, --permission-mode, auto], modelFlag: --model }   # the built-in default, written out
@@ -49,8 +51,11 @@
 #   dailyUsd: 75            # all spend today
 #   softWarningRatio: 0.8   # warn at 80% of a budget
 #   unknownCallUsd: 0.05    # what a call with an unknown cost counts as, in budget math only
-#   idleWarnMinutes: 60     # ask before a message re-sends a big context after this long idle (0 = off)
+#   idleWarnMinutes: 60     # notice when a big chat was idle this long and prompt cache likely expired (0 = off)
 #   idleWarnTokens: 100000  # ...but only at this many context tokens or more (0 = off)
+#   idleAction: warn        # warn (non-blocking notice, default), block (hold once per idle stretch), or off
+## Optional IANA timezone for daily budget rollovers (default UTC):
+##   timeZone: America/New_York
 
 ## ---------------------------------------------------------------------------------------------------------------
 ## Routing: how far a failed ticket climbs, and how long one attempt may run.
@@ -60,7 +65,13 @@
 #   maxTicketTurns: 100       # assistant turns a /build ticket attempt may take before it is told to wrap up
 
 ## ---------------------------------------------------------------------------------------------------------------
-## The review model: the per-ticket review of /build gates each commit, and /review adds one advisory model pass.
+## The review model: the per-ticket review of /build gates each commit, and /review adds an advisory model pass.
+## Optional multi-model /review panel (runs distinct providers in parallel with cross-model consensus):
+##   reviewers:
+##     - { model: "agent:codex/gpt-6.2-astra", name: Astra, focus: "correctness and edge cases" }
+##     - { model: "agent:agy/gemini-4-argon", name: Argon, focus: "architecture and security" }
+## Optional high-risk per-ticket escalation (used on high-difficulty or security-sensitive tickets):
+##   highRiskReviewers: ["agent:codex/gpt-6.2-astra"]
 
 # review:
 #   tickets: true           # false: no per-ticket review in /build at all
@@ -68,9 +79,8 @@
 #   timeoutMs: 300000       # one per-ticket review turn (never less than 15 minutes; /review has no limit of its own)
 
 ## ---------------------------------------------------------------------------------------------------------------
-## Pricing: USD per million tokens. A model with no row has an unknown cost (a local model is $0).
-## PLACEHOLDER prices: subscription models (ChatGPT, Claude, SuperGrok) have no per-token cost, so they are 0 here;
-## a per-token API key bills for real, so take those prices from the provider's rate card.
+## Pricing: USD per million tokens. Official 2026 list prices for Anthropic, OpenAI/Codex, Google/Gemini/AGY, and
+## xAI/Grok are built in by default (local/ models are $0). Rows you add here override or extend the defaults.
 
 # pricing:
 #   - { provider: xai, model: grok-4.7, effectiveFrom: "2026-01-01", inputPerMillionUsd: 0, outputPerMillionUsd: 0, cacheReadPerMillionUsd: 0, cacheWritePerMillionUsd: 0 }
@@ -80,6 +90,10 @@
 
 ## ---------------------------------------------------------------------------------------------------------------
 ## Everything else.
+## Optional worktrees during /shepherd:plan (aligned with Herdr's worktrees.directory, default ~/.herdr/worktrees):
+## worktree:
+##   default: ask            # ask | always | never
+##   dir: ~/.herdr/worktrees
 
 # build:
 #   visibleTabs: false      # /build runs each ticket and review as a paneless herdr sub-agent of the Claude Code terminal (listed in herdr's agents list).

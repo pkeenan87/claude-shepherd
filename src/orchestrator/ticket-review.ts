@@ -1,11 +1,12 @@
-import { ranModelText } from "../agents.js";
+import { parseTicketModel, ranModelText } from "../agents.js";
+import { fromMicroUsd, normalizeReviewerSpec, toMicroUsd } from "../config.js";
 import { rungOf, ticketDifficulty, type CarriedFinding, type Difficulty, type TaskState, type Ticket, type TicketReviewFinding, type TicketReviewRecord, type TicketRun } from "../domain.js";
 import { redact } from "../redact.js";
 import { SCORE_RULES, TICKET_FAIL_RISK, compareRisk, findingKey, keepFinding, risk, scoreLabel } from "../review/risk.js";
 import { droppedNote, firstJson, readFinding, type ParsedFinding } from "../review/scored-json.js";
 import { iso, type WorkflowContext } from "./context.js";
 import { reviewModel, routeFor } from "./routing.js";
-import { askInTab } from "./ticket-review-tab.js";
+import { askInTab, type WarmReviewTab } from "./ticket-review-tab.js";
 
 /**
  * The per-ticket review of /build. It runs in a herdr tab (`ticket-review-tab.ts`), where the reviewer reads the checkout
@@ -200,6 +201,38 @@ export async function reviewTicket(ctx: WorkflowContext, state: TaskState, ticke
   }
 }
 
+/**
+ * Warm reviewer tab cache keyed by `<taskId>:<ticketId>`: keeps a round-1 failing reviewer tab open
+ * so round 2 of the same ticket sends a short follow-up prompt instead of cold-starting a new tab.
+ */
+const warmTabs = new Map<string, WarmReviewTab>();
+
+/** Closes and removes any warm per-ticket reviewer tab held for this task/ticket. */
+export async function closeWarmTicketReview(taskId: string, ticketId: string): Promise<void> {
+  const key = `${taskId}:${ticketId}`;
+  const warm = warmTabs.get(key);
+  if (!warm) return;
+  warmTabs.delete(key);
+  await warm.tab.close().catch(() => undefined);
+}
+
+/** Closes every warm per-ticket reviewer tab (called on SIGINT/SIGTERM or build exit). */
+export async function closeAllWarmTicketReviews(): Promise<void> {
+  const items = [...warmTabs.values()];
+  warmTabs.clear();
+  await Promise.allSettled(items.map((warm) => warm.tab.close()));
+}
+
+/** Follow-up prompt sent to an already-open reviewer tab on round 2 after the implementer fixed round-1 findings. */
+function followUpReviewPrompt(outFile: string): string {
+  return [
+    "The implementer addressed the findings from round 1 and the checks passed again.",
+    "Re-run `git diff HEAD` (and `git status` for untracked files) to verify the fixes and check for any new defects.",
+    "Do not modify any file in the repository.",
+    `Write ONLY a JSON object to ${outFile} (same schema: {"summary": ..., "findings": [...]}), then say "done" and stop.`,
+  ].join("\n");
+}
+
 async function reviewTicketUnsafe(ctx: WorkflowContext, state: TaskState, ticket: Ticket, run: TicketRun): Promise<TicketReviewOutcome | undefined> {
   const progress = (line: string) => ctx.progress?.(`Ticket ${ticket.id} review: ${line}`);
   const attempt = run.attempts;
@@ -214,11 +247,100 @@ async function reviewTicketUnsafe(ctx: WorkflowContext, state: TaskState, ticket
     warning: `Ticket ${ticket.id} was committed without its review (unavailable: ${why}).`,
   });
 
+  // Escalate to `review.highRiskReviewers` on `high`-difficulty or security-sensitive tickets when configured.
+  const highRisk = (ticketDifficulty(ticket) === "high" || state.plan?.securitySensitive === true) && (ctx.config.review.highRiskReviewers?.length ?? 0) > 0;
+  if (highRisk) {
+    await closeWarmTicketReview(state.taskId, ticket.id);
+    const specs = ctx.config.review.highRiskReviewers!.map(normalizeReviewerSpec);
+    const allFindings: TicketReviewFinding[] = [];
+    const summaries: string[] = [];
+    const reviewers: string[] = [];
+    let totalDropped = 0;
+    let costMicro: number | null = 0;
+    let anyParsed = false;
+    const failures: string[] = [];
+    for (const spec of specs) {
+      const m = parseTicketModel(spec.model, ctx.config);
+      const r = routeFor(ctx, "review", m);
+      if (r.blocked) {
+        failures.push(`${spec.name ?? spec.model}: ${r.blocked}`);
+        continue;
+      }
+      const asked = await askInTab(ctx, {
+        state,
+        ticket,
+        model: m,
+        round,
+        prompt: (outFile) => `${tabReviewPrompt(ticket, outFile)}${spec.focus ? `\n\nFocus especially on: ${spec.focus}.` : ""}`,
+        parse: parseTicketReview,
+        progress,
+      });
+      if (asked.costUsd === null) costMicro = null;
+      else if (costMicro !== null) costMicro += toMicroUsd(asked.costUsd);
+      if (asked.parsed) {
+        anyParsed = true;
+        reviewers.push(spec.name ?? asked.by ?? spec.model);
+        allFindings.push(...asked.parsed.findings);
+        totalDropped += asked.parsed.dropped;
+        if (asked.parsed.summary) summaries.push(`${spec.name ?? asked.by ?? spec.model}: ${asked.parsed.summary}`);
+      } else {
+        failures.push(`${spec.name ?? spec.model}: ${asked.error ?? "failed"}`);
+      }
+    }
+    const costUsd = costMicro === null ? null : fromMicroUsd(costMicro);
+    if (!anyParsed) return unavailable(failures.join("; ") || "the high-risk ticket review failed", { review: costUsd });
+    const deduped = new Map<string, TicketReviewFinding>();
+    for (const f of allFindings) {
+      const k = findingKey(f.file, f.issue);
+      const prev = deduped.get(k);
+      if (!prev || compareRisk(f, prev) < 0) deduped.set(k, f);
+    }
+    const mergedFindings = [...deduped.values()].sort(compareRisk).slice(0, MAX_FINDINGS);
+    // If any high-risk reviewer failed/was blocked and the remaining reviewers passed, surface partial coverage as unavailable with a warning rather than silent green.
+    if (failures.length > 0 && reviewVerdict(mergedFindings) === "pass") {
+      const why = `partial high-risk coverage (${reviewers.join(" + ")} passed, but ${failures.join("; ")})`;
+      progress(`unavailable · ${why}`);
+      return {
+        kind: "unavailable",
+        record: {
+          ...base,
+          reviewer: reviewers.join(" + "),
+          verdict: "unavailable",
+          findings: mergedFindings,
+          rationale: redact(`Review incomplete: ${why}`).slice(0, 1600),
+          costUsd: { review: costUsd },
+        },
+        warning: `Ticket ${ticket.id} was committed with partial high-risk review (${why}).`,
+      };
+    }
+    return verdictOf({ findings: mergedFindings, dropped: totalDropped, summary: summaries.join(" | ") }, { costUsd, by: reviewers.join(" + ") });
+  }
+
   const model = reviewModel(ctx.config);
   const route = routeFor(ctx, "review", model);
-  if (route.blocked) return unavailable(route.blocked);
+  if (route.blocked) {
+    await closeWarmTicketReview(state.taskId, ticket.id);
+    return unavailable(route.blocked);
+  }
 
-  const first: Asked = await askInTab(ctx, { state, ticket, model, round, prompt: (outFile) => tabReviewPrompt(ticket, outFile), parse: parseTicketReview, progress });
+  const cacheKey = `${state.taskId}:${ticket.id}`;
+  const priorWarm = round > 1 ? warmTabs.get(cacheKey) : undefined;
+  if (priorWarm) warmTabs.delete(cacheKey);
+  else if (warmTabs.has(cacheKey)) await closeWarmTicketReview(state.taskId, ticket.id);
+
+  // Keep the tab warm only on a round-1 failure (round 2 is final on this rung).
+  const first = await askInTab(ctx, {
+    state,
+    ticket,
+    model,
+    round,
+    ...(priorWarm ? { warmTab: priorWarm, followUpPrompt: followUpReviewPrompt } : {}),
+    keepWarm: round === 1 ? (parsed) => reviewVerdict(parsed.findings) === "fail" : undefined,
+    prompt: (outFile) => tabReviewPrompt(ticket, outFile),
+    parse: parseTicketReview,
+    progress,
+  });
+  if (first.warmTab) warmTabs.set(cacheKey, first.warmTab);
   if (!first.parsed) return unavailable(first.error ?? "the review call failed", { review: first.costUsd });
   return verdictOf(first.parsed, first);
 

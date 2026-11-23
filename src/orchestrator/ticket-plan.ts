@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs";
 import { WorkflowError, type PlanDocument, type TaskState, type Ticket } from "../domain.js";
 import { isSecuritySensitive } from "./classification.js";
 import { iso, type WorkflowContext } from "./context.js";
@@ -28,9 +29,27 @@ function specSummary(ctx: WorkflowContext, taskId: string, fallback: string): st
   return (match?.[1]?.trim() || fallback).slice(0, 400);
 }
 
-/** The plan version the draft being written will have. */
-export function draftVersion(task: TaskState): number {
-  return task.approvedVersion ? task.approvedVersion + 1 : task.plan?.version ?? 1;
+function highestFrozenVersion(ctx: WorkflowContext | undefined, taskId: string): number {
+  if (!ctx) return 0;
+  const dir = ctx.store.taskDir(taskId);
+  if (!existsSync(dir)) return 0;
+  let max = 0;
+  try {
+    for (const entry of readdirSync(dir)) {
+      const m = /^plan\.v(\d+)\.approved\.json$/.exec(entry);
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+  } catch {
+    /* ignore unreadable dir */
+  }
+  return max;
+}
+
+/** The plan version the draft being written will have. Never reuses an already-frozen version. */
+export function draftVersion(task: TaskState, ctx?: WorkflowContext): number {
+  const frozen = Math.max(task.approvedVersion ?? 0, task.lastApprovedVersion ?? 0, highestFrozenVersion(ctx, task.taskId));
+  if (frozen > 0) return Math.max(frozen, task.plan?.version ?? 0) + 1;
+  return task.plan?.version ?? 1;
 }
 
 /** The draft plan document for these tickets, built from the active planning task without saving anything. */
@@ -40,7 +59,7 @@ function draftFor(ctx: WorkflowContext, task: TaskState, tickets: Ticket[], at: 
   const classification = task.classification;
   const ticketCriteria = tickets.flatMap((ticket) => ticket.acceptanceCriteria.map((item) => `${ticket.id}: ${item}`));
   return {
-    version: draftVersion(task),
+    version: draftVersion(task, ctx),
     createdAt: at,
     summary: specSummary(ctx, task.taskId, task.request),
     risks: classification?.risk === "high" ? ["Security-sensitive change. Human approval stays required."] : ["Ordinary change. Plan approval stays required."],

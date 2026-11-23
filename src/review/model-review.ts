@@ -7,10 +7,17 @@ import { readFinding, firstJson, type ParsedFinding } from "./scored-json.js";
 
 export const MAX_FINDINGS = 20;
 
-/** A parsed value that is a findings list: an array holding objects (or empty), or `{"findings": [...]}`. */
+/** A parsed value that is a findings list: an array holding finding-like objects (or empty), or `{"findings": [...]}`. */
 function asFindingList(value: unknown): unknown[] | undefined {
   const list = Array.isArray(value) ? value : value && typeof value === "object" && Array.isArray((value as { findings?: unknown }).findings) ? (value as { findings: unknown[] }).findings : undefined;
-  return list && (list.length === 0 || list.some((item) => item && typeof item === "object" && !Array.isArray(item))) ? list : undefined;
+  if (!list) return undefined;
+  if (list.length === 0) return list;
+  const hasFinding = list.some((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const rec = item as Record<string, unknown>;
+    return typeof rec.message === "string" || typeof rec.issue === "string";
+  });
+  return hasFinding ? list : undefined;
 }
 
 /**

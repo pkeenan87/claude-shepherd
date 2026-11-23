@@ -177,7 +177,7 @@ export function stateText(state: TaskState | undefined): string {
   const failed = Object.values(runs).filter((run) => run.status === "failed").length;
   if (state.review) return state.review.passed ? "reviewed, passed" : "reviewed, findings to fix";
   if (!state.build && Object.keys(runs).length === 0) return "plan approved, run /build";
-  if (state.build?.currentTicket) return `building ticket ${state.build.currentTicket} of ${total}`;
+  if (state.build?.currentTicket) return `building ticket ${state.build.currentTicket} (${finished}/${total} done)`;
   if (failed > 0) return `stopped, ${finished} of ${total} tickets done, ${failed} failed; /build resumes`;
   if (finished >= total && total > 0) return `built, ${total} tickets done; run /review`;
   return `building, ${finished} of ${total} tickets done`;

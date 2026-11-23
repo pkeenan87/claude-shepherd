@@ -216,7 +216,7 @@ describe("/build commits", () => {
     });
     expect((await t.run(d.driver)).ok).toBe(true);
     const sha = (await git(t.cwd, "rev-parse", "--short=7", "HEAD")).slice(0, 7);
-    expect(t.progress.find((line) => line.startsWith("Ticket 01 ·"))).toMatch(new RegExp(`^Ticket 01 · medium · anthropic/claude-sonnet-5-5 · \\d+\\.\\ds · \\$0\\.0180 · checks passed · committed ${sha}$`));
+    expect(t.progress.find((line) => line.startsWith("Ticket 01 ·"))).toMatch(new RegExp(`^Ticket 01 · medium · anthropic/claude-sonnet-5-5 · \\d+\\.\\ds · \\$0\\.0180 · checks passed · committed ${sha} · 1/1 done · task \\$0\\.0180$`));
     const ledger = t.app.store.readLedger().filter((item) => item.reason.includes("observed assistant usage"));
     expect(ledger).toHaveLength(1);
     expect(ledger[0]!.reason).toBe("observed assistant usage · ticket 01");
