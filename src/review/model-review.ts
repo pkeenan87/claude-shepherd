@@ -28,8 +28,11 @@ function asFindingList(value: unknown): unknown[] | undefined {
 export function parseModelFindings(text: string): ParsedFinding[] | undefined {
   const list = firstJson(text, asFindingList);
   if (!list) return undefined;
-  return list.flatMap((item) => {
-    const finding = item && typeof item === "object" && !Array.isArray(item) ? readFinding(item as Record<string, unknown>, ["message"], 300) : undefined;
+  const parsed = list.flatMap((item) => {
+    const finding = item && typeof item === "object" && !Array.isArray(item) ? readFinding(item as Record<string, unknown>, ["message", "issue"], 300) : undefined;
     return finding ? [finding] : [];
   });
+  // A non-empty findings list where zero entries were readable is unreadable, never a clean review.
+  if (list.length > 0 && parsed.length === 0) return undefined;
+  return parsed;
 }

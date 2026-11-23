@@ -7,21 +7,12 @@ export default class ShepherdViewer extends View {
   init(p, cx) {
     this.file = p?.file ?? props()?.file ?? "";
     this.machine = p?.on ?? props()?.on ?? null;
+    this.docKey = `${this.machine ?? ""}:${this.file}`;
     this.content = null;
     this.error = null;
     this.loading = false;
     if (checking()) return;
     this.reload(cx);
-  }
-
-  update(p) {
-    const nextFile = p?.file ?? "";
-    if (nextFile && nextFile !== this.file) {
-      this.file = nextFile;
-      this.machine = p?.on ?? null;
-      this.content = null;
-      this.error = null;
-    }
   }
 
   reload(cx) {
@@ -69,9 +60,15 @@ export default class ShepherdViewer extends View {
   render(cx) {
     const t = theme();
     const p = props();
-    if (p?.file && p.file !== this.file && !this.loading) {
-      this.file = p.file;
-      this.machine = p.on ?? null;
+    const nextFile = p?.file ?? "";
+    const nextMachine = p?.on ?? null;
+    const nextKey = `${nextMachine ?? ""}:${nextFile}`;
+    if (nextFile && nextKey !== this.docKey && !this.loading) {
+      this.file = nextFile;
+      this.machine = nextMachine;
+      this.docKey = nextKey;
+      this.content = null;
+      this.error = null;
       this.reload(cx);
     }
     const overlayId = p?.overlay ?? null;
@@ -104,6 +101,7 @@ export default class ShepherdViewer extends View {
           .min_h(0)
           .p(14)
           .overflow_y_scrollbar()
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .when(!!this.error, (el) =>
             el.child(div().p(10).rounded(6).bg(t.raised).border(1).border_color(t.blocked).text_color(t.blocked).child(this.error)),
           )

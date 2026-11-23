@@ -80,17 +80,15 @@ const ALIASES: Readonly<Record<string, string>> = {
  */
 export function canonicalModelId(provider: string, model: string): string {
   let clean = model.trim().toLowerCase();
-  // Strip bracket parameters such as `[1m]` or `[optimize_for=balanced]`.
-  clean = clean.replace(/\[[^\]]*\]/g, "").trim();
-  // Normalize whitespace and underscores to hyphens (e.g. "Gemini 4 Argon" -> "gemini-4-argon").
+  // Strip Cursor router bracket parameters (`[optimize_for=...]`), but keep billing-relevant context tier tags such as `[1m]`.
+  clean = clean.replace(/\[optimize_for=[^\]]*\]/g, "").trim();
+  // Normalize whitespace to hyphens (e.g. "Gemini 4 Argon" -> "gemini-4-argon").
   clean = clean.replace(/\s+/g, "-");
   if (clean.startsWith("cursor-") && clean !== "cursor-small") clean = clean.slice("cursor-".length);
   // Strip trailing date snapshots (-YYYYMMDD or -YYYY-MM-DD).
   clean = clean.replace(/-(?:20\d{2}-?\d{2}-?\d{2})$/, "");
-  // Strip effort/speed suffixes used by routers (preserve `grok-code-fast` which is its real model name).
-  if (clean !== "grok-code-fast") {
-    clean = clean.replace(/-(?:high|medium|low|xhigh|max|fast|thinking)(?:-(?:fast|high|medium|low))?$/, "");
-  }
+  // Strip billing-neutral effort/thinking suffixes (never strip `-fast`, which may carry a premium rate).
+  clean = clean.replace(/-(?:high|medium|low|xhigh|max|thinking)$/, "");
   const aliased = ALIASES[clean];
   if (aliased) return aliased;
   // Normalize dotted Claude minor versions (claude-sonnet-5.5 -> claude-sonnet-5-5).

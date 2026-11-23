@@ -14,7 +14,8 @@ import { GitWorkspace } from "../src/git/workspace.js";
 import { createHerdrClient, HerdrError } from "../src/herdr/client.js";
 import { cachingRunner } from "../src/orchestrator/exec.js";
 import { latestReview } from "../src/orchestrator/review-latest.js";
-import { DEFAULT_PRICING } from "../src/pricing-defaults.js";
+import { canonicalModelId, DEFAULT_PRICING } from "../src/pricing-defaults.js";
+import { parseModelFindings } from "../src/review/model-review.js";
 import { keepBest } from "../src/review/scored-json.js";
 import { createAgentMeter } from "../src/runner/agent-usage.js";
 import { openTab } from "../src/runner/tab.js";
@@ -460,7 +461,7 @@ pricing:
     expect(warnings.some((w) => w.includes("worktree"))).toBe(true);
   });
 
-  it("filters Gemini/AGY usage logs by repository so unrelated projects are never billed", async () => {
+  it("filters Gemini usage logs by repository, subtracts cached tokens, and leaves agy unmetered", async () => {
     const repoA = await tempRepo();
     const repoB = await tempRepo();
     const home = mkdtempSync(path.join(tmpdir(), "shep-gem-home-"));
@@ -471,10 +472,11 @@ pricing:
     writeFileSync(path.join(dirA, ".project_root"), repoA);
     writeFileSync(path.join(dirB, ".project_root"), repoB);
 
-    const meter = createAgentMeter("agy", { cwd: repoA, home })!;
+    expect(createAgentMeter("agy", { cwd: repoA, home })).toBeUndefined();
+    const meter = createAgentMeter("gemini", { cwd: repoA, home })!;
     writeFileSync(
       path.join(dirA, "chats", "s1.jsonl"),
-      `${JSON.stringify({ id: "m1", model: "gemini-4-argon", tokens: { input: 1000, output: 500 } })}\n`,
+      `${JSON.stringify({ id: "m1", model: "gemini-4-argon", tokens: { input: 1000, cached: 300, output: 500 } })}\n`,
     );
     writeFileSync(
       path.join(dirB, "chats", "s2.jsonl"),
@@ -482,7 +484,8 @@ pricing:
     );
     const calls = meter.collect();
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.usage.input).toBe(1000);
+    expect(calls[0]!.usage.input).toBe(700);
+    expect(calls[0]!.usage.cacheRead).toBe(300);
   });
 
   it("prevents fuzzy dedupe from merging a second distinct finding from a reviewer already in a cluster", () => {
@@ -645,5 +648,42 @@ pricing:
     // hc run rejects denied destructive child argv.
     const hc = createHerdrClient({ exec: async () => ({ code: 0, stdout: JSON.stringify({ address: "t1" }), stderr: "" }) });
     await expect(hc.run({ argv: ["rm", "-rf", "/"] })).rejects.toThrow(/refused by the command rules/);
+  });
+
+  it("catches bash-guard bypasses (reserved words, line continuations, $'...', rebase) without false-positiving on commit heredocs", () => {
+    expect(guardHits("{ git push; }")).toContain("git push");
+    expect(guardHits("if true; then git push; fi")).toContain("git push");
+    expect(guardHits("! git push")).toContain("git push");
+    expect(guardHits("if true; then shepherd ship --push; fi")).toContain("ship remote");
+    expect(guardHits("for x in 1; do shepherd plan approve; done")).toContain("plan approve");
+    expect(guardHits("git pu\\\nsh origin main")).toContain("git push");
+    expect(guardHits("git $'push' origin main")).toContain("git push");
+    expect(guardHits("git rebase main feature")).toContain("git branch change");
+    expect(guardHits("shepherd build pause")).toContain("build pause");
+    // Quoted heredoc commit message containing a line starting with `git push` must NOT be flagged.
+    expect(guardHits('git commit -m "$(cat <<\'EOF\'\nSummary\ngit push is gated\nEOF\n)"')).toEqual([]);
+  });
+
+  it("handles issue-keyed model findings, avoids false fuzzy consensus on disjoint symbols, and preserves fast/[1m] pricing tiers", () => {
+    // S5: `issue`-keyed model findings must be parsed (never reported as clean []).
+    const parsed = parseModelFindings(JSON.stringify([{ file: "a.ts", issue: "real bug", likelihood: 9, severity: 9 }]));
+    expect(parsed).toHaveLength(1);
+    expect(parsed![0]!.message).toBe("real bug");
+
+    // S4: disjoint symbols in same file + category must NOT merge into false consensus.
+    const kept = keepBest(
+      [
+        { likelihood: 8, severity: 8, category: "bug", file: "src/store.ts", message: "Missing error handling in `readClaim` for corrupt files", reviewers: ["A"] },
+        { likelihood: 7, severity: 8, category: "bug", file: "src/store.ts", message: "Missing error handling in `withLock` for stale files", reviewers: ["B"] },
+      ],
+      10,
+      { fuzzy: true },
+    );
+    expect(kept.findings).toHaveLength(2);
+
+    // S3: billing-relevant `-fast` and `[1m]` suffixes are not silently stripped to base price.
+    expect(canonicalModelId("anthropic", "claude-opus-4-6-fast")).toBe("claude-opus-4-6-fast");
+    expect(canonicalModelId("anthropic", "claude-sonnet-5-5[1m]")).toBe("claude-sonnet-5-5[1m]");
+    expect(canonicalModelId("google", "gemini-4-neon-high")).toBe("gemini-4-neon");
   });
 });

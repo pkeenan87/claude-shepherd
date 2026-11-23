@@ -7363,7 +7363,7 @@ var require_dist = __commonJS({
 
 // src/cli/shepherd.ts
 import { execFile as execFile5 } from "node:child_process";
-import { chmodSync as chmodSync3, closeSync as closeSync2, copyFileSync as copyFileSync4, existsSync as existsSync21, fstatSync, mkdirSync as mkdirSync12, openSync as openSync2, writeFileSync as writeFileSync5, readdirSync as readdirSync9, readFileSync as readFileSync19, readSync as readSync2, realpathSync as realpathSync2, renameSync as renameSync3, statSync as statSync9 } from "node:fs";
+import { chmodSync as chmodSync3, closeSync as closeSync2, copyFileSync as copyFileSync4, existsSync as existsSync21, fstatSync, mkdirSync as mkdirSync12, openSync as openSync2, writeFileSync as writeFileSync5, readdirSync as readdirSync9, readFileSync as readFileSync20, readSync as readSync2, realpathSync as realpathSync2, renameSync as renameSync4, statSync as statSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import path33 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
@@ -7439,13 +7439,11 @@ var ALIASES = {
 };
 function canonicalModelId(provider, model) {
   let clean = model.trim().toLowerCase();
-  clean = clean.replace(/\[[^\]]*\]/g, "").trim();
+  clean = clean.replace(/\[optimize_for=[^\]]*\]/g, "").trim();
   clean = clean.replace(/\s+/g, "-");
   if (clean.startsWith("cursor-") && clean !== "cursor-small") clean = clean.slice("cursor-".length);
   clean = clean.replace(/-(?:20\d{2}-?\d{2}-?\d{2})$/, "");
-  if (clean !== "grok-code-fast") {
-    clean = clean.replace(/-(?:high|medium|low|xhigh|max|fast|thinking)(?:-(?:fast|high|medium|low))?$/, "");
-  }
+  clean = clean.replace(/-(?:high|medium|low|xhigh|max|thinking)$/, "");
   const aliased = ALIASES[clean];
   if (aliased) return aliased;
   if (provider === "anthropic" || clean.startsWith("claude-")) {
@@ -8840,11 +8838,18 @@ var GitWorkspace = class {
     const res = await this.git(["branch", force ? "-D" : "-d", "--", branch]);
     if (res.code !== 0) throw new WorkflowError("GIT", res.stderr || `Could not delete branch ${branch}`);
   }
-  /** Deletes a remote branch on `<remote>` (never `main` or `master`). */
-  async deleteRemoteBranch(branch, remote = "origin") {
+  /** Resolves the commit sha of `refs/remotes/<remote>/<branch>`, or undefined if absent. */
+  async remoteBranchSha(branch, remote = "origin") {
+    const res = await this.git(["rev-parse", "--verify", "--quiet", `refs/remotes/${remote}/${branch}`]);
+    return res.code === 0 && res.stdout.trim() ? res.stdout.trim() : void 0;
+  }
+  /** Deletes a remote branch on `<remote>` (never `main` or `master`). Uses `--force-with-lease` when `expectedSha` is supplied so new commits pushed since verification are never lost. */
+  async deleteRemoteBranch(branch, remote = "origin", expectedSha) {
     if (branch === "main" || branch === "master") throw new WorkflowError("GIT", `Refusing to delete protected remote branch ${remote}/${branch}`);
     await this.assertBranchName(branch);
-    const res = await this.git(["push", remote, "--delete", "--", branch]);
+    if (expectedSha !== void 0) this.assertSha(expectedSha);
+    const args = expectedSha ? ["push", `--force-with-lease=refs/heads/${branch}:${expectedSha}`, remote, "--delete", "--", branch] : ["push", remote, "--delete", "--", branch];
+    const res = await this.git(args);
     if (res.code !== 0) throw new WorkflowError("GIT", res.stderr || `Could not delete ${remote}/${branch}`);
   }
   /** Pushes a branch to `<remote>` (never force-pushes). */
@@ -9180,6 +9185,15 @@ var TaskStore = class {
         const tomb = `${file}.stale.${randomUUID()}`;
         try {
           renameSync(file, tomb);
+          const moved = readClaim(tomb);
+          if (moved && moved.pid !== process.pid && processAlive(moved.pid)) {
+            try {
+              linkSync(tomb, file);
+            } catch {
+            }
+            rmSync(tomb, { force: true });
+            return moved;
+          }
           rmSync(tomb, { force: true });
         } catch {
         }
@@ -9188,9 +9202,8 @@ var TaskStore = class {
       }
     }
     const held = readClaim(file);
-    if (held && held.pid !== process.pid && processAlive(held.pid)) return held;
-    atomicWrite(file, payload);
-    return void 0;
+    if (held && held.pid === process.pid) return void 0;
+    return held ?? { pid: -1, checkout: "" };
   }
   /** Drops this process's build claim on the task; another process's claim stays. */
   releaseBuild(taskId) {
@@ -9434,7 +9447,8 @@ import path17 from "node:path";
 
 // src/sandbox.ts
 var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
-var WRAPPERS = /* @__PURE__ */ new Set(["sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout", "setsid", "stdbuf", "ionice", "chrt", "taskset", "builtin", "busybox"]);
+var RESERVED_PREFIX = /* @__PURE__ */ new Set(["!", "{", "if", "then", "elif", "else", "while", "until", "do", "coproc"]);
+var WRAPPERS = /* @__PURE__ */ new Set(["sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout", "setsid", "stdbuf", "ionice", "chrt", "taskset", "builtin", "busybox", "flock", "watch"]);
 var WRAPPER_VALUE_FLAGS = /* @__PURE__ */ new Set(["-u", "-g"]);
 var WRAPPER_EXTRA_VALUE_FLAGS = {
   env: /* @__PURE__ */ new Set(["--unset", "-C", "--chdir"]),
@@ -9466,11 +9480,14 @@ function splitSegments(line, depth = 0) {
     tokens = [];
     nextPiped = piped;
   };
+  let pendingHeredoc;
   for (let i = 0; i < line.length; i += 1) {
     const ch = line[i];
     if (quote) {
       if (ch === quote) quote = null;
-      else if (ch === "\\" && quote === '"' && i + 1 < line.length) current += line[++i];
+      else if (ch === "\\" && quote === '"' && (line[i + 1] === "\n" || line[i + 1] === "\r" && line[i + 2] === "\n")) {
+        i += line[i + 1] === "\r" ? 2 : 1;
+      } else if (ch === "\\" && quote === '"' && i + 1 < line.length) current += line[++i];
       else if (quote === '"' && ch === "$" && line[i + 1] === "(" && depth < MAX_NESTING) {
         let paren = 1;
         let j = i + 2;
@@ -9495,6 +9512,50 @@ function splitSegments(line, depth = 0) {
       } else current += ch;
       continue;
     }
+    if (ch === "\\" && (line[i + 1] === "\n" || line[i + 1] === "\r" && line[i + 2] === "\n")) {
+      i += line[i + 1] === "\r" ? 2 : 1;
+      continue;
+    }
+    if (ch === "$" && line[i + 1] === "'") {
+      has = true;
+      let j = i + 2;
+      for (; j < line.length && line[j] !== "'"; j += 1) {
+        if (line[j] === "\\" && j + 1 < line.length) {
+          current += line[++j];
+        } else {
+          current += line[j];
+        }
+      }
+      i = j;
+      continue;
+    }
+    if (ch === "<" && line[i + 1] === "<" && line[i + 2] !== "<") {
+      let j = i + 2;
+      let stripTabs = false;
+      if (line[j] === "-") {
+        stripTabs = true;
+        j += 1;
+      }
+      while (j < line.length && (line[j] === " " || line[j] === "	")) j += 1;
+      let delim = "";
+      let quoted = false;
+      if (line[j] === "'" || line[j] === '"') {
+        const q = line[j++];
+        quoted = true;
+        while (j < line.length && line[j] !== q && line[j] !== "\n") delim += line[j++];
+        if (line[j] === q) j += 1;
+      } else if (line[j] === "\\") {
+        quoted = true;
+        j += 1;
+        while (j < line.length && !/[\s;|&()]/.test(line[j])) delim += line[j++];
+      }
+      if (quoted && delim) {
+        const headCmd = baseName(tokens[0] ?? current).toLowerCase();
+        pendingHeredoc = { delim, stripTabs, shellFed: SHELLS.has(headCmd) };
+        i = j - 1;
+        continue;
+      }
+    }
     if (ch === "'" || ch === '"') {
       quote = ch;
       has = true;
@@ -9511,6 +9572,21 @@ function splitSegments(line, depth = 0) {
       }
     } else if (ch === ";" || ch === "&" || ch === "\n" || ch === "(" || ch === ")" || ch === "`") {
       endSegment(false);
+      if (ch === "\n" && pendingHeredoc) {
+        const hd = pendingHeredoc;
+        pendingHeredoc = void 0;
+        if (!hd.shellFed) {
+          let cursor = i + 1;
+          while (cursor < line.length) {
+            const nl = line.indexOf("\n", cursor);
+            const rawLine = (nl < 0 ? line.slice(cursor) : line.slice(cursor, nl)).replace(/\r$/, "");
+            const checkLine = hd.stripTabs ? rawLine.replace(/^\t+/, "") : rawLine;
+            cursor = nl < 0 ? line.length : nl + 1;
+            if (checkLine === hd.delim) break;
+          }
+          i = cursor - 1;
+        }
+      }
     } else if (/\s/.test(ch)) {
       endToken();
     } else {
@@ -9532,7 +9608,7 @@ function unwrap(input) {
   const extraSegments = [];
   let i = 0;
   for (; ; ) {
-    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i += 1;
+    while (i < tokens.length && (RESERVED_PREFIX.has(tokens[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]))) i += 1;
     const name = i < tokens.length ? baseName(tokens[i]) : "";
     if (!WRAPPERS.has(name)) break;
     if (name === "xargs") xargs = true;
@@ -9718,6 +9794,7 @@ function movesBranch(call) {
   if (call.sub === "switch") return true;
   if (call.sub === "symbolic-ref") return call.rest.filter((arg) => !arg.startsWith("-")).length >= 2;
   if (call.sub === "update-ref") return call.rest.some((arg) => arg === "HEAD");
+  if (call.sub === "rebase") return call.rest.filter((arg) => !arg.startsWith("-")).length >= 2;
   if (call.sub !== "checkout") return false;
   if (call.rest.some((arg) => /^-[A-Za-z]*[bB][A-Za-z]*$/.test(arg) || arg === "--orphan" || arg === "--detach")) return true;
   const dash = call.rest.indexOf("--");
@@ -9737,7 +9814,7 @@ function mayRunGit(command, word, test) {
   return false;
 }
 function switchesBranch(command) {
-  return mayRunGit(command, /\b(switch|checkout|symbolic-ref)\b/, movesBranch);
+  return mayRunGit(command, /\b(switch|checkout|symbolic-ref|rebase)\b/, movesBranch);
 }
 function changesWorktrees(command) {
   return mayRunGit(command, /\bworktree\b/, (call) => call.sub === "worktree" && call.rest.find((arg) => !arg.startsWith("-")) !== "list");
@@ -9757,8 +9834,7 @@ var READERS = {
   claude: "claude",
   codex: "codex",
   "cursor-agent": "cursor",
-  gemini: "gemini",
-  agy: "gemini"
+  gemini: "gemini"
 };
 var PRICING_PROVIDER = { claude: "anthropic", codex: "openai", gemini: "google" };
 var ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, requests: 0 };
@@ -9953,11 +10029,13 @@ function geminiChatEvents(file, buffer, before, tmpRoot, repos) {
     if (!isRecord2(value) || before(start, value)) continue;
     const usage2 = isRecord2(value.tokens) ? value.tokens : isRecord2(value.usage) ? value.usage : void 0;
     if (!usage2) continue;
-    const input = num(usage2.input_tokens ?? usage2.input ?? usage2.promptTokenCount);
-    const output = num(usage2.output_tokens ?? usage2.output ?? usage2.candidatesTokenCount) + num(usage2.thinking_tokens ?? usage2.thoughts ?? usage2.thoughtsTokenCount);
     const cacheRead = num(usage2.cache_read_tokens ?? usage2.cached ?? usage2.cachedContentTokenCount);
+    const rawInput = num(usage2.input_tokens ?? usage2.input ?? usage2.promptTokenCount);
+    const inclusiveInput = usage2.input_tokens === void 0 && (usage2.input !== void 0 || usage2.promptTokenCount !== void 0);
+    const input = inclusiveInput ? Math.max(0, rawInput - cacheRead) : rawInput;
+    const output = num(usage2.output_tokens ?? usage2.output ?? usage2.candidatesTokenCount) + num(usage2.thinking_tokens ?? usage2.thoughts ?? usage2.thoughtsTokenCount);
     if (input + output + cacheRead === 0) continue;
-    const rawModel = typeof value.model === "string" && value.model ? value.model : "gemini-4-neon";
+    const rawModel = typeof value.model === "string" && value.model ? value.model : "unknown";
     const id = typeof value.id === "string" && value.id ? value.id : `gemini-${start}-${seq}`;
     found.set(id, {
       provider: PRICING_PROVIDER.gemini,
@@ -10829,7 +10907,6 @@ function startPlan(ctx, request, options = {}) {
     if (budgetState(ctx).status === "hard") {
       return fail("BUDGET", "Task or daily budget is exhausted. /plan was not run. Run /cost for details.");
     }
-    const parked = await retireCurrent(ctx, current);
     const classification = defaultClassification();
     const fresh = newTask(ctx, safe, at);
     let worktree;
@@ -10846,12 +10923,23 @@ function startPlan(ctx, request, options = {}) {
       await ctx.git.worktreeAdd(targetPath, branch, baseSha);
       worktree = { path: targetPath, branch, base, baseSha, createdAt: at };
     }
-    const state = await ctx.store.create({
-      ...fresh,
-      classification,
-      planning: { stage: "interview" },
-      ...worktree ? { worktree, build: { branch: worktree.branch, base: worktree.base, baseSha: worktree.baseSha } } : {}
-    });
+    let state;
+    let parked;
+    try {
+      parked = await retireCurrent(ctx, current);
+      state = await ctx.store.create({
+        ...fresh,
+        classification,
+        planning: { stage: "interview" },
+        ...worktree ? { worktree, build: { branch: worktree.branch, base: worktree.base, baseSha: worktree.baseSha } } : {}
+      });
+    } catch (error) {
+      if (worktree) {
+        await ctx.git.worktreeRemove(worktree.path, true).catch(() => void 0);
+        await ctx.git.deleteBranch(worktree.branch, true).catch(() => void 0);
+      }
+      throw error;
+    }
     if (worktree) {
       try {
         const wtGitDir = await ctx.git.gitDir(worktree.path);
@@ -11171,15 +11259,13 @@ function mergeReviewers(a, b) {
 function fuzzyMatch(a, b) {
   if (!sameFile(a.file, b.file)) return false;
   if (a.reviewers?.length && b.reviewers?.length && a.reviewers.some((r) => b.reviewers.includes(r))) return false;
+  const symsA = codeSymbols(a);
+  const symsB = codeSymbols(b);
+  const sharedSym = [...symsA].some((s) => symsB.has(s));
+  if (symsA.size > 0 && symsB.size > 0 && !sharedSym) return false;
   const sim = jaccard(messageTokens(a.message), messageTokens(b.message));
   if (sim >= 0.55) return true;
-  if (sim >= 0.3) {
-    const sameCat = a.category.toLowerCase() === b.category.toLowerCase();
-    const symsA = codeSymbols(a);
-    const symsB = codeSymbols(b);
-    const sharedSym = [...symsA].some((s) => symsB.has(s));
-    if (sameCat || sharedSym) return true;
-  }
+  if (sim >= 0.35 && sharedSym) return true;
   return false;
 }
 function dedupe(findings2, options = {}) {
@@ -11200,18 +11286,20 @@ function dedupe(findings2, options = {}) {
   if (!options.fuzzy) return exact;
   const clusters = [];
   for (const finding of exact) {
-    const hit = clusters.findIndex((existing) => fuzzyMatch(existing, finding));
+    const hit = clusters.findIndex((cluster) => cluster.members.every((member) => fuzzyMatch(member, finding)));
     if (hit < 0) {
-      clusters.push(finding);
+      clusters.push({ rep: finding, members: [finding] });
     } else {
-      const existing = clusters[hit];
+      const cluster = clusters[hit];
+      const existing = cluster.rep;
       const reviewers = mergeReviewers(existing.reviewers, finding.reviewers);
       const winner = compareRisk(score(finding), score(existing)) < 0 ? finding : existing;
       const evidence = winner.evidence ?? (winner === finding ? existing.evidence : finding.evidence);
-      clusters[hit] = { ...winner, ...evidence ? { evidence } : {}, ...reviewers ? { reviewers } : {} };
+      cluster.rep = { ...winner, ...evidence ? { evidence } : {}, ...reviewers ? { reviewers } : {} };
+      cluster.members.push(finding);
     }
   }
-  return clusters;
+  return clusters.map((c) => c.rep);
 }
 function keepBest(parsed, cap, options = {}) {
   const unique2 = dedupe(
@@ -11330,6 +11418,7 @@ async function openTab(input) {
       const before = waitProblem(quiet, address, minutes(turnTimeoutMs));
       if (before) throw new Error(before);
       const sendRetryMs = input.pollMs ?? 1e3;
+      const sendStartedAt = now();
       const maxSettleWaitMs = Math.min(3e4, turnTimeoutMs);
       let sent;
       for (let attempt2 = 0; ; attempt2 += 1) {
@@ -11338,7 +11427,7 @@ async function openTab(input) {
           break;
         } catch (error) {
           const msg = messageOf(error);
-          if (!/still starting|output has not settled/i.test(msg) || now() - started >= maxSettleWaitMs || attempt2 >= 20) {
+          if (!/still starting|output has not settled/i.test(msg) || now() - sendStartedAt >= maxSettleWaitMs || attempt2 >= 20) {
             throw error;
           }
           await sleep2(sendRetryMs);
@@ -11908,12 +11997,15 @@ async function askInTab(ctx, input) {
   const label = modelText(model);
   let cost2 = 0;
   let tab;
-  const failed = (error) => ({ costUsd: cost2, error });
+  const failed = async (error) => {
+    if (input.warmTab && tab !== input.warmTab.tab) await input.warmTab.tab.close().catch(() => void 0);
+    return { costUsd: cost2, error };
+  };
   try {
-    if (budgetState(ctx, state.taskId).status === "hard") return failed("the task or daily budget is exhausted");
+    if (budgetState(ctx, state.taskId).status === "hard") return await failed("the task or daily budget is exhausted");
     const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
-    if ("problem" in where) return failed(`${label} reviews in a herdr sub-agent; run from a terminal inside herdr (${where.problem})`);
-    if (model.kind === "pi" && !ctx.ticketModePath) return failed(`${label} is a Pi model and this install does not know where the ticket-mode extension is`);
+    if ("problem" in where) return await failed(`${label} reviews in a herdr sub-agent; run from a terminal inside herdr (${where.problem})`);
+    if (model.kind === "pi" && !ctx.ticketModePath) return await failed(`${label} is a Pi model and this install does not know where the ticket-mode extension is`);
     const at = ctx.now().getTime();
     const taskDir = ctx.store.taskDir(state.taskId);
     const reports = path15.join(taskDir, "reports");
@@ -11926,6 +12018,7 @@ async function askInTab(ctx, input) {
     const branchBefore = await ctx.git.currentBranch().catch(() => void 0);
     const before = fingerprint(await ctx.git.workingDiff("HEAD", exclude));
     const reusing = input.warmTab && input.warmTab.modelKey === label ? input.warmTab : void 0;
+    if (input.warmTab && !reusing) await input.warmTab.tab.close().catch(() => void 0);
     let program;
     if (reusing) {
       tab = reusing.tab;
@@ -11969,19 +12062,19 @@ async function askInTab(ctx, input) {
     const left = (why) => `${why} (the herdr sub-agent ${opened.name} is left open to read)`;
     const branchAfter = await ctx.git.currentBranch().catch(() => void 0);
     const headAfter = await ctx.git.head().catch(() => void 0);
-    if (branchBefore && branchAfter && branchAfter !== branchBefore) return failed(left(`${label} left ${branchBefore} and is on ${branchAfter}; shepherd left HEAD alone`));
+    if (branchBefore && branchAfter && branchAfter !== branchBefore) return await failed(left(`${label} left ${branchBefore} and is on ${branchAfter}; shepherd left HEAD alone`));
     let note = "";
     if (headBefore && headAfter && headAfter !== headBefore) {
       await ctx.git.resetSoft(headBefore);
       note = ` (it committed anyway; shepherd moved HEAD back to ${headBefore.slice(0, 7)})`;
     }
     const reason = failure ?? program.failed?.();
-    if (reason) return failed(left(`${label} did not finish: ${reason}${note}`));
-    if (!existsSync7(outFile)) return failed(left(`${label} did not write the findings file ${outFile}${note}`));
+    if (reason) return await failed(left(`${label} did not finish: ${reason}${note}`));
+    if (!existsSync7(outFile)) return await failed(left(`${label} did not write the findings file ${outFile}${note}`));
     const parsed = input.parse(readFileSync9(outFile, "utf8"));
-    if (parsed === void 0) return failed(left(`the findings file ${outFile} from ${label} is not the JSON asked for${note}`));
+    if (parsed === void 0) return await failed(left(`the findings file ${outFile} from ${label} is not the JSON asked for${note}`));
     if (fingerprint(await ctx.git.workingDiff("HEAD", exclude)) !== before) {
-      return failed(left(`${label} changed the working tree during the review (it was told not to edit files), so the diff it judged is not the one that would be committed${note}`));
+      return await failed(left(`${label} changed the working tree during the review (it was told not to edit files), so the diff it judged is not the one that would be committed${note}`));
     }
     if (input.keepWarm?.(parsed)) {
       tab = void 0;
@@ -11991,7 +12084,7 @@ async function askInTab(ctx, input) {
     tab = void 0;
     return { parsed, costUsd: cost2, by: label };
   } catch (error) {
-    return failed(`${label} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr sub-agent ${tab.name} is left open)` : ""}`);
+    return await failed(`${label} could not review: ${redact(messageOf(error))}${tab ? ` (the herdr sub-agent ${tab.name} is left open)` : ""}`);
   }
 }
 
@@ -13239,7 +13332,8 @@ function peekNextTicket(ctx) {
 }
 
 // src/orchestrator/cleanup.ts
-import { existsSync as existsSync10, readdirSync as readdirSync6, rmSync as rmSync4 } from "node:fs";
+import { existsSync as existsSync10, linkSync as linkSync2, readdirSync as readdirSync6, readFileSync as readFileSync12, renameSync as renameSync2, rmSync as rmSync4 } from "node:fs";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import path19 from "node:path";
 
 // src/shepherd-home.ts
@@ -13409,7 +13503,7 @@ function runCleanup(ctx, options = {}) {
           skipped.push({ target: wtPath, reason: `has ${dirty.length} uncommitted change(s) (use --force)` });
           continue;
         }
-        const reason = closedTask ? `closed task ${displayName(closedTask)}` : `merged into ${base} (${merged})`;
+        const reason = `${closedTask ? `closed task ${displayName(closedTask)}` : `merged into ${base} (${merged})`} (removes checkout incl. ignored files)`;
         if (!dryRun) {
           try {
             await ctx.git.worktreeRemove(wtPath, !!options.force);
@@ -13469,27 +13563,39 @@ function runCleanup(ctx, options = {}) {
       if (!hasOrigin) {
         skipped.push({ target: "origin", reason: "no origin remote configured" });
       } else {
+        let fetchOk = true;
         if (!dryRun) {
           const fetched = await ctx.git.fetchPrune("origin");
-          if (fetched.code !== 0) errors.push(`git fetch --prune origin: ${fetched.stderr.trim() || "failed"}`);
-        }
-        const remotes = await ctx.git.listRemoteBranches("origin", ctx.config.branchPrefix);
-        for (const name of remotes) {
-          if (name === base || name === "main" || name === "master") continue;
-          const merged = await ctx.git.remoteBranchMerged(name, base, "origin").catch(() => false);
-          if (!merged) {
-            skipped.push({ target: `origin/${name}`, reason: `not merged into origin/${base}` });
-            continue;
+          if (fetched.code !== 0) {
+            fetchOk = false;
+            errors.push(`git fetch --prune origin failed (${fetched.stderr.trim() || "error"}); aborted remote branch deletion to avoid acting on stale refs`);
           }
-          if (!dryRun) {
-            try {
-              await ctx.git.deleteRemoteBranch(name, "origin");
-              actions.push({ kind: "remote-branch", target: `origin/${name}`, reason: `merged into ${base}` });
-            } catch (error) {
-              errors.push(`origin/${name}: ${error.message}`);
+        }
+        if (fetchOk) {
+          const remotes = await ctx.git.listRemoteBranches("origin", ctx.config.branchPrefix);
+          for (const name of remotes) {
+            if (name === base || name === "main" || name === "master") continue;
+            const openTask2 = openByBranch.get(name);
+            const merged = await ctx.git.remoteBranchMerged(name, base, "origin").catch(() => false);
+            if (openTask2 && !options.force && !(merged && taskFullyBuilt(openTask2))) {
+              skipped.push({ target: `origin/${name}`, reason: `open task ${displayName(openTask2)} (close task first or use --force)` });
+              continue;
             }
-          } else {
-            actions.push({ kind: "remote-branch", target: `origin/${name}`, reason: `merged into ${base}` });
+            if (!merged) {
+              skipped.push({ target: `origin/${name}`, reason: `not merged into origin/${base}` });
+              continue;
+            }
+            if (!dryRun) {
+              try {
+                const expectedSha = await ctx.git.remoteBranchSha(name, "origin");
+                await ctx.git.deleteRemoteBranch(name, "origin", expectedSha);
+                actions.push({ kind: "remote-branch", target: `origin/${name}`, reason: `merged into origin/${base}` });
+              } catch (error) {
+                errors.push(`origin/${name}: ${error.message}`);
+              }
+            } else {
+              actions.push({ kind: "remote-branch", target: `origin/${name}`, reason: `merged into origin/${base}` });
+            }
           }
         }
       }
@@ -13498,7 +13604,36 @@ function runCleanup(ctx, options = {}) {
       for (const task of tasks) {
         const claimFile = path19.join(ctx.store.taskDir(task.taskId), "build.claim");
         if (existsSync10(claimFile) && !ctx.store.liveBuildClaim(task.taskId)) {
-          if (!dryRun) rmSync4(claimFile, { force: true });
+          if (!dryRun) {
+            const tomb = `${claimFile}.cleanup.${randomUUID2()}`;
+            try {
+              renameSync2(claimFile, tomb);
+              let live = false;
+              try {
+                const parsed = JSON.parse(readFileSync12(tomb, "utf8"));
+                if (typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0) {
+                  try {
+                    process.kill(parsed.pid, 0);
+                    live = true;
+                  } catch (e) {
+                    live = e.code === "EPERM";
+                  }
+                }
+              } catch {
+              }
+              if (live) {
+                try {
+                  linkSync2(tomb, claimFile);
+                } catch {
+                }
+                rmSync4(tomb, { force: true });
+                continue;
+              }
+              rmSync4(tomb, { force: true });
+            } catch {
+              continue;
+            }
+          }
           actions.push({ kind: "claim", target: `${displayName(task)}/build.claim`, reason: "stale claim (process no longer running)" });
         }
         if (!isClosed(task)) continue;
@@ -13556,7 +13691,7 @@ function runCleanup(ctx, options = {}) {
 
 // src/orchestrator/exec.ts
 import { execFile as execFile2 } from "node:child_process";
-import { existsSync as existsSync11, readFileSync as readFileSync12, statSync as statSync8 } from "node:fs";
+import { existsSync as existsSync11, readFileSync as readFileSync13, statSync as statSync8 } from "node:fs";
 import path20 from "node:path";
 import { promisify as promisify2 } from "node:util";
 var exec2 = promisify2(execFile2);
@@ -13588,7 +13723,7 @@ function readDiskCache(file, now) {
   const map = /* @__PURE__ */ new Map();
   if (!file || !existsSync11(file)) return map;
   try {
-    const parsed = JSON.parse(readFileSync12(file, "utf8"));
+    const parsed = JSON.parse(readFileSync13(file, "utf8"));
     if (!parsed.entries || typeof parsed.entries !== "object") return map;
     for (const [k, v] of Object.entries(parsed.entries)) {
       if (v && typeof v.at === "number" && typeof v.stdout === "string" && now - v.at <= CHECK_CACHE_TTL_MS) {
@@ -14117,7 +14252,7 @@ function modelRow(report, found) {
   const reviewers = [...new Set((model.parts ?? []).flatMap((part) => part.reviewedBy ? [part.reviewedBy] : []))];
   const who = reviewers.length > 0 ? reviewers.join(", ") : ranModelText(model.provider, model.model);
   if (model.error && found === 0) return `${who} \xB7 no findings: ${model.error}`;
-  const retried = (model.parts ?? []).filter((part) => part.reviewedBy && part.failures.length > 0).map((part) => `part ${part.index} retried (after ${part.failures.join("; ")})`);
+  const retried = (model.parts ?? []).filter((part) => part.reviewedBy && part.failures.length > 0 && part.findings > 0).map((part) => `part ${part.index} retried (after ${part.failures.join("; ")})`);
   return [who, ...model.chunks && model.chunks > 1 ? [`${model.chunks} parts`] : [], `${plural(found, "finding")}${droppedNote(model.dropped ?? 0)}`, ...retried, ...model.truncated ? ["part of the diff was not reviewed"] : [], ...model.error ? [`note: ${model.error}`] : []].join(" \xB7 ");
 }
 function failureTails(checks) {
@@ -14178,7 +14313,7 @@ function reviewMarkdown(report, options = { setupConfigured: true }) {
 
 // src/orchestrator/agent-review.ts
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync13, mkdirSync as mkdirSync7, readFileSync as readFileSync13, unlinkSync as unlinkSync3 } from "node:fs";
+import { existsSync as existsSync13, mkdirSync as mkdirSync7, readFileSync as readFileSync14, unlinkSync as unlinkSync3 } from "node:fs";
 import path21 from "node:path";
 
 // src/review/model-review.ts
@@ -14197,10 +14332,12 @@ function asFindingList(value) {
 function parseModelFindings(text) {
   const list = firstJson(text, asFindingList);
   if (!list) return void 0;
-  return list.flatMap((item) => {
-    const finding = item && typeof item === "object" && !Array.isArray(item) ? readFinding(item, ["message"], 300) : void 0;
+  const parsed = list.flatMap((item) => {
+    const finding = item && typeof item === "object" && !Array.isArray(item) ? readFinding(item, ["message", "issue"], 300) : void 0;
     return finding ? [finding] : [];
   });
+  if (list.length > 0 && parsed.length === 0) return void 0;
+  return parsed;
 }
 
 // src/orchestrator/agent-review.ts
@@ -14257,6 +14394,9 @@ async function runAgentReview(ctx, input, progress) {
   const { model } = input;
   const text = modelText(model);
   const label = input.reviewerName ?? text;
+  if (budgetState(ctx, input.taskId).status === "hard") {
+    return unavailable(model, "the task or daily budget is exhausted.");
+  }
   const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
   if ("problem" in where) return unavailable(model, `the model pass needs herdr: ${text} reviews in a herdr sub-agent; run from a terminal inside herdr (${where.problem}).`);
   if (model.kind === "pi" && !ctx.ticketModePath) return unavailable(model, `${text} is a Pi model and this install does not know where the ticket-mode extension is.`);
@@ -14312,7 +14452,7 @@ async function runAgentReview(ctx, input, progress) {
     failure ??= program.failed?.();
     if (failure) return { ...unavailable(model, left(`${text} did not finish: ${failure}`)), elapsedMs, ...spend2.costUsd !== void 0 ? { costUsd: spend2.costUsd } : {}, ...spend2.notMetered ? { notMetered: true } : {} };
     if (!existsSync13(outFile)) return { ...unavailable(model, left(`${text} did not write the findings file ${outFile}`)), elapsedMs, ...spend2.costUsd !== void 0 ? { costUsd: spend2.costUsd } : {}, ...spend2.notMetered ? { notMetered: true } : {} };
-    const parsed = parseModelFindings(readFileSync13(outFile, "utf8"));
+    const parsed = parseModelFindings(readFileSync14(outFile, "utf8"));
     if (parsed === void 0) return { ...unavailable(model, left(`the findings file ${outFile} from ${text} is not a JSON list of findings`)), elapsedMs, ...spend2.costUsd !== void 0 ? { costUsd: spend2.costUsd } : {}, ...spend2.notMetered ? { notMetered: true } : {} };
     const { findings: findings2, dropped } = keepBest(parsed, MAX_FINDINGS2);
     let treeNote;
@@ -14662,7 +14802,7 @@ Fix the problems, then /shepherd:review again. Nothing was committed or pushed.`
 }
 
 // src/orchestrator/review-latest.ts
-import { existsSync as existsSync14, readdirSync as readdirSync8, readFileSync as readFileSync14 } from "node:fs";
+import { existsSync as existsSync14, readdirSync as readdirSync8, readFileSync as readFileSync15 } from "node:fs";
 import path24 from "node:path";
 
 // src/orchestrator/review-fix.ts
@@ -14751,7 +14891,7 @@ async function latestReview(ctx) {
     let report = state.review;
     if (!report && existsSync14(json)) {
       try {
-        report = JSON.parse(readFileSync14(json, "utf8"));
+        report = JSON.parse(readFileSync15(json, "utf8"));
       } catch {
         report = void 0;
       }
@@ -14762,7 +14902,7 @@ async function latestReview(ctx) {
   const name = existsSync14(dir) ? readdirSync8(dir).filter((item) => /^review-\d{8}-\d{6}\.json$/.test(item)).sort().pop() : void 0;
   if (!name) return void 0;
   try {
-    return { report: JSON.parse(readFileSync14(path24.join(dir, name), "utf8")), file: path24.join(dir, name.replace(/\.json$/, ".md")), taskId: SESSION_TASK_ID, taskName: "" };
+    return { report: JSON.parse(readFileSync15(path24.join(dir, name), "utf8")), file: path24.join(dir, name.replace(/\.json$/, ".md")), taskId: SESSION_TASK_ID, taskName: "" };
   } catch {
     return void 0;
   }
@@ -14910,25 +15050,25 @@ import { promisify as promisify3 } from "node:util";
 var execFileAsync = promisify3(execFile3);
 function buildPrTitle(task, branch, commits) {
   if (task?.plan?.summary) {
-    const first = task.plan.summary.split(/\r?\n/)[0]?.trim() ?? "";
+    const first = redact(task.plan.summary.split(/\r?\n/)[0]?.trim() ?? "");
     if (first.length > 0 && first.length <= 72) return first;
   }
-  if (task?.name) return task.name.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase());
-  if (commits.length === 1 && commits[0]?.subject) return commits[0].subject.slice(0, 72);
-  return branch.replace(/^[^/]+\//, "").replace(/-/g, " ");
+  if (task?.name) return redact(task.name.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase()));
+  if (commits.length === 1 && commits[0]?.subject) return redact(commits[0].subject).slice(0, 72);
+  return redact(branch.replace(/^[^/]+\//, "").replace(/-/g, " "));
 }
 function buildPrBody(ctx, task, commits, spendLine) {
   const lines2 = [];
   const spec = task ? ctx.store.readText(task.taskId, SPEC_FILE) : void 0;
   const summary = task?.plan?.summary || (spec ? spec.split(/\r?\n/).find((l) => l.trim() && !l.startsWith("#")) : void 0);
   lines2.push("## Summary");
-  lines2.push(summary ? redact(summary) : commits.slice(0, 8).map((c) => `- ${c.subject}`).join("\n") || "- Branch changes ready for review.");
+  lines2.push(summary ? redact(summary) : commits.slice(0, 8).map((c) => `- ${redact(c.subject)}`).join("\n") || "- Branch changes ready for review.");
   if (task?.plan?.tickets?.length) {
     lines2.push("", "## Tickets");
     for (const tk of task.plan.tickets) {
       const run3 = task.ticketRuns?.[tk.id];
       const mark = run3?.status === "done" ? "x" : " ";
-      lines2.push(`- [${mark}] **${tk.id}** ${tk.title}${run3?.commit ? ` (\`${run3.commit.slice(0, 7)}\`)` : ""}`);
+      lines2.push(`- [${mark}] **${tk.id}** ${redact(tk.title)}${run3?.commit ? ` (\`${run3.commit.slice(0, 7)}\`)` : ""}`);
     }
   }
   if (task?.review) {
@@ -14957,7 +15097,8 @@ function runShip(ctx, options = {}) {
     if (dirty.length > 0) blockers.push(`Working tree has ${dirty.length} uncommitted change(s). Commit or stash them first.`);
     const commits = branch === "HEAD" ? [] : await ctx.git.commitLog(base);
     if (commits.length === 0) blockers.push(`No commits ahead of \`${base}\`.`);
-    const open2 = task && task.phase !== "COMPLETE" && task.phase !== "IDLE" && (!task.build?.branch || task.build.branch === branch) ? task : void 0;
+    const matchedByBranch = task && task.phase !== "COMPLETE" && task.phase !== "IDLE" && (!task.build?.branch || task.build.branch === branch) ? task : listTasks(ctx).find((t) => t.phase !== "COMPLETE" && t.phase !== "IDLE" && (t.build?.branch === branch || t.worktree?.branch === branch));
+    const open2 = matchedByBranch;
     if (open2 && (ctx.store.liveBuildClaim(open2.taskId) || ctx.store.buildInProgress(open2.taskId))) {
       blockers.push(`A build is currently in progress for task \`${displayName(open2)}\`. Finish or pause it before shipping.`);
     }
@@ -14966,9 +15107,13 @@ function runShip(ctx, options = {}) {
     if (tickets.length > 0 && ticketsDone < tickets.length) {
       warnings.push(`${tickets.length - ticketsDone} of ${tickets.length} plan ticket(s) are not built yet.`);
     }
-    const reviewPassed = open2?.review ? open2.review.passed : null;
-    if (open2 && reviewPassed === false) {
+    const headSha = await ctx.git.head().catch(() => void 0);
+    const reviewStale = Boolean(open2?.review?.passed && open2.review.headSha && headSha && open2.review.headSha !== headSha);
+    const reviewPassed = open2?.review ? reviewStale ? null : open2.review.passed : null;
+    if (open2 && open2.review && !open2.review.passed) {
       blockers.push("The latest `/shepherd:review` did not pass. Fix blocking findings and re-run review first.");
+    } else if (open2 && reviewStale) {
+      warnings.push(`The latest passing \`/shepherd:review\` was recorded at \`${open2.review.headSha.slice(0, 7)}\`, before HEAD \`${headSha.slice(0, 7)}\`. Re-run \`/shepherd:review\` before shipping.`);
     } else if (open2 && reviewPassed === null) {
       warnings.push("No `/shepherd:review` has been recorded for this task yet.");
     }
@@ -15273,7 +15418,7 @@ function shepherdCommandHits(argv, from) {
   const first = verbs[0] ?? "";
   const second = verbs[1] ?? "";
   if (["build", "review", "fix"].includes(first)) {
-    if (first === "build" && second === "pause") return [];
+    if (first === "build" && second === "pause") return ["build pause"];
     return ["shepherd run"];
   }
   if (first === "plan" && second === "approve") return ["plan approve"];
@@ -15287,9 +15432,9 @@ function hitsForCommand(argv) {
   if (!name) return [];
   const call = gitCall(argv);
   if (call) {
-    if (call.sub === "push") return ["git push"];
+    if (call.sub === "push" || call.sub === "send-pack") return ["git push"];
     if (call.sub === "worktree" && call.rest.find((arg) => !arg.startsWith("-")) !== "list") return ["git worktree"];
-    if (call.sub === "switch" || call.sub === "checkout" || call.sub === "symbolic-ref" || call.sub === "update-ref") {
+    if (call.sub === "switch" || call.sub === "checkout" || call.sub === "symbolic-ref" || call.sub === "update-ref" || call.sub === "rebase") {
       if (switchesBranch(argv.join(" "))) return ["git branch change"];
     }
     return [];
@@ -15567,7 +15712,7 @@ function ticketModePath(from = import.meta.url) {
 }
 
 // src/cli/plan.ts
-import { existsSync as existsSync16, mkdirSync as mkdirSync8, readFileSync as readFileSync15, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync16, mkdirSync as mkdirSync8, readFileSync as readFileSync16, writeFileSync as writeFileSync2 } from "node:fs";
 import path28 from "node:path";
 var PLAN_USAGE = `Usage:
   shepherd plan start [--worktree [dir]] [--base <branch>] "<request>"   (or "-" for stdin)
@@ -15670,7 +15815,7 @@ function readJsonInput(ref, stdin, cwd, what) {
     const file = path28.resolve(cwd, ref);
     if (!existsSync16(file)) return { failed: fail("BAD_INPUT", `No such file: ${ref}`) };
     try {
-      text = readFileSync15(file, "utf8");
+      text = readFileSync16(file, "utf8");
     } catch (error) {
       return { failed: fail("BAD_INPUT", `Cannot read ${ref}: ${error.message.split("\n")[0]}`) };
     }
@@ -16106,7 +16251,7 @@ import path30 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/cli/herdr-layout.ts
-import { copyFileSync, existsSync as existsSync17, mkdirSync as mkdirSync9, readFileSync as readFileSync16, renameSync as renameSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { copyFileSync, existsSync as existsSync17, mkdirSync as mkdirSync9, readFileSync as readFileSync17, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
 import path29 from "node:path";
 var SHEPHERD_MOD = "shepherd-config";
 var SHEPHERD_ID = "shepherd";
@@ -16140,21 +16285,21 @@ function dockShepherdPanel(layout) {
 }
 function shownLayout(appHome) {
   try {
-    const shared = JSON.parse(readFileSync16(path29.join(appHome, "shared.json"), "utf8"));
+    const shared = JSON.parse(readFileSync17(path29.join(appHome, "shared.json"), "utf8"));
     if (typeof shared.layout === "string" && /^[\w.-]+$/.test(shared.layout)) return shared.layout;
   } catch {
   }
   return "main";
 }
 function readLayout(file) {
-  return JSON.parse(readFileSync16(file, "utf8"));
+  return JSON.parse(readFileSync17(file, "utf8"));
 }
 function writeJson2(file, value) {
   mkdirSync9(path29.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync3(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  renameSync2(tmp, file);
+  renameSync3(tmp, file);
 }
 function usage(name) {
   return [
@@ -16263,7 +16408,7 @@ function herdrInstall(args, out, err, options = {}) {
 
 // src/cli/migrate-config.ts
 var import_yaml2 = __toESM(require_dist(), 1);
-import { existsSync as existsSync19, readFileSync as readFileSync17 } from "node:fs";
+import { existsSync as existsSync19, readFileSync as readFileSync18 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import path31 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
@@ -16311,7 +16456,7 @@ function templateText() {
   let dir = path31.dirname(fileURLToPath3(import.meta.url));
   for (let depth = 0; depth < 4; depth += 1) {
     const file = path31.join(dir, "templates", "shepherd.yaml");
-    if (existsSync19(file)) return readFileSync17(file, "utf8");
+    if (existsSync19(file)) return readFileSync18(file, "utf8");
     dir = path31.dirname(dir);
   }
   return void 0;
@@ -16324,7 +16469,7 @@ function migrateConfig(options = {}) {
   const existing = firstExisting(path31.join(home, ".claude", "shepherd"));
   const dest = existing ?? path31.join(home, ".claude", "shepherd.yaml");
   if (existing && !options.force) return fail("EXISTS", `${shown(existing)} already exists, so nothing was changed. Run \`shepherd migrate-config --force\` to replace it (the old file is kept as ${shown(backupName(existing))}).`);
-  const doc = (0, import_yaml2.parseDocument)(readFileSync17(source, "utf8"));
+  const doc = (0, import_yaml2.parseDocument)(readFileSync18(source, "utf8"));
   if (doc.errors.length > 0) return fail("BAD_YAML", `${shown(source)}: YAML could not be read (${doc.errors[0].message.split("\n")[0]}). Nothing was written.`);
   const raw = doc.toJS();
   const dropped = raw && typeof raw === "object" && !Array.isArray(raw) ? unknownKeys(raw) : [];
@@ -16362,7 +16507,7 @@ ${(0, import_yaml2.stringify)(left)}` : template;
   const lines2 = [];
   if (existing) {
     const backup = backupName(existing);
-    atomicWrite(backup, readFileSync17(existing, "utf8"));
+    atomicWrite(backup, readFileSync18(existing, "utf8"));
     lines2.push(`Backed up ${shown(existing)} to ${shown(backup)}.`);
   }
   atomicWrite(dest, text);
@@ -16444,7 +16589,7 @@ async function shipCommand(rest, io, open2, execPr) {
 }
 
 // src/cli/statusline.ts
-import { chmodSync as chmodSync2, copyFileSync as copyFileSync3, existsSync as existsSync20, mkdirSync as mkdirSync11, readFileSync as readFileSync18 } from "node:fs";
+import { chmodSync as chmodSync2, copyFileSync as copyFileSync3, existsSync as existsSync20, mkdirSync as mkdirSync11, readFileSync as readFileSync19 } from "node:fs";
 import path32 from "node:path";
 var STATUSLINE_USAGE = `Usage: shepherd statusline-install [--force]
 Shows "shepherd \xB7 <plan> \xB7 plan $spent/$budget \xB7 today $spent/$budget" in Claude Code's status line by setting
@@ -16465,7 +16610,7 @@ function refreshStatusLine(shepherd, entry) {
     const file = path32.join(shepherd, LAUNCHER);
     if (!existsSync20(file)) return;
     const text = launcherText(entry);
-    if (readFileSync18(file, "utf8") !== text) writeAtomic(file, text, 493);
+    if (readFileSync19(file, "utf8") !== text) writeAtomic(file, text, 493);
   } catch {
   }
 }
@@ -16476,7 +16621,7 @@ function installStatusLine({ home, shepherd, entry, force = false }) {
   let settings = {};
   if (existsSync20(settingsFile)) {
     try {
-      const parsed = JSON.parse(readFileSync18(settingsFile, "utf8"));
+      const parsed = JSON.parse(readFileSync19(settingsFile, "utf8"));
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fail("SETTINGS", `${settingsFile} is not a JSON object; left it alone.`);
       settings = parsed;
     } catch (error) {
@@ -16525,7 +16670,7 @@ var defaultIo = { out: (text) => process.stdout.write(text), err: (text) => proc
 function packageVersion() {
   for (const rel of ["../../package.json", "../package.json"]) {
     try {
-      const pkg = JSON.parse(readFileSync19(new URL(rel, import.meta.url), "utf8"));
+      const pkg = JSON.parse(readFileSync20(new URL(rel, import.meta.url), "utf8"));
       if (pkg.name === "claude-shepherd" && pkg.version) return pkg.version;
     } catch {
     }
@@ -16799,7 +16944,8 @@ var GUARD_WHY = {
   "hc run": "",
   "plan approve": "",
   "cleanup remote": "",
-  "ship remote": "shepherd never pushes while a build runs"
+  "ship remote": "shepherd never pushes while a build runs",
+  "build pause": ""
 };
 async function runHook(kind, input, session) {
   const { workflow, config, shepherd, now } = session;
@@ -16919,9 +17065,17 @@ async function runHook(kind, input, session) {
     if (hits.length === 0) return void 0;
     const deny = (reason) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
     const open2 = openTask(task);
+    const real = (p) => {
+      try {
+        return realpathSync2(p);
+      } catch {
+        return path33.resolve(p);
+      }
+    };
+    const rootReal = real(session.root);
     const liveClaim = open2 ? workflow.store.liveBuildClaim(open2.taskId) : void 0;
-    const claimHere = !!liveClaim && (!liveClaim.checkout || path33.resolve(liveClaim.checkout) === path33.resolve(session.root));
-    const markerHere = !!open2 && workflow.store.buildInProgress(open2.taskId) && (!open2.worktree || path33.resolve(open2.worktree.path) === path33.resolve(session.root));
+    const claimHere = !!liveClaim && (!liveClaim.checkout || real(liveClaim.checkout) === rootReal);
+    const markerHere = !!open2 && workflow.store.buildInProgress(open2.taskId) && (!open2.worktree || real(open2.worktree.path) === rootReal);
     const building = open2 && (claimHere || markerHere);
     const blocked = hits.find((hit) => building && GUARD_WHY[hit]);
     if (blocked) return deny(`Blocked \`${blocked}\`: ${GUARD_WHY[blocked]} (task ${open2?.name ?? open2?.taskId}).`);
@@ -16933,6 +17087,15 @@ async function runHook(kind, input, session) {
     if (hits.includes("plan approve")) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: await approvalReason(workflow, config) } };
     if (hits.includes("cleanup remote")) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: cleanupRemoteReason(command) } };
     if (hits.includes("ship remote")) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: await shipRemoteReason(workflow, command) } };
+    if (hits.includes("build pause") && building) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "ask",
+          permissionDecisionReason: `Pause active build for task \`${open2?.name ?? open2?.taskId}\` and lift the branch/push guard?`
+        }
+      };
+    }
     return void 0;
   }
   return void 0;
@@ -16991,7 +17154,7 @@ function writeSettingsSafely(settingsFile, content) {
   const tmp = `${target}.tmp.${process.pid}.${Date.now()}`;
   writeFileSync5(tmp, content, { mode });
   chmodSync3(tmp, mode);
-  renameSync3(tmp, target);
+  renameSync4(tmp, target);
 }
 function compactConfigCommand(rest, io, options) {
   const json = rest.includes("--json");
@@ -17018,14 +17181,17 @@ function compactConfigCommand(rest, io, options) {
   let doc = {};
   if (existsSync21(settingsFile)) {
     try {
-      const parsed = JSON.parse(readFileSync19(settingsFile, "utf8"));
+      const parsed = JSON.parse(readFileSync20(settingsFile, "utf8"));
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return emit(fail("CONFIG", `${settingsFile} is not a JSON object.`), json, io);
       doc = parsed;
     } catch (error) {
       return emit(fail("CONFIG", `Could not read ${settingsFile}: ${redact(error.message)}`), json, io);
     }
   }
-  const envObj = doc.env && typeof doc.env === "object" && !Array.isArray(doc.env) ? { ...doc.env } : {};
+  if (doc.env !== void 0 && (!doc.env || typeof doc.env !== "object" || Array.isArray(doc.env))) {
+    return emit(fail("CONFIG", `${settingsFile}: \`env\` must be a JSON object.`), json, io);
+  }
+  const envObj = doc.env ? { ...doc.env } : {};
   const current = typeof envObj.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE === "string" ? envObj.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE : null;
   if (!off && pct === void 0) {
     const msg = current ? `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is ${current}% in ${settingsFile}.` : `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is not set in ${settingsFile} (Claude Code default applies).`;

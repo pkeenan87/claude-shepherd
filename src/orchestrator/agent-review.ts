@@ -24,6 +24,7 @@ import { NO_PI } from "../runner/pi-path.js";
 import { herdrSpace } from "../runner/ticket.js";
 import { agentProgram, piProgram, type Program } from "./tab-program.js";
 import { messageOf, openTab, type Tab, type TabTimings } from "../runner/tab.js";
+import { budgetState } from "./budget.js";
 import type { WorkflowContext } from "./context.js";
 
 
@@ -111,6 +112,9 @@ export async function runAgentReview(ctx: WorkflowContext, input: AgentPassInput
   const { model } = input;
   const text = modelText(model);
   const label = input.reviewerName ?? text;
+  if (budgetState(ctx, input.taskId).status === "hard") {
+    return unavailable(model, "the task or daily budget is exhausted.");
+  }
   const where = await herdrSpace(ctx.herdr, ctx.config.build.visibleTabs);
   if ("problem" in where) return unavailable(model, `the model pass needs herdr: ${text} reviews in a herdr sub-agent; run from a terminal inside herdr (${where.problem}).`);
   if (model.kind === "pi" && !ctx.ticketModePath) return unavailable(model, `${text} is a Pi model and this install does not know where the ticket-mode extension is.`);

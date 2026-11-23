@@ -418,6 +418,7 @@ const GUARD_WHY: Record<GuardHit, string> = {
   "plan approve": "",
   "cleanup remote": "",
   "ship remote": "shepherd never pushes while a build runs",
+  "build pause": "",
 };
 
 async function runHook(kind: string, input: HookInput, session: Session): Promise<object | undefined> {
@@ -559,12 +560,20 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
     const deny = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
     const open = openTask(task);
     // Scope the build guard to THIS checkout: a build running in worktree A does not block git commands in worktree B.
+    const real = (p: string) => {
+      try {
+        return realpathSync(p);
+      } catch {
+        return path.resolve(p);
+      }
+    };
+    const rootReal = real(session.root);
     const liveClaim = open ? workflow.store.liveBuildClaim(open.taskId) : undefined;
-    const claimHere = !!liveClaim && (!liveClaim.checkout || path.resolve(liveClaim.checkout) === path.resolve(session.root));
+    const claimHere = !!liveClaim && (!liveClaim.checkout || real(liveClaim.checkout) === rootReal);
     const markerHere =
       !!open &&
       workflow.store.buildInProgress(open.taskId) &&
-      (!open.worktree || path.resolve(open.worktree.path) === path.resolve(session.root));
+      (!open.worktree || real(open.worktree.path) === rootReal);
     const building = open && (claimHere || markerHere);
     const blocked = hits.find((hit) => building && GUARD_WHY[hit]);
     if (blocked) return deny(`Blocked \`${blocked}\`: ${GUARD_WHY[blocked]} (task ${open?.name ?? open?.taskId}).`);
@@ -577,6 +586,15 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
     if (hits.includes("plan approve")) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: await approvalReason(workflow, config) } };
     if (hits.includes("cleanup remote")) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: cleanupRemoteReason(command) } };
     if (hits.includes("ship remote")) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: await shipRemoteReason(workflow, command) } };
+    if (hits.includes("build pause") && building) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "ask",
+          permissionDecisionReason: `Pause active build for task \`${open?.name ?? open?.taskId}\` and lift the branch/push guard?`,
+        },
+      };
+    }
     return undefined;
   }
   return undefined;
@@ -681,7 +699,10 @@ function compactConfigCommand(rest: string[], io: CliIo, options: CliOptions): n
       return emit(fail("CONFIG", `Could not read ${settingsFile}: ${redact((error as Error).message)}`), json, io);
     }
   }
-  const envObj = doc.env && typeof doc.env === "object" && !Array.isArray(doc.env) ? { ...(doc.env as Record<string, unknown>) } : {};
+  if (doc.env !== undefined && (!doc.env || typeof doc.env !== "object" || Array.isArray(doc.env))) {
+    return emit(fail("CONFIG", `${settingsFile}: \`env\` must be a JSON object.`), json, io);
+  }
+  const envObj = doc.env ? { ...(doc.env as Record<string, unknown>) } : {};
   const current = typeof envObj.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE === "string" ? envObj.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE : null;
   if (!off && pct === undefined) {
     const msg = current ? `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is ${current}% in ${settingsFile}.` : `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is not set in ${settingsFile} (Claude Code default applies).`;

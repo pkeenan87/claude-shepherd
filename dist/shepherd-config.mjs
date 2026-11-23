@@ -7527,13 +7527,11 @@ var ALIASES = {
 };
 function canonicalModelId(provider, model) {
   let clean = model.trim().toLowerCase();
-  clean = clean.replace(/\[[^\]]*\]/g, "").trim();
+  clean = clean.replace(/\[optimize_for=[^\]]*\]/g, "").trim();
   clean = clean.replace(/\s+/g, "-");
   if (clean.startsWith("cursor-") && clean !== "cursor-small") clean = clean.slice("cursor-".length);
   clean = clean.replace(/-(?:20\d{2}-?\d{2}-?\d{2})$/, "");
-  if (clean !== "grok-code-fast") {
-    clean = clean.replace(/-(?:high|medium|low|xhigh|max|fast|thinking)(?:-(?:fast|high|medium|low))?$/, "");
-  }
+  clean = clean.replace(/-(?:high|medium|low|xhigh|max|thinking)$/, "");
   const aliased = ALIASES[clean];
   if (aliased) return aliased;
   if (provider === "anthropic" || clean.startsWith("claude-")) {
@@ -8607,6 +8605,15 @@ var TaskStore = class {
         const tomb = `${file}.stale.${randomUUID()}`;
         try {
           renameSync(file, tomb);
+          const moved = readClaim(tomb);
+          if (moved && moved.pid !== process.pid && processAlive(moved.pid)) {
+            try {
+              linkSync(tomb, file);
+            } catch {
+            }
+            rmSync(tomb, { force: true });
+            return moved;
+          }
           rmSync(tomb, { force: true });
         } catch {
         }
@@ -8615,9 +8622,8 @@ var TaskStore = class {
       }
     }
     const held = readClaim(file);
-    if (held && held.pid !== process.pid && processAlive(held.pid)) return held;
-    atomicWrite(file, payload);
-    return void 0;
+    if (held && held.pid === process.pid) return void 0;
+    return held ?? { pid: -1, checkout: "" };
   }
   /** Drops this process's build claim on the task; another process's claim stays. */
   releaseBuild(taskId) {
@@ -9390,7 +9396,7 @@ function gitWorktreeRoots(cwd) {
     const resolvedCommon = commonRaw ? path5.resolve(cwd, commonRaw.trim()) : path5.join(root, ".git");
     const commonRoot = path5.basename(resolvedCommon) === ".git" ? path5.dirname(resolvedCommon) : root;
     const gitDir = dirRaw ? path5.resolve(cwd, dirRaw.trim()) : path5.join(root, ".git");
-    const isWorktree = path5.resolve(gitDir) !== path5.resolve(path5.join(commonRoot, ".git"));
+    const isWorktree = path5.resolve(gitDir) !== path5.resolve(resolvedCommon);
     return { root, commonRoot, isWorktree, ...isWorktree ? { activePointer: path5.join(gitDir, "shepherd-active.json") } : {} };
   } catch {
     return { root: cwd, commonRoot: cwd, isWorktree: false };

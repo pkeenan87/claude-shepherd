@@ -427,11 +427,21 @@ export class GitWorkspace {
     if (res.code !== 0) throw new WorkflowError("GIT", res.stderr || `Could not delete branch ${branch}`);
   }
 
-  /** Deletes a remote branch on `<remote>` (never `main` or `master`). */
-  async deleteRemoteBranch(branch: string, remote = "origin"): Promise<void> {
+  /** Resolves the commit sha of `refs/remotes/<remote>/<branch>`, or undefined if absent. */
+  async remoteBranchSha(branch: string, remote = "origin"): Promise<string | undefined> {
+    const res = await this.git(["rev-parse", "--verify", "--quiet", `refs/remotes/${remote}/${branch}`]);
+    return res.code === 0 && res.stdout.trim() ? res.stdout.trim() : undefined;
+  }
+
+  /** Deletes a remote branch on `<remote>` (never `main` or `master`). Uses `--force-with-lease` when `expectedSha` is supplied so new commits pushed since verification are never lost. */
+  async deleteRemoteBranch(branch: string, remote = "origin", expectedSha?: string): Promise<void> {
     if (branch === "main" || branch === "master") throw new WorkflowError("GIT", `Refusing to delete protected remote branch ${remote}/${branch}`);
     await this.assertBranchName(branch);
-    const res = await this.git(["push", remote, "--delete", "--", branch]);
+    if (expectedSha !== undefined) this.assertSha(expectedSha);
+    const args = expectedSha
+      ? ["push", `--force-with-lease=refs/heads/${branch}:${expectedSha}`, remote, "--delete", "--", branch]
+      : ["push", remote, "--delete", "--", branch];
+    const res = await this.git(args);
     if (res.code !== 0) throw new WorkflowError("GIT", res.stderr || `Could not delete ${remote}/${branch}`);
   }
 

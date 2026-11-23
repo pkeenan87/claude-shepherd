@@ -91,7 +91,7 @@ function gitWorktreeRoots(cwd: string): { root: string; commonRoot: string; isWo
     const resolvedCommon = commonRaw ? path.resolve(cwd, commonRaw.trim()) : path.join(root, ".git");
     const commonRoot = path.basename(resolvedCommon) === ".git" ? path.dirname(resolvedCommon) : root;
     const gitDir = dirRaw ? path.resolve(cwd, dirRaw.trim()) : path.join(root, ".git");
-    const isWorktree = path.resolve(gitDir) !== path.resolve(path.join(commonRoot, ".git"));
+    const isWorktree = path.resolve(gitDir) !== path.resolve(resolvedCommon);
     return { root, commonRoot, isWorktree, ...(isWorktree ? { activePointer: path.join(gitDir, "shepherd-active.json") } : {}) };
   } catch {
     return { root: cwd, commonRoot: cwd, isWorktree: false };
