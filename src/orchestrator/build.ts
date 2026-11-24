@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { AGENT_PROVIDER, modelText, ranModelText } from "../agents.js";
+import { AGENT_PROVIDER, modelText, ranModelText, type TicketModel } from "../agents.js";
 import { fromMicroUsd, toMicroUsd } from "../config.js";
 import { rungOf, ticketDifficulty, type BuildRecord, type CheckEvidence, type CommandResult, type CostSplit, type Difficulty, type Phase, type TaskState, type Ticket, type TicketAttempt, type TicketReviewRecord, type TicketRun, type ThinkingLevel } from "../domain.js";
 import { redact } from "../redact.js";
@@ -58,8 +59,16 @@ export interface ModelRef {
   agent?: { name: string; model?: string };
 }
 
+export interface NextChunkOptions {
+  /** One-shot model override (`shepherd build --with <model>`) for the next ticket, bypassing the rung ladder. */
+  overrideModel?: TicketModel;
+  /** Commit the review-failed ticket once checks pass, carrying its findings to `/review` (`shepherd build --override-review`). */
+  overrideReview?: boolean;
+}
+
 export type NextChunk =
   | { kind: "chunk"; ticket: Ticket; prompt: string; model: ModelRef; tier: Difficulty; previous?: TicketRun; limits: ChunkLimits; /** The attempt number of this ticket (1 for the first), for a tab name. */ attempt: number }
+  | { kind: "settled"; ticket: Ticket; sha: string; warning?: string }
   | { kind: "done" }
   | { kind: "stopped"; code: string; reason: string };
 
@@ -349,8 +358,8 @@ async function settle(ctx: WorkflowContext, state: TaskState, ticket: Ticket, la
     await patch(ctx, state.taskId, ticket, (previous) => ({ ...previous, reviews: [...(previous.reviews ?? []), reviewed.record] }));
     if (reviewed.kind === "fail") {
       const run = state.ticketRuns?.[ticket.id];
-      // Review rounds per rung: a first fail goes back to the same session, a second fails the ticket on that rung.
-      const fails = (run?.reviews ?? []).filter((item) => item.tier === reviewed.record.tier && item.verdict === "fail").length;
+      // Review rounds per rung + implementer: a first fail goes back to the same session, a second fails the ticket on that model.
+      const fails = (run?.reviews ?? []).filter((item) => item.tier === reviewed.record.tier && item.implementer === reviewed.record.implementer && item.verdict === "fail").length;
       return { kind: "review-failed", record: reviewed.record, text: reviewed.text, final: fails >= 1 };
     }
     if (reviewed.kind === "unavailable") {
@@ -383,12 +392,22 @@ const clip = (text: string) => text.slice(0, MAX_SUMMARY_CHARS);
 // ---------------------------------------------------------------------------------------------------------------------
 // nextChunk
 
+/** SHA-256 of the current working tree against HEAD (excluding .shepherd/), or undefined if unreadable. */
+async function diffHash(ctx: WorkflowContext): Promise<string | undefined> {
+  try {
+    return createHash("sha256").update(await ctx.git.workingDiff("HEAD", excludedPaths(ctx))).digest("hex");
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The next ticket whose run is not done, routed and with its prompt, or `done`. A ticket left failed
  * with changes in the tree first has its checks re-run, so a fix made by hand in the chat is committed without a
- * model turn. Only if they still fail does the ticket go to a model again, one rung up after a failure.
+ * model turn (for a review failure, only when the working tree changed after the failed review). Only if they
+ * still fail does the ticket go to a model again, one rung up after a failure (or on a newly swapped model at high).
  */
-export async function nextChunk(ctx: WorkflowContext): Promise<NextChunk> {
+export async function nextChunk(ctx: WorkflowContext, options: NextChunkOptions = {}): Promise<NextChunk> {
   try {
     for (;;) {
       const state = requireActive(ctx);
@@ -410,7 +429,7 @@ export async function nextChunk(ctx: WorkflowContext): Promise<NextChunk> {
           ctx,
           state.taskId,
           ticket,
-          (previous) => ({ ...previous, status: "done", error: undefined, failedBy: undefined, commit: committed, turns: (previous.turns ?? 0) + turns, tokens: (previous.tokens ?? 0) + tokens, costUsd: addUsd(previous.costUsd ?? 0, total), costSplit: addSplit(previous.costSplit, split), ...(notMetered ? { notMetered: true } : {}) }),
+          (previous) => ({ ...previous, status: "done", error: undefined, failedBy: undefined, failedDiffHash: undefined, commit: committed, turns: (previous.turns ?? 0) + turns, tokens: (previous.tokens ?? 0) + tokens, costUsd: addUsd(previous.costUsd ?? 0, total), costSplit: addSplit(previous.costSplit, split), ...(notMetered ? { notMetered: true } : {}) }),
           (build) => ({ ...build, currentTicket: undefined, chunkStartedAt: undefined }),
         );
         editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(markdown, "done"));
@@ -418,8 +437,45 @@ export async function nextChunk(ctx: WorkflowContext): Promise<NextChunk> {
         ctx.progress?.(`Ticket ${ticket.id} was committed (${committed.slice(0, 7)}) before /build stopped; marked done`);
         continue;
       }
-      // A ticket the review failed is not settled by passing checks: it goes to a stronger model, not to a commit.
-      if (run && run.attempts > 0 && run.status === "failed" && run.failedBy !== "review" && (await dirtyPaths(ctx)).length > 0) {
+      // Explicit user-confirmed override of a failed per-ticket review: checks must still pass, then commit and carry findings to /review.
+      if (options.overrideReview) {
+        if (!run || run.status !== "failed" || run.failedBy !== "review") {
+          return { kind: "stopped", code: "NOT_REVIEW_FAILED", reason: `Ticket ${ticket.id} is not waiting on a failed review (--override-review applies only to a ticket whose per-ticket review failed).` };
+        }
+        ctx.progress?.(`Ticket ${ticket.id}: re-running checks to commit with --override-review`);
+        const began = iso(ctx);
+        const outcome = await runChecks(ctx, state, ticket);
+        if (outcome.verdict !== "pass") {
+          const detail = failureDetail(outcome.evidence);
+          const code = outcome.verdict === "failed" ? "CHECKS_FAILED" : "CHECKS_UNRUNNABLE";
+          return { kind: "stopped", code, reason: `Ticket ${ticket.id} cannot override review while checks fail:\n${detail}` };
+        }
+        const sha = await ctx.git.commitAll(ctx.git.repoRoot, commitSubject(ticket), excludedPaths(ctx));
+        const met = parseCriteriaMet(run.summary ?? "", ticket.acceptanceCriteria);
+        editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(tickCriteria(markdown, met), "done"));
+        const elapsed = Math.max(0, ctx.now().getTime() - new Date(began).getTime());
+        const spent = ticketSpend(ctx, state.taskId, ticket.id, began);
+        await patch(ctx, state.taskId, ticket, (previous) => ({
+          ...previous,
+          status: "done",
+          error: undefined,
+          failedBy: undefined,
+          failedDiffHash: undefined,
+          commit: sha,
+          unverified: "review overridden",
+          elapsedMs: (previous.elapsedMs ?? 0) + elapsed,
+          attemptLog: [...(previous.attemptLog ?? []), { ...attempt(previous, began, elapsed, spent, "success"), provider: "", model: "review override" }],
+        }));
+        logTicket(ctx, state.taskId, ticket.id);
+        const warning = `Ticket ${ticket.id} was committed with its failed review overridden; remaining findings are carried to /review.`;
+        return { kind: "settled", ticket, sha, warning };
+      }
+      // A failed ticket with changes in the tree re-runs checks (+ review) before spending another model turn.
+      // For a review failure, only re-check when the working tree actually changed since the failure (a real hand-fix).
+      const dirty = (await dirtyPaths(ctx)).length > 0;
+      const reviewHandEdited = run?.failedBy === "review" && Boolean(run.failedDiffHash) && dirty && (await diffHash(ctx)) !== run.failedDiffHash;
+      const shouldRecheck = run && run.attempts > 0 && run.status === "failed" && !options.overrideModel && (run.failedBy !== "review" ? dirty : reviewHandEdited);
+      if (shouldRecheck) {
         ctx.progress?.(`Ticket ${ticket.id}: re-running checks on the changes in the tree`);
         const began = iso(ctx);
         // Nobody can say which model wrote a hand fix: the review runs without an implementer, and no model metric moves.
@@ -434,7 +490,7 @@ export async function nextChunk(ctx: WorkflowContext): Promise<NextChunk> {
           if (settled.kind === "committed") {
             await patch(ctx, state.taskId, ticket, (previous) => {
               const next = accrue(previous);
-              return { ...next, status: "done", error: undefined, failedBy: undefined, commit: settled.sha, attemptLog: [...(next.attemptLog ?? []), entry(next, "success")] };
+              return { ...next, status: "done", error: undefined, failedBy: undefined, failedDiffHash: undefined, commit: settled.sha, attemptLog: [...(next.attemptLog ?? []), entry(next, "success")] };
             });
             logTicket(ctx, state.taskId, ticket.id);
             ctx.progress?.(`Ticket ${ticket.id} · checks passed on your changes · committed ${settled.sha.slice(0, 7)}`);
@@ -443,28 +499,31 @@ export async function nextChunk(ctx: WorkflowContext): Promise<NextChunk> {
           }
           // The review failed the hand fix: the ticket stays failed and the next model attempt gets the findings.
           const reason = reviewFailureDetail(settled.record);
+          const failedDiffHash = await diffHash(ctx);
           await patch(ctx, state.taskId, ticket, (previous) => {
             const next = accrue(previous);
-            return { ...next, status: "failed", failedBy: "review", error: clip(reason), attemptLog: [...(next.attemptLog ?? []), entry(next, "failure", "review", reason)] };
+            return { ...next, status: "failed", failedBy: "review", ...(failedDiffHash ? { failedDiffHash } : {}), error: clip(reason), attemptLog: [...(next.attemptLog ?? []), entry(next, "failure", "review", reason)] };
           });
           editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(markdown, "failed"));
           logTicket(ctx, state.taskId, ticket.id);
           ctx.progress?.(`Ticket ${ticket.id} · checks passed on your changes, but the review failed them; the next attempt gets its findings`);
-          return await prepare(ctx, ctx.store.load(state.taskId) ?? state, ticket);
+          return await prepare(ctx, ctx.store.load(state.taskId) ?? state, ticket, options);
         }
         // The failure text goes to the next model.
         if (settled.kind === "failed") await patch(ctx, state.taskId, ticket, (previous) => ({ ...previous, error: clip(settled.detail) }));
       }
       // Reloaded: the patch above put the fresh check output in `error`, which the prompt passes to the model.
-      return await prepare(ctx, ctx.store.load(state.taskId) ?? state, ticket);
+      return await prepare(ctx, ctx.store.load(state.taskId) ?? state, ticket, options);
     }
   } catch (error) {
     return { kind: "stopped", code: (error as { code?: string }).code ?? "ERROR", reason: redact((error as Error).message || "Could not pick the next ticket.") };
   }
 }
 
+const modelKey = (model: TicketModel): string => (model.kind === "pi" ? `${model.provider}/${model.id}` : modelText(model));
+
 /** Routes the ticket (the model of its difficulty, one rung up after a failure), gates the budget, builds the prompt, and marks the ticket running. */
-async function prepare(ctx: WorkflowContext, state: TaskState, ticket: Ticket): Promise<NextChunk> {
+async function prepare(ctx: WorkflowContext, state: TaskState, ticket: Ticket, options: NextChunkOptions = {}): Promise<NextChunk> {
   const stored = state.ticketRuns?.[ticket.id];
   // An in-progress attempt that never sent a turn (the session did not open) is no attempt: route the ticket fresh.
   const unstarted = stored !== undefined && neverStarted(stored);
@@ -481,26 +540,47 @@ async function prepare(ctx: WorkflowContext, state: TaskState, ticket: Ticket): 
   // plan's fault, and a pricier model cannot fix it, so the ticket stays on its rung.
   const modelFailed = run?.status === "failed" && (run.failedBy === undefined || run.failedBy === "checks" || run.failedBy === "review" || run.failedBy === "turns");
   const failed: Difficulty | undefined = modelFailed ? attempted : undefined;
-  const way = run?.failedBy === "review" ? "Edit the ticket or the plan (/plan), or raise routing.maxEscalations." : "Fix it in the chat and run /build (it re-runs the checks on your changes), or raise routing.maxEscalations.";
+  const way =
+    run?.failedBy === "review"
+      ? "Swap models.high to another model (or pass --with <model>), fix the findings in the working tree and run /build, pass --override-review, edit the ticket (/plan), or raise routing.maxEscalations."
+      : "Fix it in the chat and run /build (it re-runs the checks on your changes), pass --with <model>, or raise routing.maxEscalations.";
   let rung: Difficulty = start;
-  if (failed) {
-    // Nothing above with another model (high, or the same model on the rungs above): one more /build would run the same model again.
+  let model: TicketModel;
+  if (options.overrideModel) {
+    rung = failed ?? attempted ?? start;
+    model = options.overrideModel;
+  } else if (failed) {
+    // Nothing above with another model (high, or the same model on the rungs above): allow retrying on the same rung
+    // if the user swapped `models.<failed>` to a model that has not yet failed this ticket.
     const next = nextRung(ctx.config, failed);
     if (!next) {
-      return { kind: "stopped", code: "MAX_ESCALATIONS", reason: `Ticket ${ticket.id} is still failing on ${failed}, the top of the ladder it can climb (low, medium, high; no higher rung names a different model), so it stays failed and the build stops. ${way.replace(", or raise routing.maxEscalations", "")}` };
+      const tried = new Set<string>();
+      for (const item of run?.attemptLog ?? []) {
+        if (item.outcome === "failure" && item.provider && item.model) tried.add(ranModelText(item.provider, item.model));
+      }
+      if (run?.status === "failed" && run.provider && run.model) tried.add(ranModelText(run.provider, run.model));
+      const configured = modelFor(ctx.config, failed);
+      if (!tried.has(modelKey(configured))) {
+        rung = failed;
+        ctx.progress?.(`Ticket ${ticket.id}: retrying on ${failed} with ${modelText(configured)} (replacing previous failed model)`);
+      } else {
+        return { kind: "stopped", code: "MAX_ESCALATIONS", reason: `Ticket ${ticket.id} is still failing on ${failed}, the top of the ladder it can climb (low, medium, high; no higher rung names a different model), so it stays failed and the build stops. ${way.replace(", or raise routing.maxEscalations", "")}` };
+      }
+    } else {
+      // routing.maxEscalations: how many rungs a ticket may climb from the one its difficulty starts on. Counted to the rung it
+      // would run on next, so a rung skipped for naming the same model still counts as climbed.
+      const steps = climbed(start, next);
+      const limit = ctx.config.routing.maxEscalations;
+      if (steps > limit) {
+        return { kind: "stopped", code: "MAX_ESCALATIONS", reason: `Ticket ${ticket.id} is still failing on ${failed}, and ${next} (the next rung with another model) is ${steps} rung(s) above ${start}, past routing.maxEscalations (${limit}), so it stays failed and the build stops. ${way}` };
+      }
+      rung = next;
     }
-    // routing.maxEscalations: how many rungs a ticket may climb from the one its difficulty starts on. Counted to the rung it
-    // would run on next, so a rung skipped for naming the same model still counts as climbed.
-    const steps = climbed(start, next);
-    const limit = ctx.config.routing.maxEscalations;
-    if (steps > limit) {
-      return { kind: "stopped", code: "MAX_ESCALATIONS", reason: `Ticket ${ticket.id} is still failing on ${failed}, and ${next} (the next rung with another model) is ${steps} rung(s) above ${start}, past routing.maxEscalations (${limit}), so it stays failed and the build stops. ${way}` };
-    }
-    rung = next;
-  } else if (attempted) {
-    rung = attempted;
+    model = modelFor(ctx.config, rung);
+  } else {
+    if (attempted) rung = attempted;
+    model = modelFor(ctx.config, rung);
   }
-  const model = modelFor(ctx.config, rung);
   const route = routeFor(ctx, rung, model);
   if (route.blocked) {
     return { kind: "stopped", code: "NO_CANDIDATE", reason: `Ticket ${ticket.id} cannot start on ${route.blocked}. Fix models.${rung} or sign in, then /build again.` };
@@ -521,7 +601,7 @@ async function prepare(ctx: WorkflowContext, state: TaskState, ticket: Ticket): 
     ctx,
     state.taskId,
     ticket,
-    (previous) => ({ ...previous, attemptStart: head ? { at: now, head } : undefined, status: "in-progress", tier: rung, provider, model: modelId, attempts: (unstarted ? 0 : previous.attempts) + 1, error: undefined, failedBy: undefined, difficulty: ticketDifficulty(ticket), startedAt: (unstarted ? undefined : previous.startedAt) ?? now }),
+    (previous) => ({ ...previous, attemptStart: head ? { at: now, head } : undefined, status: "in-progress", tier: rung, provider, model: modelId, attempts: (unstarted ? 0 : previous.attempts) + 1, error: undefined, failedBy: undefined, failedDiffHash: undefined, difficulty: ticketDifficulty(ticket), startedAt: (unstarted ? undefined : previous.startedAt) ?? now }),
     (build) => ({ ...build, currentTicket: ticket.id, chunkStartedAt: now }),
   );
   editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(markdown, "in-progress"));
@@ -640,16 +720,21 @@ export async function finishChunk(ctx: WorkflowContext, ticketId: string, result
             ? `A check could not run:\n${settled.detail}\nFix the plan's checks (a command that exists and is not destructive), then run /build again.`
             : `Checks failed after a retry:\n${settled.detail}`;
     const m = measure();
+    const failedDiffHash = failedBy === "review" ? await diffHash(ctx) : undefined;
     await patch(ctx, state.taskId, ticket, (previous) => {
       const next = accrue(previous, m);
-      return { ...next, status: "failed", failedBy, error: clip(reason), attemptLog: [...(next.attemptLog ?? []), attempt(next, startedAt, m.elapsed, m.spent, "failure", failedBy, reason)] };
+      return { ...next, status: "failed", failedBy, ...(failedDiffHash ? { failedDiffHash } : {}), error: clip(reason), attemptLog: [...(next.attemptLog ?? []), attempt(next, startedAt, m.elapsed, m.spent, "failure", failedBy, reason)] };
     }, release);
     editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(markdown, "failed"));
     logTicket(ctx, state.taskId, ticketId);
+    const rung = rungOf(run.tier, ticketDifficulty(ticket));
+    const hasHigher = Boolean(nextRung(ctx.config, rung));
     const stop = failedBy === "review" ? { code: "REVIEW_FAILED", head: `Ticket ${ticketId} failed its review at ${run.tier ?? "this rung"} after a retry.` } : { code: failedBy === "checks" ? "CHECKS_FAILED" : "CHECKS_UNRUNNABLE", head: `Ticket ${ticketId} failed. ${reason.split("\n")[0]}` };
     const next =
       failedBy === "review"
-        ? "Run /build to retry on a stronger model (a hand fix does not settle a failed review)."
+        ? hasHigher
+          ? "Run /build to retry on a stronger model, fix the findings in the working tree and run /build, or pass --with <model>."
+          : `Swap models.${rung} to another model (or pass --with <model>) and run /build, fix the findings in the working tree and run /build, or pass --override-review to commit with findings carried to /review.`
         : failedBy === "checks"
           ? "Fix it in the chat and run /build again, or just run /build to retry on a stronger model."
           : `Fix the plan's ${failedBy === "setup" ? "setup" : "checks"} and run /build again; the ticket stays on ${run.tier ?? "its rung"}.`;
@@ -825,6 +910,10 @@ export interface BuildOnceData {
 export interface BuildRunOptions {
   /** Build exactly one ticket to its end (all its turns, checks, review, escalation rungs and commit), then return with `BuildOnceData` in `data`. */
   once?: boolean;
+  /** One-shot model override (`shepherd build --with <model>`) for the first ticket this run picks. */
+  overrideModel?: TicketModel;
+  /** Override the failed review on the first ticket (`shepherd build --override-review`) once checks pass. */
+  overrideReview?: boolean;
 }
 
 /** The slice of Workflow the loop needs. It is re-resolved through `getWorkflow` because Pi may replace the Workflow with the session. */
@@ -834,7 +923,7 @@ export interface BuildWorkflow {
   releaseBuild(): void;
   /** Clears the active task's build-in-progress marker: the build is done or stopped. */
   endBuild?(): void;
-  nextChunk(): Promise<NextChunk>;
+  nextChunk(options?: NextChunkOptions): Promise<NextChunk>;
   finishChunk(ticketId: string, result: ChunkReply, options?: { final?: boolean }): Promise<ChunkFinish>;
   /** Rolls a ticket back to not started when its session never took a turn. */
   unstartChunk(ticketId: string, previous?: TicketRun): Promise<void>;
@@ -888,10 +977,31 @@ async function buildLoop(getWorkflow: () => BuildWorkflow, driver: BuildDriver, 
   /** The ticket this run picked last (what `once` reports). */
   let worked: Ticket | undefined;
   let finishedOne = false;
+  let overrideUsed = false;
+  let overrideReviewUsed = false;
   try {
     for (;;) {
-      const chunk = await getWorkflow().nextChunk();
+      const chunkOpts: NextChunkOptions = {
+        ...(options.overrideModel && !overrideUsed ? { overrideModel: options.overrideModel } : {}),
+        ...(options.overrideReview && !overrideReviewUsed ? { overrideReview: true } : {}),
+      };
+      overrideUsed = true;
+      overrideReviewUsed = true;
+      const chunk = await getWorkflow().nextChunk(Object.keys(chunkOpts).length > 0 ? chunkOpts : undefined);
       if (chunk.kind === "done") break;
+      if (chunk.kind === "settled") {
+        built += 1;
+        worked = chunk.ticket;
+        const workflow = getWorkflow();
+        const afterStatus = workflow.buildStatus?.();
+        workflow.progress(`Ticket ${chunk.ticket.id} · checks passed · review overridden · committed ${chunk.sha.slice(0, 7)}${afterStatus ? ` · ${afterStatus.done}/${afterStatus.total} done · task ${formatUsd(afterStatus.taskSpentUsd)}` : ""}`);
+        if (chunk.warning) workflow.progress(chunk.warning);
+        if (options.once) {
+          finishedOne = true;
+          break;
+        }
+        continue;
+      }
       if (chunk.kind === "stopped") {
         stopped = chunk.reason;
         code = chunk.code;

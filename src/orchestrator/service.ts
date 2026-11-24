@@ -185,8 +185,8 @@ export class Workflow {
   }
 
   /** The next ticket to build, routed and with its prompt, or `done`. */
-  nextChunk(): ReturnType<typeof nextChunk> {
-    return nextChunk(this.ctx);
+  nextChunk(options?: Parameters<typeof nextChunk>[1]): ReturnType<typeof nextChunk> {
+    return nextChunk(this.ctx, options);
   }
 
   /** Checks, commit, and bookkeeping for the chunk that just ran. */

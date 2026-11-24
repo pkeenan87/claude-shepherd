@@ -171,6 +171,61 @@ describe("Codex meter", () => {
   });
 });
 
+describe("AGY meter", () => {
+  const repo = "/work/app";
+  const userLine = (content: string) => JSON.stringify({ step_index: 0, type: "USER_INPUT", content });
+  const respLine = (step: number, model: string, input: number, cacheRead: number, output: number) =>
+    JSON.stringify({ step_index: step, type: "PLANNER_RESPONSE", model, input_tokens: input, cache_read_tokens: cacheRead, output_tokens: output });
+
+  function setup() {
+    const home = dir();
+    const agyRoot = path.join(home, ".gemini", "antigravity-cli");
+    mkdirSync(path.join(agyRoot, "brain"), { recursive: true });
+    return { home, agyRoot };
+  }
+
+  it("reads PLANNER_RESPONSE usage for matching repo via history.jsonl or .shepherd prompt path, and ignores transcript_full.jsonl and other repos", () => {
+    const { home, agyRoot } = setup();
+    const meter = createAgentMeter("agy", { cwd: repo, home })!;
+
+    // Conversation 1: matched via history.jsonl conversationId
+    const conv1Logs = path.join(agyRoot, "brain", "conv-1", ".system_generated", "logs");
+    mkdirSync(conv1Logs, { recursive: true });
+    writeFileSync(path.join(agyRoot, "history.jsonl"), `${JSON.stringify({ workspace: repo, conversationId: "conv-1", display: "hi" })}\n${JSON.stringify({ workspace: "/other/repo", conversationId: "conv-other", display: "other" })}\n`);
+    writeFileSync(
+      path.join(conv1Logs, "transcript.jsonl"),
+      `${userLine("Build ticket 01")}\n${respLine(1, "gemini-4-neon-medium", 14000, 0, 400)}\n${respLine(10, "gemini-4-neon-medium", 11000, 14000, 300)}\n`,
+    );
+    // transcript_full.jsonl must never double-count
+    writeFileSync(path.join(conv1Logs, "transcript_full.jsonl"), `${userLine("Build ticket 01")}\n${respLine(1, "gemini-4-neon-medium", 14000, 0, 400)}\n`);
+
+    // Conversation 2: 1-turn ticket without conversationId in history.jsonl yet, matched via .shepherd summary path
+    const conv2Logs = path.join(agyRoot, "brain", "conv-2", ".system_generated", "logs");
+    mkdirSync(conv2Logs, { recursive: true });
+    writeFileSync(
+      path.join(conv2Logs, "transcript.jsonl"),
+      `${userLine(`Write summary to ${repo}/.shepherd/tasks/t1/sessions/02-1.summary.md`)}\n${respLine(1, "claude-opus-4-6", 2000, 500, 150)}\n`,
+    );
+
+    // Conversation 3: belongs to another repo -> must be ignored
+    const otherLogs = path.join(agyRoot, "brain", "conv-other", ".system_generated", "logs");
+    mkdirSync(otherLogs, { recursive: true });
+    writeFileSync(path.join(otherLogs, "transcript.jsonl"), `${userLine("unrelated")}\n${respLine(1, "gemini-4-neon-medium", 99999, 0, 9999)}\n`);
+
+    const calls = meter.collect().sort((a, b) => a.provider.localeCompare(b.provider));
+    expect(calls).toEqual([
+      { provider: "anthropic", model: "claude-opus-4-6", usage: { input: 2000, output: 150, cacheRead: 500, cacheWrite: 0, requests: 1 } },
+      { provider: "google", model: "gemini-4-neon-medium", usage: { input: 25000, output: 700, cacheRead: 14000, cacheWrite: 0, requests: 2 } },
+    ]);
+    // Second collect with no new steps returns nothing; appending a retry step returns only that step.
+    expect(meter.collect()).toEqual([]);
+    appendFileSync(path.join(conv1Logs, "transcript.jsonl"), `${respLine(19, "gemini-4-neon-medium", 3000, 25000, 200)}\n`);
+    expect(meter.collect()).toEqual([
+      { provider: "google", model: "gemini-4-neon-medium", usage: { input: 3000, output: 200, cacheRead: 25000, cacheWrite: 0, requests: 1 } },
+    ]);
+  });
+});
+
 describe("agents with no reader", () => {
   it("have no meter, and their attempt is one 'not metered' entry", () => {
     for (const name of ["cursor-agent", "grok", "opencode", "mine"]) expect(createAgentMeter(name, { cwd: "/work/app", home: dir() })).toBeUndefined();
