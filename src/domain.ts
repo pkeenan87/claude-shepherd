@@ -269,9 +269,11 @@ export interface TicketRun {
   /** When the latest attempt began and HEAD then: a commit after it with the ticket's subject means it was committed. */
   attemptStart?: { at: string; head: string };
   difficulty?: Difficulty;
-  /** Why the ticket last failed, for /build: a review failure is not settled by running the checks again. */
+  /** Why the ticket last failed, for /build: a review failure is not settled by running the checks again unless the tree changed. */
   /** What failed the attempt. `turns`: the model used up `routing.maxTicketTurns` without finishing (model-attributable, escalates). */
   failedBy?: "checks" | "unrunnable" | "setup" | "review" | "turns";
+  /** SHA-256 fingerprint of the working tree when a review failed, so /build can detect hand-fixes made afterwards. */
+  failedDiffHash?: string;
   /** Every per-ticket review, oldest first. */
   reviews?: TicketReviewRecord[];
   /** Known cost across attempts by who incurred it; null when any entry was unknown. `costUsd` is their sum. */

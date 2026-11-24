@@ -15,7 +15,8 @@ export type GuardHit =
   | "shepherd switch"
   | "cleanup remote"
   | "ship remote"
-  | "build pause";
+  | "build pause"
+  | "build override";
 
 /** The commands of a line, each as its words with quotes removed. */
 export function commandsOf(line: string): string[][] {
@@ -29,6 +30,7 @@ function shepherdCommandHits(argv: string[], from: number): GuardHit[] {
   const second = verbs[1] ?? "";
   if (["build", "review", "fix"].includes(first)) {
     if (first === "build" && second === "pause") return ["build pause"];
+    if (first === "build" && rest.includes("--override-review")) return ["shepherd run", "build override"];
     return ["shepherd run"];
   }
   if (first === "plan" && second === "approve") return ["plan approve"];

@@ -156,7 +156,7 @@ export function carriedFindings(state: TaskState | undefined, reported: { file?:
   for (const ticket of state?.plan?.tickets ?? []) {
     const run = state?.ticketRuns?.[ticket.id];
     const last = run?.reviews?.at(-1);
-    if (run?.status !== "done" || last?.verdict !== "pass") continue;
+    if (run?.status !== "done" || !last || (last.verdict !== "pass" && run.unverified !== "review overridden")) continue;
     if (since && !(last.at && last.at > since)) continue;
     for (const item of last.findings) {
       const key = findingKey(item.file, item.issue);
@@ -236,10 +236,11 @@ function followUpReviewPrompt(outFile: string): string {
 async function reviewTicketUnsafe(ctx: WorkflowContext, state: TaskState, ticket: Ticket, run: TicketRun): Promise<TicketReviewOutcome | undefined> {
   const progress = (line: string) => ctx.progress?.(`Ticket ${ticket.id} review: ${line}`);
   const attempt = run.attempts;
-  // Counted per rung, not per attempt: aborting and resuming must not buy more review rounds.
+  // Counted per rung + implementer, not per attempt: aborting and resuming the same model cannot buy more review rounds,
+  // while retrying on a newly swapped model at `high` (or via `--with`) gets its own review cycle.
   const rung: Difficulty = rungOf(run.tier, ticketDifficulty(ticket));
-  const round = (run.reviews ?? []).filter((item) => item.tier === rung).length + 1;
   const implementer = run.provider && run.model ? ranModelText(run.provider, run.model) : "unknown";
+  const round = (run.reviews ?? []).filter((item) => item.tier === rung && item.implementer === implementer).length + 1;
   const base = { attempt, round, tier: rung, implementer, findings: [] as TicketReviewFinding[], costUsd: { review: 0 as number | null }, at: iso(ctx) };
   const unavailable = (why: string, costUsd = base.costUsd): TicketReviewOutcome => ({
     kind: "unavailable",

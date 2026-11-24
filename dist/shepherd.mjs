@@ -9442,6 +9442,7 @@ var TaskStore = class {
 };
 
 // src/orchestrator/build.ts
+import { createHash as createHash3 } from "node:crypto";
 import { existsSync as existsSync8, readFileSync as readFileSync10 } from "node:fs";
 import path17 from "node:path";
 
@@ -9834,9 +9835,10 @@ var READERS = {
   claude: "claude",
   codex: "codex",
   "cursor-agent": "cursor",
-  gemini: "gemini"
+  gemini: "gemini",
+  agy: "agy"
 };
-var PRICING_PROVIDER = { claude: "anthropic", codex: "openai", gemini: "google" };
+var PRICING_PROVIDER = { claude: "anthropic", codex: "openai", gemini: "google", agy: "google" };
 var ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, requests: 0 };
 var num = (value) => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 function claudeProjectSlug(cwd) {
@@ -10045,6 +10047,77 @@ function geminiChatEvents(file, buffer, before, tmpRoot, repos) {
   }
   return found;
 }
+function readAgyHistory(historyFile) {
+  const byConvId = /* @__PURE__ */ new Map();
+  const unassigned = [];
+  let buffer;
+  try {
+    buffer = readFileSync3(historyFile);
+  } catch {
+    return { byConvId, unassigned };
+  }
+  for (const { value } of lines(buffer)) {
+    if (!isRecord2(value)) continue;
+    const workspace = typeof value.workspace === "string" && value.workspace ? value.workspace : void 0;
+    if (!workspace) continue;
+    const convId = typeof value.conversationId === "string" && value.conversationId ? value.conversationId : void 0;
+    if (convId) {
+      byConvId.set(convId, workspace);
+    } else if (typeof value.display === "string" && value.display.trim()) {
+      unassigned.push({ workspace, prefix: value.display.trim().slice(0, 120) });
+    }
+  }
+  return { byConvId, unassigned };
+}
+function agyProvider(rawModel) {
+  const canonical = canonicalModelId("", rawModel);
+  if (canonical.startsWith("claude-")) return "anthropic";
+  if (canonical.startsWith("gpt-") || canonical.startsWith("o3") || canonical.startsWith("o4") || canonical.includes("codex")) return "openai";
+  if (canonical.startsWith("grok-")) return "xai";
+  return PRICING_PROVIDER.agy;
+}
+function agyLogMatchesRepo(file, buffer, brainRoot, repos, history) {
+  const rel = path4.relative(brainRoot, file);
+  const convId = rel && !rel.startsWith("..") ? rel.split(path4.sep)[0] : void 0;
+  if (convId && history.byConvId.has(convId)) {
+    return repos.some((repo) => samePath(repo, history.byConvId.get(convId)));
+  }
+  for (const { value } of lines(buffer)) {
+    if (!isRecord2(value) || value.type !== "USER_INPUT" || typeof value.content !== "string") continue;
+    const content = value.content;
+    if (repos.some((repo) => content.includes(`${path4.join(repo, ".shepherd")}${path4.sep}`))) return true;
+    const trimmed = content.trim();
+    if (trimmed) {
+      for (const entry of history.unassigned) {
+        if (!repos.some((repo) => samePath(repo, entry.workspace))) continue;
+        if (entry.prefix.length >= 20 ? trimmed.startsWith(entry.prefix) : trimmed === entry.prefix) return true;
+      }
+    }
+    break;
+  }
+  return false;
+}
+function agyTranscriptEvents(file, buffer, before, brainRoot, repos, history) {
+  const found = /* @__PURE__ */ new Map();
+  if (!agyLogMatchesRepo(file, buffer, brainRoot, repos, history)) return found;
+  let seq = 0;
+  for (const { start, value } of lines(buffer)) {
+    seq += 1;
+    if (!isRecord2(value) || value.type !== "PLANNER_RESPONSE" || before(start, value)) continue;
+    const input = num(value.input_tokens);
+    const cacheRead = num(value.cache_read_tokens);
+    const output = num(value.output_tokens);
+    if (input + output + cacheRead === 0) continue;
+    const rawModel = typeof value.model === "string" && value.model ? value.model : "unknown";
+    const id = typeof value.step_index === "number" && Number.isFinite(value.step_index) ? `step-${value.step_index}` : `agy-${start}-${seq}`;
+    found.set(id, {
+      provider: agyProvider(rawModel),
+      model: rawModel,
+      totals: { input, output, cacheRead, cacheWrite: 0, requests: 1 }
+    });
+  }
+  return found;
+}
 function listAgentLogs(reader, home, repos) {
   if (reader === "claude") {
     const out = /* @__PURE__ */ new Map();
@@ -10109,6 +10182,9 @@ function createAgentMeter(agent, options) {
     if (reader === "gemini") {
       return jsonlFiles(path4.join(home, ".gemini", "tmp"), (name) => name.endsWith(".jsonl"), 4);
     }
+    if (reader === "agy") {
+      return jsonlFiles(path4.join(home, ".gemini", "antigravity-cli", "brain"), (name) => name === "transcript.jsonl", 4);
+    }
     return listAgentLogs(reader, home, repos);
   };
   const snapshot = list();
@@ -10117,6 +10193,8 @@ function createAgentMeter(agent, options) {
     collect() {
       try {
         const current = /* @__PURE__ */ new Map();
+        const agyRoot = path4.join(home, ".gemini", "antigravity-cli");
+        const agyHistory = reader === "agy" ? readAgyHistory(path4.join(agyRoot, "history.jsonl")) : void 0;
         for (const [file, size] of list()) {
           if (options.exclude?.(file)) continue;
           const was = snapshot.get(file);
@@ -10137,6 +10215,10 @@ function createAgentMeter(agent, options) {
             for (const [id, found] of cursorStopEvents(buffer, (start) => start < from)) current.set(`${file}:${id}`, found);
           } else if (reader === "gemini") {
             for (const [id, found] of geminiChatEvents(file, buffer, (start) => start < from, path4.join(home, ".gemini", "tmp"), repos)) current.set(`${file}:${id}`, found);
+          } else if (reader === "agy") {
+            for (const [id, found] of agyTranscriptEvents(file, buffer, (start) => start < from, path4.join(agyRoot, "brain"), repos, agyHistory)) {
+              current.set(`${file}:${id}`, found);
+            }
           } else {
             const found = codexSession(buffer, (start) => start < from, repos);
             if (found) {
@@ -11578,7 +11660,11 @@ async function runAgentTicket(input, run3) {
       if ("problem" in hook) return { stopped: `Ticket ${ticketId} cannot start: ${hook.problem}. /build again.` };
       if (hook.changed) host.progress(cursorHookInstalledLine(home));
     }
-    const argv = cursorUsageFile ? ["env", `SHEPHERD_CURSOR_USAGE_LOG=${cursorUsageFile}`, ...input.argv] : input.argv;
+    const extraEnv = [
+      ...input.agent.name === "claude" ? ["SHEPHERD_SUBAGENT=1"] : [],
+      ...cursorUsageFile ? [`SHEPHERD_CURSOR_USAGE_LOG=${cursorUsageFile}`] : []
+    ];
+    const argv = extraEnv.length > 0 ? ["env", ...extraEnv, ...input.argv] : input.argv;
     try {
       tab = await openTab({
         ...input,
@@ -11975,7 +12061,11 @@ function agentProgram(ctx, model, input) {
     exclude: (file) => isSessionLog(ctx, file)
   });
   const baseArgv = agentCommand(model, ctx.config);
-  const argv = cursorUsageFile ? ["env", `SHEPHERD_CURSOR_USAGE_LOG=${cursorUsageFile}`, ...baseArgv] : baseArgv;
+  const extraEnv = [
+    ...model.name === "claude" ? ["SHEPHERD_SUBAGENT=1"] : [],
+    ...cursorUsageFile ? [`SHEPHERD_CURSOR_USAGE_LOG=${cursorUsageFile}`] : []
+  ];
+  const argv = extraEnv.length > 0 ? ["env", ...extraEnv, ...baseArgv] : baseArgv;
   return {
     argv,
     ...TRUST_PROMPTS[model.name] ? { trust: TRUST_PROMPTS[model.name] } : {},
@@ -12172,7 +12262,7 @@ function carriedFindings(state, reported = []) {
   for (const ticket of state?.plan?.tickets ?? []) {
     const run3 = state?.ticketRuns?.[ticket.id];
     const last = run3?.reviews?.at(-1);
-    if (run3?.status !== "done" || last?.verdict !== "pass") continue;
+    if (run3?.status !== "done" || !last || last.verdict !== "pass" && run3.unverified !== "review overridden") continue;
     if (since && !(last.at && last.at > since)) continue;
     for (const item of last.findings) {
       const key = findingKey(item.file, item.issue);
@@ -12233,8 +12323,8 @@ async function reviewTicketUnsafe(ctx, state, ticket, run3) {
   const progress = (line) => ctx.progress?.(`Ticket ${ticket.id} review: ${line}`);
   const attempt2 = run3.attempts;
   const rung = rungOf(run3.tier, ticketDifficulty(ticket));
-  const round = (run3.reviews ?? []).filter((item) => item.tier === rung).length + 1;
   const implementer = run3.provider && run3.model ? ranModelText(run3.provider, run3.model) : "unknown";
+  const round = (run3.reviews ?? []).filter((item) => item.tier === rung && item.implementer === implementer).length + 1;
   const base = { attempt: attempt2, round, tier: rung, implementer, findings: [], costUsd: { review: 0 }, at: iso(ctx) };
   const unavailable2 = (why, costUsd = base.costUsd) => ({
     kind: "unavailable",
@@ -12802,7 +12892,7 @@ async function settle(ctx, state, ticket, lastText, review2) {
     await patch(ctx, state.taskId, ticket, (previous) => ({ ...previous, reviews: [...previous.reviews ?? [], reviewed.record] }));
     if (reviewed.kind === "fail") {
       const run3 = state.ticketRuns?.[ticket.id];
-      const fails = (run3?.reviews ?? []).filter((item) => item.tier === reviewed.record.tier && item.verdict === "fail").length;
+      const fails = (run3?.reviews ?? []).filter((item) => item.tier === reviewed.record.tier && item.implementer === reviewed.record.implementer && item.verdict === "fail").length;
       return { kind: "review-failed", record: reviewed.record, text: reviewed.text, final: fails >= 1 };
     }
     if (reviewed.kind === "unavailable") {
@@ -12826,7 +12916,14 @@ function attempt(run3, startedAt, elapsedMs, split, outcome, failedBy, error) {
   return { attempt: run3.attempts, tier: rungOf(run3.tier, "medium"), provider: run3.provider ?? "", model: run3.model ?? "", startedAt, elapsedMs, turns, costUsd: total, costSplit, outcome, ...failedBy ? { failedBy } : {}, ...error ? { error: error.slice(0, 500) } : {} };
 }
 var clip2 = (text) => text.slice(0, MAX_SUMMARY_CHARS);
-async function nextChunk(ctx) {
+async function diffHash(ctx) {
+  try {
+    return createHash3("sha256").update(await ctx.git.workingDiff("HEAD", excludedPaths(ctx))).digest("hex");
+  } catch {
+    return void 0;
+  }
+}
+async function nextChunk(ctx, options = {}) {
   try {
     for (; ; ) {
       const state = requireActive(ctx);
@@ -12846,7 +12943,7 @@ async function nextChunk(ctx) {
           ctx,
           state.taskId,
           ticket,
-          (previous) => ({ ...previous, status: "done", error: void 0, failedBy: void 0, commit: committed, turns: (previous.turns ?? 0) + turns, tokens: (previous.tokens ?? 0) + tokens, costUsd: addUsd(previous.costUsd ?? 0, total), costSplit: addSplit(previous.costSplit, split), ...notMetered ? { notMetered: true } : {} }),
+          (previous) => ({ ...previous, status: "done", error: void 0, failedBy: void 0, failedDiffHash: void 0, commit: committed, turns: (previous.turns ?? 0) + turns, tokens: (previous.tokens ?? 0) + tokens, costUsd: addUsd(previous.costUsd ?? 0, total), costSplit: addSplit(previous.costSplit, split), ...notMetered ? { notMetered: true } : {} }),
           (build2) => ({ ...build2, currentTicket: void 0, chunkStartedAt: void 0 })
         );
         editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(markdown, "done"));
@@ -12854,7 +12951,43 @@ async function nextChunk(ctx) {
         ctx.progress?.(`Ticket ${ticket.id} was committed (${committed.slice(0, 7)}) before /build stopped; marked done`);
         continue;
       }
-      if (run3 && run3.attempts > 0 && run3.status === "failed" && run3.failedBy !== "review" && (await dirtyPaths(ctx)).length > 0) {
+      if (options.overrideReview) {
+        if (!run3 || run3.status !== "failed" || run3.failedBy !== "review") {
+          return { kind: "stopped", code: "NOT_REVIEW_FAILED", reason: `Ticket ${ticket.id} is not waiting on a failed review (--override-review applies only to a ticket whose per-ticket review failed).` };
+        }
+        ctx.progress?.(`Ticket ${ticket.id}: re-running checks to commit with --override-review`);
+        const began = iso(ctx);
+        const outcome = await runChecks(ctx, state, ticket);
+        if (outcome.verdict !== "pass") {
+          const detail = failureDetail(outcome.evidence);
+          const code = outcome.verdict === "failed" ? "CHECKS_FAILED" : "CHECKS_UNRUNNABLE";
+          return { kind: "stopped", code, reason: `Ticket ${ticket.id} cannot override review while checks fail:
+${detail}` };
+        }
+        const sha = await ctx.git.commitAll(ctx.git.repoRoot, commitSubject(ticket), excludedPaths(ctx));
+        const met = parseCriteriaMet(run3.summary ?? "", ticket.acceptanceCriteria);
+        editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(tickCriteria(markdown, met), "done"));
+        const elapsed = Math.max(0, ctx.now().getTime() - new Date(began).getTime());
+        const spent = ticketSpend(ctx, state.taskId, ticket.id, began);
+        await patch(ctx, state.taskId, ticket, (previous) => ({
+          ...previous,
+          status: "done",
+          error: void 0,
+          failedBy: void 0,
+          failedDiffHash: void 0,
+          commit: sha,
+          unverified: "review overridden",
+          elapsedMs: (previous.elapsedMs ?? 0) + elapsed,
+          attemptLog: [...previous.attemptLog ?? [], { ...attempt(previous, began, elapsed, spent, "success"), provider: "", model: "review override" }]
+        }));
+        logTicket(ctx, state.taskId, ticket.id);
+        const warning = `Ticket ${ticket.id} was committed with its failed review overridden; remaining findings are carried to /review.`;
+        return { kind: "settled", ticket, sha, warning };
+      }
+      const dirty = (await dirtyPaths(ctx)).length > 0;
+      const reviewHandEdited = run3?.failedBy === "review" && Boolean(run3.failedDiffHash) && dirty && await diffHash(ctx) !== run3.failedDiffHash;
+      const shouldRecheck = run3 && run3.attempts > 0 && run3.status === "failed" && !options.overrideModel && (run3.failedBy !== "review" ? dirty : reviewHandEdited);
+      if (shouldRecheck) {
         ctx.progress?.(`Ticket ${ticket.id}: re-running checks on the changes in the tree`);
         const began = iso(ctx);
         const handFixed = { ...run3, provider: void 0, model: void 0 };
@@ -12868,7 +13001,7 @@ async function nextChunk(ctx) {
           if (settled.kind === "committed") {
             await patch(ctx, state.taskId, ticket, (previous) => {
               const next = accrue(previous);
-              return { ...next, status: "done", error: void 0, failedBy: void 0, commit: settled.sha, attemptLog: [...next.attemptLog ?? [], entry(next, "success")] };
+              return { ...next, status: "done", error: void 0, failedBy: void 0, failedDiffHash: void 0, commit: settled.sha, attemptLog: [...next.attemptLog ?? [], entry(next, "success")] };
             });
             logTicket(ctx, state.taskId, ticket.id);
             ctx.progress?.(`Ticket ${ticket.id} \xB7 checks passed on your changes \xB7 committed ${settled.sha.slice(0, 7)}`);
@@ -12876,24 +13009,26 @@ async function nextChunk(ctx) {
             continue;
           }
           const reason = reviewFailureDetail(settled.record);
+          const failedDiffHash = await diffHash(ctx);
           await patch(ctx, state.taskId, ticket, (previous) => {
             const next = accrue(previous);
-            return { ...next, status: "failed", failedBy: "review", error: clip2(reason), attemptLog: [...next.attemptLog ?? [], entry(next, "failure", "review", reason)] };
+            return { ...next, status: "failed", failedBy: "review", ...failedDiffHash ? { failedDiffHash } : {}, error: clip2(reason), attemptLog: [...next.attemptLog ?? [], entry(next, "failure", "review", reason)] };
           });
           editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(markdown, "failed"));
           logTicket(ctx, state.taskId, ticket.id);
           ctx.progress?.(`Ticket ${ticket.id} \xB7 checks passed on your changes, but the review failed them; the next attempt gets its findings`);
-          return await prepare(ctx, ctx.store.load(state.taskId) ?? state, ticket);
+          return await prepare(ctx, ctx.store.load(state.taskId) ?? state, ticket, options);
         }
         if (settled.kind === "failed") await patch(ctx, state.taskId, ticket, (previous) => ({ ...previous, error: clip2(settled.detail) }));
       }
-      return await prepare(ctx, ctx.store.load(state.taskId) ?? state, ticket);
+      return await prepare(ctx, ctx.store.load(state.taskId) ?? state, ticket, options);
     }
   } catch (error) {
     return { kind: "stopped", code: error.code ?? "ERROR", reason: redact(error.message || "Could not pick the next ticket.") };
   }
 }
-async function prepare(ctx, state, ticket) {
+var modelKey = (model) => model.kind === "pi" ? `${model.provider}/${model.id}` : modelText(model);
+async function prepare(ctx, state, ticket, options = {}) {
   const stored = state.ticketRuns?.[ticket.id];
   const unstarted = stored !== void 0 && neverStarted(stored);
   const run3 = unstarted ? void 0 : stored;
@@ -12904,23 +13039,40 @@ async function prepare(ctx, state, ticket) {
   const attempted = run3 && run3.attempts > 0 ? rungOf(run3.tier ?? run3.attemptLog?.at(-1)?.tier, start) : void 0;
   const modelFailed = run3?.status === "failed" && (run3.failedBy === void 0 || run3.failedBy === "checks" || run3.failedBy === "review" || run3.failedBy === "turns");
   const failed = modelFailed ? attempted : void 0;
-  const way = run3?.failedBy === "review" ? "Edit the ticket or the plan (/plan), or raise routing.maxEscalations." : "Fix it in the chat and run /build (it re-runs the checks on your changes), or raise routing.maxEscalations.";
+  const way = run3?.failedBy === "review" ? "Swap models.high to another model (or pass --with <model>), fix the findings in the working tree and run /build, pass --override-review, edit the ticket (/plan), or raise routing.maxEscalations." : "Fix it in the chat and run /build (it re-runs the checks on your changes), pass --with <model>, or raise routing.maxEscalations.";
   let rung = start;
-  if (failed) {
+  let model;
+  if (options.overrideModel) {
+    rung = failed ?? attempted ?? start;
+    model = options.overrideModel;
+  } else if (failed) {
     const next = nextRung(ctx.config, failed);
     if (!next) {
-      return { kind: "stopped", code: "MAX_ESCALATIONS", reason: `Ticket ${ticket.id} is still failing on ${failed}, the top of the ladder it can climb (low, medium, high; no higher rung names a different model), so it stays failed and the build stops. ${way.replace(", or raise routing.maxEscalations", "")}` };
+      const tried = /* @__PURE__ */ new Set();
+      for (const item of run3?.attemptLog ?? []) {
+        if (item.outcome === "failure" && item.provider && item.model) tried.add(ranModelText(item.provider, item.model));
+      }
+      if (run3?.status === "failed" && run3.provider && run3.model) tried.add(ranModelText(run3.provider, run3.model));
+      const configured = modelFor(ctx.config, failed);
+      if (!tried.has(modelKey(configured))) {
+        rung = failed;
+        ctx.progress?.(`Ticket ${ticket.id}: retrying on ${failed} with ${modelText(configured)} (replacing previous failed model)`);
+      } else {
+        return { kind: "stopped", code: "MAX_ESCALATIONS", reason: `Ticket ${ticket.id} is still failing on ${failed}, the top of the ladder it can climb (low, medium, high; no higher rung names a different model), so it stays failed and the build stops. ${way.replace(", or raise routing.maxEscalations", "")}` };
+      }
+    } else {
+      const steps = climbed(start, next);
+      const limit = ctx.config.routing.maxEscalations;
+      if (steps > limit) {
+        return { kind: "stopped", code: "MAX_ESCALATIONS", reason: `Ticket ${ticket.id} is still failing on ${failed}, and ${next} (the next rung with another model) is ${steps} rung(s) above ${start}, past routing.maxEscalations (${limit}), so it stays failed and the build stops. ${way}` };
+      }
+      rung = next;
     }
-    const steps = climbed(start, next);
-    const limit = ctx.config.routing.maxEscalations;
-    if (steps > limit) {
-      return { kind: "stopped", code: "MAX_ESCALATIONS", reason: `Ticket ${ticket.id} is still failing on ${failed}, and ${next} (the next rung with another model) is ${steps} rung(s) above ${start}, past routing.maxEscalations (${limit}), so it stays failed and the build stops. ${way}` };
-    }
-    rung = next;
-  } else if (attempted) {
-    rung = attempted;
+    model = modelFor(ctx.config, rung);
+  } else {
+    if (attempted) rung = attempted;
+    model = modelFor(ctx.config, rung);
   }
-  const model = modelFor(ctx.config, rung);
   const route = routeFor(ctx, rung, model);
   if (route.blocked) {
     return { kind: "stopped", code: "NO_CANDIDATE", reason: `Ticket ${ticket.id} cannot start on ${route.blocked}. Fix models.${rung} or sign in, then /build again.` };
@@ -12942,7 +13094,7 @@ ${ticketPrompt({ ticket, spec: ctx.store.readText(state.taskId, SPEC_FILE), bloc
     ctx,
     state.taskId,
     ticket,
-    (previous) => ({ ...previous, attemptStart: head ? { at: now, head } : void 0, status: "in-progress", tier: rung, provider, model: modelId, attempts: (unstarted ? 0 : previous.attempts) + 1, error: void 0, failedBy: void 0, difficulty: ticketDifficulty(ticket), startedAt: (unstarted ? void 0 : previous.startedAt) ?? now }),
+    (previous) => ({ ...previous, attemptStart: head ? { at: now, head } : void 0, status: "in-progress", tier: rung, provider, model: modelId, attempts: (unstarted ? 0 : previous.attempts) + 1, error: void 0, failedBy: void 0, failedDiffHash: void 0, difficulty: ticketDifficulty(ticket), startedAt: (unstarted ? void 0 : previous.startedAt) ?? now }),
     (build2) => ({ ...build2, currentTicket: ticket.id, chunkStartedAt: now })
   );
   editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(markdown, "in-progress"));
@@ -13037,14 +13189,17 @@ ${settled.detail}
 Fix the plan's checks (a command that exists and is not destructive), then run /build again.` : `Checks failed after a retry:
 ${settled.detail}`;
     const m = measure();
+    const failedDiffHash = failedBy === "review" ? await diffHash(ctx) : void 0;
     await patch(ctx, state.taskId, ticket, (previous) => {
       const next2 = accrue(previous, m);
-      return { ...next2, status: "failed", failedBy, error: clip2(reason), attemptLog: [...next2.attemptLog ?? [], attempt(next2, startedAt, m.elapsed, m.spent, "failure", failedBy, reason)] };
+      return { ...next2, status: "failed", failedBy, ...failedDiffHash ? { failedDiffHash } : {}, error: clip2(reason), attemptLog: [...next2.attemptLog ?? [], attempt(next2, startedAt, m.elapsed, m.spent, "failure", failedBy, reason)] };
     }, release);
     editTicketFile(ctx, state.taskId, ticket, (markdown) => setTicketStatus(markdown, "failed"));
     logTicket(ctx, state.taskId, ticketId);
+    const rung = rungOf(run3.tier, ticketDifficulty(ticket));
+    const hasHigher = Boolean(nextRung(ctx.config, rung));
     const stop = failedBy === "review" ? { code: "REVIEW_FAILED", head: `Ticket ${ticketId} failed its review at ${run3.tier ?? "this rung"} after a retry.` } : { code: failedBy === "checks" ? "CHECKS_FAILED" : "CHECKS_UNRUNNABLE", head: `Ticket ${ticketId} failed. ${reason.split("\n")[0]}` };
-    const next = failedBy === "review" ? "Run /build to retry on a stronger model (a hand fix does not settle a failed review)." : failedBy === "checks" ? "Fix it in the chat and run /build again, or just run /build to retry on a stronger model." : `Fix the plan's ${failedBy === "setup" ? "setup" : "checks"} and run /build again; the ticket stays on ${run3.tier ?? "its rung"}.`;
+    const next = failedBy === "review" ? hasHigher ? "Run /build to retry on a stronger model, fix the findings in the working tree and run /build, or pass --with <model>." : `Swap models.${rung} to another model (or pass --with <model>) and run /build, fix the findings in the working tree and run /build, or pass --override-review to commit with findings carried to /review.` : failedBy === "checks" ? "Fix it in the chat and run /build again, or just run /build to retry on a stronger model." : `Fix the plan's ${failedBy === "setup" ? "setup" : "checks"} and run /build again; the ticket stays on ${run3.tier ?? "its rung"}.`;
     return { kind: "stopped", code: stop.code, reason: `${stop.head} ${next}` };
   } catch (error) {
     return { kind: "stopped", code: error.code ?? "ERROR", reason: redact(error.message || "Could not finish the ticket.") };
@@ -13164,10 +13319,31 @@ async function buildLoop(getWorkflow, driver, options, onStarted) {
   let running;
   let worked;
   let finishedOne = false;
+  let overrideUsed = false;
+  let overrideReviewUsed = false;
   try {
     for (; ; ) {
-      const chunk = await getWorkflow().nextChunk();
+      const chunkOpts = {
+        ...options.overrideModel && !overrideUsed ? { overrideModel: options.overrideModel } : {},
+        ...options.overrideReview && !overrideReviewUsed ? { overrideReview: true } : {}
+      };
+      overrideUsed = true;
+      overrideReviewUsed = true;
+      const chunk = await getWorkflow().nextChunk(Object.keys(chunkOpts).length > 0 ? chunkOpts : void 0);
       if (chunk.kind === "done") break;
+      if (chunk.kind === "settled") {
+        built += 1;
+        worked = chunk.ticket;
+        const workflow2 = getWorkflow();
+        const afterStatus = workflow2.buildStatus?.();
+        workflow2.progress(`Ticket ${chunk.ticket.id} \xB7 checks passed \xB7 review overridden \xB7 committed ${chunk.sha.slice(0, 7)}${afterStatus ? ` \xB7 ${afterStatus.done}/${afterStatus.total} done \xB7 task ${formatUsd(afterStatus.taskSpentUsd)}` : ""}`);
+        if (chunk.warning) workflow2.progress(chunk.warning);
+        if (options.once) {
+          finishedOne = true;
+          break;
+        }
+        continue;
+      }
       if (chunk.kind === "stopped") {
         stopped = chunk.reason;
         code = chunk.code;
@@ -14312,7 +14488,7 @@ function reviewMarkdown(report, options = { setupConfigured: true }) {
 }
 
 // src/orchestrator/agent-review.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import { existsSync as existsSync13, mkdirSync as mkdirSync7, readFileSync as readFileSync14, unlinkSync as unlinkSync3 } from "node:fs";
 import path21 from "node:path";
 
@@ -14372,7 +14548,7 @@ function agentReviewPrompt(plan, base, outFile, focus) {
 function unavailable(model, error) {
   return model.kind === "agent" ? { provider: "agent", model: modelText(model).slice(AGENT_PREFIX.length), findings: [], truncated: false, error } : { provider: model.provider, model: model.id, findings: [], truncated: false, error };
 }
-var fingerprint2 = (diff) => createHash3("sha256").update(diff).digest("hex");
+var fingerprint2 = (diff) => createHash4("sha256").update(diff).digest("hex");
 function costOfRows(rows) {
   if (rows.length === 0) return { costUsd: void 0, notMetered: false };
   const notMetered = rows.every((entry) => entry.meter === "not-metered");
@@ -15318,8 +15494,8 @@ var Workflow = class {
     if (taskId) this.store.clearBuilding(taskId);
   }
   /** The next ticket to build, routed and with its prompt, or `done`. */
-  nextChunk() {
-    return nextChunk(this.ctx);
+  nextChunk(options) {
+    return nextChunk(this.ctx, options);
   }
   /** Checks, commit, and bookkeeping for the chunk that just ran. */
   finishChunk(ticketId, result, options = {}) {
@@ -15419,6 +15595,7 @@ function shepherdCommandHits(argv, from) {
   const second = verbs[1] ?? "";
   if (["build", "review", "fix"].includes(first)) {
     if (first === "build" && second === "pause") return ["build pause"];
+    if (first === "build" && rest.includes("--override-review")) return ["shepherd run", "build override"];
     return ["shepherd run"];
   }
   if (first === "plan" && second === "approve") return ["plan approve"];
@@ -15968,7 +16145,7 @@ async function taskCommand(workflow, args) {
 }
 
 // src/cli/build.ts
-var BUILD_USAGE = "Usage: shepherd build [--once] [--json]\n       shepherd build pause [--json]";
+var BUILD_USAGE = "Usage: shepherd build [--once] [--with <model>] [--override-review] [--json]\n       shepherd build pause [--json]";
 function tracked(inner) {
   const open2 = /* @__PURE__ */ new Set();
   const client = {
@@ -16022,7 +16199,26 @@ async function buildCommand(rest, io, options, open2) {
     return res.ok ? 0 : 1;
   }
   const once = rest.includes("--once");
-  const stray = rest.filter((word) => word !== "--json" && word !== "--once");
+  const overrideReview = rest.includes("--override-review");
+  let withModelRaw;
+  let badUsage = false;
+  for (let i = 0; i < rest.length; i += 1) {
+    const word = rest[i];
+    if (word === "--json" || word === "--once" || word === "--override-review") continue;
+    if (word === "--with") {
+      const next = rest[i + 1];
+      if (!next || next.startsWith("-") || withModelRaw !== void 0) {
+        badUsage = true;
+        break;
+      }
+      withModelRaw = next;
+      i += 1;
+      continue;
+    }
+    badUsage = true;
+    break;
+  }
+  if (withModelRaw !== void 0 && overrideReview) badUsage = true;
   const lines2 = [];
   const reports = [];
   const emitResult = (result) => {
@@ -16035,7 +16231,7 @@ async function buildCommand(rest, io, options, open2) {
 `);
     return result.ok ? 0 : 1;
   };
-  if (stray.length > 0) return emitResult({ ok: false, code: "USAGE", text: `${BUILD_USAGE}` });
+  if (badUsage) return emitResult({ ok: false, code: "USAGE", text: `${BUILD_USAGE}` });
   const progress = (line) => {
     const clean = words(redact(line));
     lines2.push(clean);
@@ -16055,6 +16251,14 @@ async function buildCommand(rest, io, options, open2) {
   const opened = await open2({ progress, report, herdr: client, piAvailable, ticketModePath: modePath, ...options.runner ? { runner: options.runner } : {}, ...options.herdrTimings ? { herdrTimings: options.herdrTimings } : {} });
   if ("problem" in opened) return emitResult({ ok: false, code: opened.code ?? "NO_REPO", text: opened.problem });
   const { workflow, root } = opened;
+  let overrideModel;
+  if (withModelRaw !== void 0) {
+    try {
+      overrideModel = parseTicketModel(withModelRaw, opened.config);
+    } catch (error) {
+      return emitResult({ ok: false, code: "CONFIG_INVALID", text: redact(error.message || `Invalid --with model: ${withModelRaw}`) });
+    }
+  }
   const driver = createBuildDriver({ getWorkflow: () => workflow, client, cwd: root, ticketModePath: modePath, home: options.home, piAvailable, ...options.herdrTimings ? { timings: options.herdrTimings } : {} });
   const exit = options.exit ?? ((code) => process.exit(code));
   let leaving = false;
@@ -16080,9 +16284,9 @@ async function buildCommand(rest, io, options, open2) {
     await workflow.activeTask();
     const unfit = await driver.preflight?.();
     if (unfit) return emitResult({ ok: false, code: "NEEDS_HERDR", text: unfit });
-    const noPi = firstTicketNeedsPi(workflow, piAvailable);
+    const noPi = overrideReview ? void 0 : firstTicketNeedsPi(workflow, piAvailable, overrideModel);
     if (noPi) return emitResult({ ok: false, code: "NEEDS_PI", text: noPi });
-    return emitResult(await runBuild(() => workflow, driver, { once }));
+    return emitResult(await runBuild(() => workflow, driver, { once, ...overrideModel ? { overrideModel } : {}, ...overrideReview ? { overrideReview: true } : {} }));
   } catch (error) {
     return emitResult({ ok: false, code: "ERROR", text: redact((error instanceof Error ? error.message : String(error)).split("\n")[0]) });
   } finally {
@@ -16095,7 +16299,7 @@ async function buildCommand(rest, io, options, open2) {
     }
   }
 }
-function firstTicketNeedsPi(workflow, piAvailable) {
+function firstTicketNeedsPi(workflow, piAvailable, overrideModel) {
   if (piAvailable()) return void 0;
   try {
     const next = workflow.peekTicket();
@@ -16103,7 +16307,7 @@ function firstTicketNeedsPi(workflow, piAvailable) {
     const taskId = workflow.activeTaskId();
     const run3 = taskId ? workflow.store.load(taskId)?.ticketRuns?.[next.id] : void 0;
     const tier = rungOf(run3?.tier, next.difficulty);
-    const model = modelFor(workflow.config, tier);
+    const model = overrideModel ?? modelFor(workflow.config, tier);
     return model.kind === "pi" ? `Ticket ${next.id} starts on ${modelText(model)}: ${NO_PI}. No branch was made.` : void 0;
   } catch {
     return void 0;
@@ -16945,7 +17149,8 @@ var GUARD_WHY = {
   "plan approve": "",
   "cleanup remote": "",
   "ship remote": "shepherd never pushes while a build runs",
-  "build pause": ""
+  "build pause": "",
+  "build override": ""
 };
 async function runHook(kind, input, session) {
   const { workflow, config, shepherd, now } = session;
@@ -17096,6 +17301,15 @@ async function runHook(kind, input, session) {
         }
       };
     }
+    if (hits.includes("build override")) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "ask",
+          permissionDecisionReason: `Override the failed per-ticket review for task \`${open2?.name ?? open2?.taskId}\` and commit if checks pass? Remaining findings will be carried to /shepherd:review.`
+        }
+      };
+    }
     return void 0;
   }
   return void 0;
@@ -17225,7 +17439,9 @@ async function hookCommand(kind, io, options) {
       return 0;
     }
     if (!input || typeof input !== "object") return 0;
-    if (kind === "prompt") refreshStatusLine(shepherdHome(options.env ?? process.env, options.home ?? homedir10()), selfEntry(options));
+    const env = options.env ?? process.env;
+    if (env.SHEPHERD_SUBAGENT === "1" && kind !== "pretool") return 0;
+    if (kind === "prompt") refreshStatusLine(shepherdHome(env, options.home ?? homedir10()), selfEntry(options));
     const opened = await open(input.cwd || options.cwd || process.cwd(), options);
     if ("problem" in opened) return 0;
     const output = await runHook(kind, input, opened.session);

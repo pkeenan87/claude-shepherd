@@ -90,7 +90,11 @@ export function agentProgram(ctx: WorkflowContext, model: Extract<TicketModel, {
     exclude: (file) => isSessionLog(ctx, file),
   });
   const baseArgv = agentCommand(model, ctx.config);
-  const argv = cursorUsageFile ? ["env", `SHEPHERD_CURSOR_USAGE_LOG=${cursorUsageFile}`, ...baseArgv] : baseArgv;
+  const extraEnv = [
+    ...(model.name === "claude" ? ["SHEPHERD_SUBAGENT=1"] : []),
+    ...(cursorUsageFile ? [`SHEPHERD_CURSOR_USAGE_LOG=${cursorUsageFile}`] : []),
+  ];
+  const argv = extraEnv.length > 0 ? ["env", ...extraEnv, ...baseArgv] : baseArgv;
   return {
     argv,
     ...(TRUST_PROMPTS[model.name] ? { trust: TRUST_PROMPTS[model.name] } : {}),

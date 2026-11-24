@@ -419,6 +419,7 @@ const GUARD_WHY: Record<GuardHit, string> = {
   "cleanup remote": "",
   "ship remote": "shepherd never pushes while a build runs",
   "build pause": "",
+  "build override": "",
 };
 
 async function runHook(kind: string, input: HookInput, session: Session): Promise<object | undefined> {
@@ -595,6 +596,15 @@ async function runHook(kind: string, input: HookInput, session: Session): Promis
         },
       };
     }
+    if (hits.includes("build override")) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "ask",
+          permissionDecisionReason: `Override the failed per-ticket review for task \`${open?.name ?? open?.taskId}\` and commit if checks pass? Remaining findings will be carried to /shepherd:review.`,
+        },
+      };
+    }
     return undefined;
   }
   return undefined;
@@ -734,7 +744,12 @@ async function hookCommand(kind: string | undefined, io: CliIo, options: CliOpti
       return 0;
     }
     if (!input || typeof input !== "object") return 0;
-    if (kind === "prompt") refreshStatusLine(shepherdHome(options.env ?? process.env, options.home ?? homedir()), selfEntry(options));
+    const env = options.env ?? process.env;
+    // Shepherd-spawned Claude sub-agents are metered and managed by the parent build/review process:
+    // never register their transcripts in sessions/ (which would exclude them from their own meter)
+    // or run idle-cache/compaction/sweep hooks inside them. Keep `pretool` active to guard the build branch.
+    if (env.SHEPHERD_SUBAGENT === "1" && kind !== "pretool") return 0;
+    if (kind === "prompt") refreshStatusLine(shepherdHome(env, options.home ?? homedir()), selfEntry(options));
     const opened = await open(input.cwd || options.cwd || process.cwd(), options);
     if ("problem" in opened) return 0;
     const output = await runHook(kind, input, opened.session);

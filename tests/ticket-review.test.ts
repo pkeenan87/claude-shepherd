@@ -509,3 +509,91 @@ describe("reviewTicket never throws", () => {
     ledger.mockRestore();
   });
 });
+
+describe("high-ticket review failure recovery", () => {
+  it("retries a failed high ticket when models.high is swapped to an untried model, giving it fresh review rounds", async () => {
+    let calls = 0;
+    const t = await setup({
+      tickets: [sampleTicket("01", { difficulty: "high" })],
+      answer: roles({
+        review: () => {
+          calls += 1;
+          // Fail rounds 1 and 2 on the first high model; fail round 1 and pass round 2 on the swapped model.
+          return calls <= 3 ? fail(`issue ${calls}`) : pass();
+        },
+      }),
+    });
+    const first = fakeDriver(t.cwd, () => first.write("f.txt"));
+    const r1 = await t.run(first.driver);
+    expect(r1.code).toBe("REVIEW_FAILED");
+    expect(first.sends[0]!.model.id).toBe("gpt-6.1-sol");
+
+    // Re-running with the SAME models.high still stops MAX_ESCALATIONS.
+    const same = fakeDriver(t.cwd, () => same.write("f.txt"));
+    expect((await t.run(same.driver)).code).toBe("MAX_ESCALATIONS");
+
+    // Swapping models.high to an untried model reopens the ticket on high with fresh review rounds (round 1 fail -> retry -> round 2 pass).
+    t.ctx.config.models.high = "anthropic/claude-opus-5-5";
+    const swapped = fakeDriver(t.cwd, (send) => swapped.write("f.txt", `turn ${send.turn}\n`));
+    const r2 = await t.run(swapped.driver);
+    expect(r2.ok).toBe(true);
+    expect(swapped.sends).toHaveLength(2);
+    expect(swapped.sends[0]!.model.id).toBe("claude-opus-5-5");
+    expect(t.load().ticketRuns!["01"]!.status).toBe("done");
+  });
+
+  it("re-runs checks and review on a review-failed ticket only when the working tree changed after the failure", async () => {
+    let reviews = 0;
+    const t = await setup({
+      tickets: [sampleTicket("01", { difficulty: "high" })],
+      answer: roles({
+        review: () => {
+          reviews += 1;
+          return reviews <= 2 ? fail("missing 403 status") : pass();
+        },
+      }),
+    });
+    const first = fakeDriver(t.cwd, () => first.write("f.txt", "v1\n"));
+    expect((await t.run(first.driver)).code).toBe("REVIEW_FAILED");
+    expect(reviews).toBe(2);
+
+    // Without editing the tree, /build does NOT burn another review and stops MAX_ESCALATIONS.
+    const untouched = fakeDriver(t.cwd, () => undefined);
+    expect((await t.run(untouched.driver)).code).toBe("MAX_ESCALATIONS");
+    expect(reviews).toBe(2);
+
+    // After hand-editing the working tree, /build detects the diff change, re-runs checks + review, and commits.
+    writeFileSync(path.join(t.cwd, "f.txt"), "v2 fixed\n");
+    const afterFix = fakeDriver(t.cwd, () => undefined);
+    const settled = await t.run(afterFix.driver);
+    expect(settled.ok).toBe(true);
+    expect(afterFix.sends).toHaveLength(0);
+    expect(reviews).toBe(3);
+    expect(t.load().ticketRuns!["01"]!.status).toBe("done");
+  });
+
+  it("supports one-shot --with model override and --override-review (carrying findings to /review)", async () => {
+    const t = await setup({
+      tickets: [sampleTicket("01", { difficulty: "high" }), sampleTicket("02", { difficulty: "low", blockedBy: ["01"] })],
+      answer: roles({ review: () => fail("non-blocking burst flush") }),
+    });
+    const first = fakeDriver(t.cwd, () => first.write("f.txt", "v1\n"));
+    expect((await t.run(first.driver)).code).toBe("REVIEW_FAILED");
+
+    // One-shot overrideModel bypasses MAX_ESCALATIONS without editing config.
+    const withAlt = fakeDriver(t.cwd, () => withAlt.write("f.txt", "v2\n"));
+    const retry = await runBuild(() => t.app, withAlt.driver, { once: true, overrideModel: { kind: "pi", provider: "anthropic", id: "claude-opus-5-5" } });
+    expect(retry.code).toBe("REVIEW_FAILED");
+    expect(withAlt.sends[0]!.model.id).toBe("claude-opus-5-5");
+
+    // --override-review commits ticket 01 once checks pass, stops after ticket 01 with --once, and carries findings to /review.
+    const unused = fakeDriver(t.cwd, () => undefined);
+    const overridden = await runBuild(() => t.app, unused.driver, { once: true, overrideReview: true });
+    expect(overridden.ok).toBe(true);
+    expect(unused.sends).toHaveLength(0);
+    const state = t.load();
+    expect(state.ticketRuns!["01"]).toMatchObject({ status: "done", unverified: "review overridden" });
+    expect(state.ticketRuns!["02"]).toBeUndefined();
+    expect(carriedFindings(state).map((f) => f.issue)).toContain("non-blocking burst flush");
+  });
+});

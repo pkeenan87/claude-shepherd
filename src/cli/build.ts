@@ -14,7 +14,7 @@ import { runBuild } from "../orchestrator/build.js";
 import { closeAllWarmTicketReviews } from "../orchestrator/ticket-review.js";
 import { redact } from "../redact.js";
 import { piOnPath } from "../runner/pi-path.js";
-import { modelText } from "../agents.js";
+import { modelText, parseTicketModel, type TicketModel } from "../agents.js";
 import { createBuildDriver, ticketModePath } from "./build-host.js";
 import { cliText } from "./plan.js";
 import type { Workflow, WorkflowOptions } from "../orchestrator/service.js";
@@ -22,7 +22,7 @@ import type { WorkflowConfig } from "../config.js";
 import type { CliIo, CliOptions } from "./shepherd.js";
 import { NO_PI } from "../runner/pi-path.js";
 
-export const BUILD_USAGE = "Usage: shepherd build [--once] [--json]\n       shepherd build pause [--json]";
+export const BUILD_USAGE = "Usage: shepherd build [--once] [--with <model>] [--override-review] [--json]\n       shepherd build pause [--json]";
 
 /** What the CLI needs from `open()`; passed in so this file does not import shepherd.ts. */
 export type OpenSession = (extras: Partial<WorkflowOptions>) => Promise<{ workflow: Workflow; root: string; config: WorkflowConfig } | { problem: string; code?: string }>;
@@ -81,7 +81,26 @@ export async function buildCommand(rest: string[], io: CliIo, options: CliOption
     return res.ok ? 0 : 1;
   }
   const once = rest.includes("--once");
-  const stray = rest.filter((word) => word !== "--json" && word !== "--once");
+  const overrideReview = rest.includes("--override-review");
+  let withModelRaw: string | undefined;
+  let badUsage = false;
+  for (let i = 0; i < rest.length; i += 1) {
+    const word = rest[i]!;
+    if (word === "--json" || word === "--once" || word === "--override-review") continue;
+    if (word === "--with") {
+      const next = rest[i + 1];
+      if (!next || next.startsWith("-") || withModelRaw !== undefined) {
+        badUsage = true;
+        break;
+      }
+      withModelRaw = next;
+      i += 1;
+      continue;
+    }
+    badUsage = true;
+    break;
+  }
+  if (withModelRaw !== undefined && overrideReview) badUsage = true;
   const lines: string[] = [];
   const reports: string[] = [];
   const emitResult = (result: CommandResult): number => {
@@ -94,7 +113,7 @@ export async function buildCommand(rest: string[], io: CliIo, options: CliOption
     } else (result.ok ? io.out : io.err)(`${text}\n`);
     return result.ok ? 0 : 1;
   };
-  if (stray.length > 0) return emitResult({ ok: false, code: "USAGE", text: `${BUILD_USAGE}` });
+  if (badUsage) return emitResult({ ok: false, code: "USAGE", text: `${BUILD_USAGE}` });
   const progress = (line: string) => {
     const clean = words(redact(line));
     lines.push(clean);
@@ -112,6 +131,14 @@ export async function buildCommand(rest: string[], io: CliIo, options: CliOption
   const opened = await open({ progress, report, herdr: client, piAvailable, ticketModePath: modePath, ...(options.runner ? { runner: options.runner } : {}), ...(options.herdrTimings ? { herdrTimings: options.herdrTimings } : {}) });
   if ("problem" in opened) return emitResult({ ok: false, code: opened.code ?? "NO_REPO", text: opened.problem });
   const { workflow, root } = opened;
+  let overrideModel: TicketModel | undefined;
+  if (withModelRaw !== undefined) {
+    try {
+      overrideModel = parseTicketModel(withModelRaw, opened.config);
+    } catch (error) {
+      return emitResult({ ok: false, code: "CONFIG_INVALID", text: redact((error as Error).message || `Invalid --with model: ${withModelRaw}`) });
+    }
+  }
 
   const driver = createBuildDriver({ getWorkflow: () => workflow, client, cwd: root, ticketModePath: modePath, home: options.home, piAvailable, ...(options.herdrTimings ? { timings: options.herdrTimings } : {}) });
   const exit = options.exit ?? ((code: number) => process.exit(code));
@@ -140,9 +167,9 @@ export async function buildCommand(rest: string[], io: CliIo, options: CliOption
     // Before the build makes a branch: no herdr is NEEDS_HERDR, and a first ticket on a Pi model with no `pi` is NEEDS_PI.
     const unfit = await driver.preflight?.();
     if (unfit) return emitResult({ ok: false, code: "NEEDS_HERDR", text: unfit });
-    const noPi = firstTicketNeedsPi(workflow, piAvailable);
+    const noPi = overrideReview ? undefined : firstTicketNeedsPi(workflow, piAvailable, overrideModel);
     if (noPi) return emitResult({ ok: false, code: "NEEDS_PI", text: noPi });
-    return emitResult(await runBuild(() => workflow, driver, { once }));
+    return emitResult(await runBuild(() => workflow, driver, { once, ...(overrideModel ? { overrideModel } : {}), ...(overrideReview ? { overrideReview: true } : {}) }));
   } catch (error) {
     return emitResult({ ok: false, code: "ERROR", text: redact((error instanceof Error ? error.message : String(error)).split("\n")[0]!) });
   } finally {
@@ -159,7 +186,7 @@ export async function buildCommand(rest: string[], io: CliIo, options: CliOption
 }
 
 /** The NEEDS_PI message when the next ticket would start on a Pi model and no `pi` is on PATH; undefined otherwise or when unknown. */
-function firstTicketNeedsPi(workflow: Workflow, piAvailable: () => boolean): string | undefined {
+function firstTicketNeedsPi(workflow: Workflow, piAvailable: () => boolean, overrideModel?: TicketModel): string | undefined {
   if (piAvailable()) return undefined;
   try {
     const next = workflow.peekTicket();
@@ -167,7 +194,7 @@ function firstTicketNeedsPi(workflow: Workflow, piAvailable: () => boolean): str
     const taskId = workflow.activeTaskId();
     const run = taskId ? workflow.store.load(taskId)?.ticketRuns?.[next.id] : undefined;
     const tier = rungOf(run?.tier, next.difficulty as Difficulty);
-    const model = modelFor(workflow.config, tier);
+    const model = overrideModel ?? modelFor(workflow.config, tier);
     return model.kind === "pi" ? `Ticket ${next.id} starts on ${modelText(model)}: ${NO_PI}. No branch was made.` : undefined;
   } catch {
     return undefined;

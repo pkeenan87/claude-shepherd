@@ -102,7 +102,11 @@ export async function runAgentTicket(input: AgentTicketInput, run: (session: Chu
       if ("problem" in hook) return { stopped: `Ticket ${ticketId} cannot start: ${hook.problem}. /build again.` };
       if (hook.changed) host.progress(cursorHookInstalledLine(home));
     }
-    const argv = cursorUsageFile ? ["env", `SHEPHERD_CURSOR_USAGE_LOG=${cursorUsageFile}`, ...input.argv] : input.argv;
+    const extraEnv = [
+      ...(input.agent.name === "claude" ? ["SHEPHERD_SUBAGENT=1"] : []),
+      ...(cursorUsageFile ? [`SHEPHERD_CURSOR_USAGE_LOG=${cursorUsageFile}`] : []),
+    ];
+    const argv = extraEnv.length > 0 ? ["env", ...extraEnv, ...input.argv] : input.argv;
     try {
       tab = await openTab({
         ...input,

@@ -117,6 +117,36 @@ describe("hook stop", () => {
     expect(t.rows("outside chef")[0]).toMatchObject({ inputTokens: 30 });
   });
 
+  it("skips stop/prompt/compact session registration inside SHEPHERD_SUBAGENT=1 while keeping pretool active", async () => {
+    const t = await setup();
+    const subTranscript = path.join(t.project, "sub-1.jsonl");
+    writeFileSync(subTranscript, line("s1", usage(500, 50)));
+    const runSub = async (kind: string, input: object) => {
+      const out: string[] = [];
+      const err: string[] = [];
+      const code = await main(
+        ["hook", kind],
+        { out: (text) => out.push(text), err: (text) => err.push(text) },
+        { stdin: JSON.stringify(input), env: { SHEPHERD_HOME: t.shepherd, SHEPHERD_SUBAGENT: "1" }, now: () => new Date(t.clock.at), home: t.home, cwd: t.repo },
+      );
+      return { code, out: out.join(""), err: err.join("") };
+    };
+    const subPayload = { session_id: "sub-1", transcript_path: subTranscript, cwd: t.repo };
+    expect(await runSub("stop", { ...subPayload, hook_event_name: "Stop" })).toEqual({ code: 0, out: "", err: "" });
+    expect(await runSub("prompt", { ...subPayload, hook_event_name: "UserPromptSubmit", prompt: "do the ticket" })).toEqual({ code: 0, out: "", err: "" });
+    expect(existsSync(path.join(t.shepherd, "sessions", "sub-1.json"))).toBe(false);
+    // PreToolUse still protects the build branch inside a sub-agent.
+    const app = workflow(t.repo);
+    const task = await addTask(app, "demo", { phase: "IMPLEMENTING", branch: "shepherd/demo" });
+    t.store.markBuilding(task.taskId, new Date(t.clock.at).toISOString());
+    const blocked = await runSub("pretool", { ...subPayload, hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "git push origin main" } });
+    expect(JSON.parse(blocked.out).hookSpecificOutput.permissionDecision).toBe("deny");
+    // PreToolUse asks user confirmation for `shepherd build --override-review`.
+    const ask = await t.pretool("shepherd build --once --override-review --json");
+    expect(ask.json?.hookSpecificOutput).toMatchObject({ permissionDecision: "ask" });
+    expect(ask.json?.hookSpecificOutput?.permissionDecisionReason).toContain("Override the failed per-ticket review");
+  });
+
   it("ledgers to the active task, or to the session pseudo-task without one", async () => {
     const t = await setup();
     await t.begin();

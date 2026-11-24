@@ -22,7 +22,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { homedir } from "node:os";
 import path from "node:path";
 import type { TokenUsage } from "../domain.js";
-import { inferProviderForModel } from "../pricing-defaults.js";
+import { canonicalModelId, inferProviderForModel } from "../pricing-defaults.js";
 
 /** Usage of one model since the last `collect()`. `provider` is the pricing provider (`anthropic`, `openai`, `google`, `xai`, `cursor`). */
 export interface AgentCall {
@@ -62,13 +62,14 @@ export interface AgentMeterOptions {
 }
 
 /** The agents that have a reader, with the provider their usage is priced under. */
-const READERS: Record<string, "claude" | "codex" | "cursor" | "gemini"> = {
+const READERS: Record<string, "claude" | "codex" | "cursor" | "gemini" | "agy"> = {
   claude: "claude",
   codex: "codex",
   "cursor-agent": "cursor",
   gemini: "gemini",
+  agy: "agy",
 };
-const PRICING_PROVIDER = { claude: "anthropic", codex: "openai", gemini: "google" } as const;
+const PRICING_PROVIDER = { claude: "anthropic", codex: "openai", gemini: "google", agy: "google" } as const;
 
 interface Totals {
   input: number;
@@ -332,6 +333,92 @@ function geminiChatEvents(file: string, buffer: Buffer, before: Before, tmpRoot:
   return found;
 }
 
+interface AgyHistoryIndex {
+  byConvId: Map<string, string>;
+  unassigned: { workspace: string; prefix: string }[];
+}
+
+/** Reads `~/.gemini/antigravity-cli/history.jsonl` to map conversation IDs (and first-turn prompts) to workspace paths. */
+function readAgyHistory(historyFile: string): AgyHistoryIndex {
+  const byConvId = new Map<string, string>();
+  const unassigned: { workspace: string; prefix: string }[] = [];
+  let buffer: Buffer;
+  try {
+    buffer = readFileSync(historyFile);
+  } catch {
+    return { byConvId, unassigned };
+  }
+  for (const { value } of lines(buffer)) {
+    if (!isRecord(value)) continue;
+    const workspace = typeof value.workspace === "string" && value.workspace ? value.workspace : undefined;
+    if (!workspace) continue;
+    const convId = typeof value.conversationId === "string" && value.conversationId ? value.conversationId : undefined;
+    if (convId) {
+      byConvId.set(convId, workspace);
+    } else if (typeof value.display === "string" && value.display.trim()) {
+      unassigned.push({ workspace, prefix: value.display.trim().slice(0, 120) });
+    }
+  }
+  return { byConvId, unassigned };
+}
+
+/** Infers pricing provider for an Antigravity CLI model (`gemini-4-neon-medium` -> `google`, `claude-*` -> `anthropic`, etc.). */
+function agyProvider(rawModel: string): string {
+  const canonical = canonicalModelId("", rawModel);
+  if (canonical.startsWith("claude-")) return "anthropic";
+  if (canonical.startsWith("gpt-") || canonical.startsWith("o3") || canonical.startsWith("o4") || canonical.includes("codex")) return "openai";
+  if (canonical.startsWith("grok-")) return "xai";
+  return PRICING_PROVIDER.agy;
+}
+
+/** Checks whether an Antigravity CLI transcript under `~/.gemini/antigravity-cli/brain/<convId>/...` belongs to one of `repos`. */
+function agyLogMatchesRepo(file: string, buffer: Buffer, brainRoot: string, repos: string[], history: AgyHistoryIndex): boolean {
+  const rel = path.relative(brainRoot, file);
+  const convId = rel && !rel.startsWith("..") ? rel.split(path.sep)[0] : undefined;
+  if (convId && history.byConvId.has(convId)) {
+    return repos.some((repo) => samePath(repo, history.byConvId.get(convId)!));
+  }
+  // Turn 1 in history.jsonl may omit `conversationId`; match the first USER_INPUT against `.shepherd/` paths or unassigned history prompts.
+  for (const { value } of lines(buffer)) {
+    if (!isRecord(value) || value.type !== "USER_INPUT" || typeof value.content !== "string") continue;
+    const content = value.content;
+    if (repos.some((repo) => content.includes(`${path.join(repo, ".shepherd")}${path.sep}`))) return true;
+    const trimmed = content.trim();
+    if (trimmed) {
+      for (const entry of history.unassigned) {
+        if (!repos.some((repo) => samePath(repo, entry.workspace))) continue;
+        if (entry.prefix.length >= 20 ? trimmed.startsWith(entry.prefix) : trimmed === entry.prefix) return true;
+      }
+    }
+    break;
+  }
+  return false;
+}
+
+/** Reader for Antigravity CLI transcripts (`~/.gemini/antigravity-cli/brain/<convId>/.system_generated/logs/transcript.jsonl`). */
+function agyTranscriptEvents(file: string, buffer: Buffer, before: Before, brainRoot: string, repos: string[], history: AgyHistoryIndex): Map<string, Found> {
+  const found = new Map<string, Found>();
+  if (!agyLogMatchesRepo(file, buffer, brainRoot, repos, history)) return found;
+  let seq = 0;
+  for (const { start, value } of lines(buffer)) {
+    seq += 1;
+    if (!isRecord(value) || value.type !== "PLANNER_RESPONSE" || before(start, value)) continue;
+    // In agy transcripts, `input_tokens` is already non-cached input; `cache_read_tokens` is reported separately.
+    const input = num(value.input_tokens);
+    const cacheRead = num(value.cache_read_tokens);
+    const output = num(value.output_tokens);
+    if (input + output + cacheRead === 0) continue;
+    const rawModel = typeof value.model === "string" && value.model ? value.model : "unknown";
+    const id = typeof value.step_index === "number" && Number.isFinite(value.step_index) ? `step-${value.step_index}` : `agy-${start}-${seq}`;
+    found.set(id, {
+      provider: agyProvider(rawModel),
+      model: rawModel,
+      totals: { input, output, cacheRead, cacheWrite: 0, requests: 1 },
+    });
+  }
+  return found;
+}
+
 /** The agent's log files for the repo (its path forms `repos`) with their sizes; a missing directory is no files. */
 export function listAgentLogs(reader: "claude" | "codex", home: string, repos: string[]): Snapshot {
   if (reader === "claude") {
@@ -413,15 +500,20 @@ export function createAgentMeter(agent: string, options: AgentMeterOptions): Age
     if (reader === "gemini") {
       return jsonlFiles(path.join(home, ".gemini", "tmp"), (name) => name.endsWith(".jsonl"), 4);
     }
+    if (reader === "agy") {
+      return jsonlFiles(path.join(home, ".gemini", "antigravity-cli", "brain"), (name) => name === "transcript.jsonl", 4);
+    }
     return listAgentLogs(reader, home, repos);
   };
   const snapshot = list();
-  /** Spend per message id (Claude/Cursor/Gemini) or per rollout file (Codex) already handed out. */
+  /** Spend per message id (Claude/Cursor/Gemini/AGY) or per rollout file (Codex) already handed out. */
   const reported = new Map<string, Totals>();
   return {
     collect() {
       try {
         const current = new Map<string, Found>();
+        const agyRoot = path.join(home, ".gemini", "antigravity-cli");
+        const agyHistory = reader === "agy" ? readAgyHistory(path.join(agyRoot, "history.jsonl")) : undefined;
         for (const [file, size] of list()) {
           if (options.exclude?.(file)) continue;
           const was = snapshot.get(file);
@@ -443,6 +535,10 @@ export function createAgentMeter(agent: string, options: AgentMeterOptions): Age
             for (const [id, found] of cursorStopEvents(buffer, (start) => start < from)) current.set(`${file}:${id}`, found);
           } else if (reader === "gemini") {
             for (const [id, found] of geminiChatEvents(file, buffer, (start) => start < from, path.join(home, ".gemini", "tmp"), repos)) current.set(`${file}:${id}`, found);
+          } else if (reader === "agy") {
+            for (const [id, found] of agyTranscriptEvents(file, buffer, (start) => start < from, path.join(agyRoot, "brain"), repos, agyHistory!)) {
+              current.set(`${file}:${id}`, found);
+            }
           } else {
             const found = codexSession(buffer, (start) => start < from, repos);
             if (found) {

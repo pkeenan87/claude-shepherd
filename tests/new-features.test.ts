@@ -461,7 +461,7 @@ pricing:
     expect(warnings.some((w) => w.includes("worktree"))).toBe(true);
   });
 
-  it("filters Gemini usage logs by repository, subtracts cached tokens, and leaves agy unmetered", async () => {
+  it("filters Gemini usage logs by repository, subtracts cached tokens, and keeps agy separate from Gemini CLI logs", async () => {
     const repoA = await tempRepo();
     const repoB = await tempRepo();
     const home = mkdtempSync(path.join(tmpdir(), "shep-gem-home-"));
@@ -472,7 +472,7 @@ pricing:
     writeFileSync(path.join(dirA, ".project_root"), repoA);
     writeFileSync(path.join(dirB, ".project_root"), repoB);
 
-    expect(createAgentMeter("agy", { cwd: repoA, home })).toBeUndefined();
+    const agyMeter = createAgentMeter("agy", { cwd: repoA, home })!;
     const meter = createAgentMeter("gemini", { cwd: repoA, home })!;
     writeFileSync(
       path.join(dirA, "chats", "s1.jsonl"),
@@ -482,6 +482,7 @@ pricing:
       path.join(dirB, "chats", "s2.jsonl"),
       `${JSON.stringify({ id: "m2", model: "gemini-4-argon", tokens: { input: 9000, output: 9000 } })}\n`,
     );
+    expect(agyMeter.collect()).toEqual([]);
     const calls = meter.collect();
     expect(calls).toHaveLength(1);
     expect(calls[0]!.usage.input).toBe(700);
