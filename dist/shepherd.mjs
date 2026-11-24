@@ -16591,7 +16591,12 @@ function herdrInstall(args, out, err, options = {}) {
   for (const name of ["main.js", "lib.js", "link.js", "edit.js", "mod.json", CLI_FILE, ...EDITOR_ONLY]) rmSync5(path30.join(target, name), { force: true });
   cpSync(source, target, { recursive: true, filter: (file) => !EDITOR_ONLY.includes(path30.basename(file)) });
   copyFileSync2(bundle, path30.join(target, CLI_FILE));
-  writeFileSync4(path30.join(target, "install.json"), JSON.stringify({ cli: ["node", path30.join(target, CLI_FILE)] }, null, 2) + "\n");
+  const nodeBin = options.nodePath || process.execPath || "node";
+  const savedPath = process.env.PATH && !process.env.PATH.includes("\n") ? process.env.PATH : void 0;
+  writeFileSync4(
+    path30.join(target, "install.json"),
+    JSON.stringify({ cli: [nodeBin, path30.join(target, CLI_FILE)], ...savedPath ? { path: savedPath } : {} }, null, 2) + "\n"
+  );
   out(`shepherd-config mod installed in ${target}
 `);
   const viewerSource = path30.join(root, "herdr", "shepherd-viewer");
@@ -16799,10 +16804,13 @@ var STATUSLINE_USAGE = `Usage: shepherd statusline-install [--force]
 Shows "shepherd \xB7 <plan> \xB7 plan $spent/$budget \xB7 today $spent/$budget" in Claude Code's status line by setting
 statusLine in ~/.claude/settings.json. --force replaces a status line you already have (a backup is kept).`;
 var LAUNCHER = "statusline.sh";
-function launcherText(entry) {
+function launcherText(entry, nodePath = process.execPath || "node") {
+  const q = (value) => `'${value.replace(/'/g, "'\\''")}'`;
   return `#!/bin/sh
 # Written by shepherd: runs the installed plugin's status command. Rewritten on every prompt.
-exec node '${entry.replace(/'/g, "'\\''")}' status --statusline
+NODE=${q(nodePath)}
+[ -x "$NODE" ] || NODE=node
+exec "$NODE" ${q(entry)} status --statusline
 `;
 }
 function writeAtomic(file, text, mode) {

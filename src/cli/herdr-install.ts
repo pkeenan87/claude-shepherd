@@ -18,6 +18,8 @@ export interface HerdrInstallOptions {
   /** Plugin root (holds herdr/ and dist/). Default: found from this file's location (dist/ or src/cli/). */
   root?: string;
   appHome?: string;
+  /** Absolute path to the Node binary written into install.json. Default: `process.execPath`. */
+  nodePath?: string;
 }
 
 const EDITOR_ONLY = ["gpui-kit.d.ts", "jsconfig.json"];
@@ -57,7 +59,14 @@ export function herdrInstall(args: string[], out: (text: string) => void, err: (
   for (const name of ["main.js", "lib.js", "link.js", "edit.js", "mod.json", CLI_FILE, ...EDITOR_ONLY]) rmSync(path.join(target, name), { force: true });
   cpSync(source, target, { recursive: true, filter: (file) => !EDITOR_ONLY.includes(path.basename(file)) });
   copyFileSync(bundle, path.join(target, CLI_FILE));
-  writeFileSync(path.join(target, "install.json"), JSON.stringify({ cli: ["node", path.join(target, CLI_FILE)] }, null, 2) + "\n");
+  // Record the running Node binary (`process.execPath`) so GUI apps on macOS (launchd minimal PATH, nvm/fnm/mise/Homebrew)
+  // can launch the panel CLI without relying on shell PATH; also save PATH so model discovery finds installed agent CLIs.
+  const nodeBin = options.nodePath || process.execPath || "node";
+  const savedPath = process.env.PATH && !process.env.PATH.includes("\n") ? process.env.PATH : undefined;
+  writeFileSync(
+    path.join(target, "install.json"),
+    JSON.stringify({ cli: [nodeBin, path.join(target, CLI_FILE)], ...(savedPath ? { path: savedPath } : {}) }, null, 2) + "\n",
+  );
   out(`shepherd-config mod installed in ${target}\n`);
   const viewerSource = path.join(root, "herdr", "shepherd-viewer");
   if (existsSync(viewerSource)) {
