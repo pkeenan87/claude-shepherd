@@ -19,8 +19,9 @@ statusLine in ~/.claude/settings.json. --force replaces a status line you alread
 
 export const LAUNCHER = "statusline.sh";
 
-export function launcherText(entry: string): string {
-  return `#!/bin/sh\n# Written by shepherd: runs the installed plugin's status command. Rewritten on every prompt.\nexec node '${entry.replace(/'/g, "'\\''")}' status --statusline\n`;
+export function launcherText(entry: string, nodePath: string = process.execPath || "node"): string {
+  const q = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+  return `#!/bin/sh\n# Written by shepherd: runs the installed plugin's status command. Rewritten on every prompt.\nNODE=${q(nodePath)}\n[ -x "$NODE" ] || NODE=node\nexec "$NODE" ${q(entry)} status --statusline\n`;
 }
 
 function writeAtomic(file: string, text: string, mode?: number): void {

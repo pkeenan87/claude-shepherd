@@ -92,6 +92,7 @@ export default class ShepherdConfig extends View {
     this.outClosedId = null;        // flag set by on_mouse_down_out, consumed cleanly by trigger mousedown/click
     this.suppressTriggerClick = null;
     this.prevTermStatus = new Map();// address -> status (for blocked/done alerts)
+    this.resolvedNode = null;       // fallback node resolved via login shell if install.json's node disappears
     this.writeQueue = Promise.resolve();
     try {
       this.collapsed = JSON.parse(localStorage.getItem("collapsed") ?? "{}");
@@ -218,6 +219,7 @@ export default class ShepherdConfig extends View {
       this.failure = "install.json has no `cli` argv array: run `shepherd herdr-install` again.";
       return;
     }
+    if (this.cli?.[0] !== cli[0]) this.resolvedNode = null;
     this.cli = cli;
     const start = this.start;
     if (!start) {
@@ -337,11 +339,46 @@ export default class ShepherdConfig extends View {
     if (changed) cx.notify();
   }
 
+  async resolveNode() {
+    if (this.resolvedNode) return this.resolvedNode;
+    for (const [shell, shellArgs] of [
+      ["/bin/zsh", ["-lc", "command -v node"]],
+      ["/bin/bash", ["-lc", "command -v node"]],
+      ["/bin/sh", ["-lc", "command -v node"]],
+    ]) {
+      try {
+        const res = await exec(shell, shellArgs, { timeout: 5000 });
+        const found = res.code === 0 ? res.stdout.trim().split(/\r?\n/).pop()?.trim() : "";
+        if (found && found.startsWith("/")) {
+          this.resolvedNode = found;
+          return found;
+        }
+      } catch { /* try next shell */ }
+    }
+    return null;
+  }
+
   async call(args) {
+    const cmd = this.resolvedNode || this.cli[0];
+    const argv = [...this.cli.slice(1), ...args];
     try {
-      return parseResult(await exec(this.cli[0], [...this.cli.slice(1), ...args], { timeout: 60000 }));
+      return parseResult(await exec(cmd, argv, { timeout: 60000 }));
     } catch (e) {
-      return { ok: false, error: String(e?.message ?? e) };
+      const msg = String(e?.message ?? e);
+      // If the saved node path disappeared (e.g. nvm version removed) or plain "node" isn't in launchd PATH,
+      // resolve node once through a login shell and retry.
+      const base = String(cmd).split("/").pop();
+      if (base === "node" && !this.resolvedNode) {
+        const fallback = await this.resolveNode();
+        if (fallback && fallback !== cmd) {
+          try {
+            return parseResult(await exec(fallback, argv, { timeout: 60000 }));
+          } catch (e2) {
+            return { ok: false, error: String(e2?.message ?? e2) };
+          }
+        }
+      }
+      return { ok: false, error: msg };
     }
   }
 

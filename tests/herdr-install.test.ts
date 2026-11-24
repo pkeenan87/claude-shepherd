@@ -39,8 +39,10 @@ describe("shepherd herdr-install", () => {
     expect(readdirSync(mod).sort()).toEqual(["install.json", "lib.js", "link.js", "main.js", "mod.json", "shepherd-config.mjs"]);
     expect(JSON.parse(readFileSync(path.join(mod, "mod.json"), "utf8"))).toMatchObject({ place: "right", size: 360, focusable: true });
     expect(existsSync(path.join(appHome, "mods", "shepherd-viewer", "main.js"))).toBe(true);
-    const cli = JSON.parse(readFileSync(path.join(mod, "install.json"), "utf8")).cli as string[];
-    expect(cli).toEqual(["node", path.join(mod, "shepherd-config.mjs")]);
+    const installed = JSON.parse(readFileSync(path.join(mod, "install.json"), "utf8")) as { cli: string[]; path?: string };
+    const cli = installed.cli;
+    expect(cli).toEqual([process.execPath, path.join(mod, "shepherd-config.mjs")]);
+    if (process.env.PATH) expect(installed.path).toBe(process.env.PATH);
     expect(readFileSync(cli[1]!, "utf8")).toBe(readFileSync(path.join(repo, "dist", "shepherd-config.mjs"), "utf8"));
     expect(existsSync(path.join(appHome, "layouts"))).toBe(false);
     const before = readFileSync(path.join(mod, "main.js"), "utf8");
