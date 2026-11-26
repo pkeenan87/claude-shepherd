@@ -273,8 +273,11 @@ declare module "gpui-kit" {
     | "right_center"
     ;
 
-  /** Which pointer button opens a `Popover`. */
-  export type MouseButton = "left" | "right" | "middle";
+  /**
+   * A pointer button, for `on_mouse_down`, `on_mouse_up` and which one opens
+   * a `Popover`. HERDR: `back` and `forward` are the mouse's side buttons.
+   */
+  export type MouseButton = "left" | "right" | "middle" | "back" | "forward";
 
   /**
    * The script-side context for one host call.
@@ -476,6 +479,8 @@ declare module "gpui-kit" {
     local_position: Point;
     bounds: import("gpui-shell").ElementBounds;
     modifiers: Modifiers;
+    /** Left, right, or middle when the move reports one of those buttons as held. */
+    pressed_button?: MouseButton;
   }
 
   /**
@@ -515,6 +520,17 @@ declare module "gpui-kit" {
      * Omitted, the binding is global.
      */
     context?: string;
+  }
+
+  /** What an `on_pinch` handler receives. */
+  export interface PinchEvent {
+    /** The change in scale for this step: 0.1 is 10% larger, negative is smaller. */
+    delta: number;
+    touch_phase: "started" | "moved" | "ended" | "cancelled";
+    position: Point;
+    local_position?: Point;
+    bounds?: import("gpui-shell").ElementBounds;
+    modifiers: Modifiers;
   }
 
   /** What an `on_scroll_wheel` handler receives. */
@@ -720,6 +736,13 @@ declare module "gpui-kit" {
     on_click<Self extends Element>(this: Self, handler: (event: ClickEvent, cx: Context) => void): Self;
     /** GPUI `InteractiveElement::on_mouse_move`, delivered while this element is hovered. */
     on_mouse_move<Self extends Element>(this: Self, handler: (event: MouseMoveEvent, cx: Context) => void): Self;
+    /**
+     * Every pointer move in the window, wherever the pointer is, with positions
+     * against this element's box. For a drag that should keep following the
+     * pointer after it leaves the element it started on. Passive observer.
+     * Use on div, h_flex, or v_flex.
+     */
+    on_window_mouse_move<Self extends Element>(this: Self, handler: (event: MouseMoveEvent, cx: Context) => void): Self;
     /** div/h_flex/v_flex: initial size and changed layout size, in logical pixels.
      * Runs after layout, even without pointer movement. Use a stable id. */
     on_size_change<Self extends Element>(this: Self, handler: (size: { width: number; height: number }, cx: Context) => void): Self;
@@ -771,6 +794,14 @@ declare module "gpui-kit" {
       handler: (event: MouseButtonEvent, cx: Context) => void,
     ): Self;
     /**
+     * Passively observes releases of `button` anywhere in the window, including
+     * releases handled by terminals. Use on div, h_flex, or v_flex.
+     */
+    on_window_mouse_up<Self extends Element>(this: Self,
+      button: MouseButton,
+      handler: (event: MouseButtonEvent, cx: Context) => void,
+    ): Self;
+    /**
      * GPUI `InteractiveElement::on_mouse_down_out`: a press anywhere *outside*
      * this element, delivered during the capture phase.
      *
@@ -779,6 +810,12 @@ declare module "gpui-kit" {
      * for any button.
      */
     on_mouse_down_out<Self extends Element>(this: Self, handler: (event: MouseButtonEvent, cx: Context) => void): Self;
+    /**
+     * Makes a plain layout element a native file/folder drag source. Paths are
+     * absolute on `on` (a host-owned machine name); omitted/null means local.
+     * The payload keeps its source machine, and an ordinary click still works.
+     */
+    drag_paths<Self extends Element>(this: Self, paths: string[], options?: { on?: string | null }): Self;
     /** Files dropped from outside the app, as absolute paths. Use on a plain layout element. */
     on_drop<Self extends Element>(this: Self, handler: (event: { paths: string[] }, cx: Context) => void): Self;
     /**
@@ -790,6 +827,11 @@ declare module "gpui-kit" {
      * the gesture drives something else — a zoom, a value, a custom viewport.
      */
     on_scroll_wheel<Self extends Element>(this: Self, handler: (event: ScrollWheelEvent, cx: Context) => void): Self;
+    /**
+     * GPUI `InteractiveElement::on_pinch`: a two-finger trackpad pinch over
+     * this element, on platforms that report one.
+     */
+    on_pinch<Self extends Element>(this: Self, handler: (event: PinchEvent, cx: Context) => void): Self;
     /**
      * `handler(event, cx)` when the named action is dispatched to this element
      * or to something inside it.
@@ -1032,6 +1074,11 @@ declare module "gpui-kit" {
      * Optional. Without one the list keeps a position of its own, filed under
      * the id it was built with — which is the same place a `Scrollbar` named
      * after that id looks, so the bar works either way.
+     *
+     * `list` and `uniform_list` always keep their own position: a handle
+     * passed to them is ignored (the app logs a warning), so pair a
+     * `Scrollbar` of the same name instead. `v_virtual_list` and
+     * `h_virtual_list` use the handle.
      */
     track_scroll<Self extends Element>(this: Self, handle: import("gpui-base").VirtualListScrollHandle | import("gpui-base").ScrollHandle): Self;
     /**
@@ -20299,6 +20346,11 @@ declare module "gpui-kit" {
   /**
    * GPUI's own lazy list: rows of any height, measured as they are drawn.
    *
+   * Exported from `gpui-kit`, where `div` is — not from `gpui-base`. The
+   * `gpui-base` pair is `v_virtual_list` / `h_virtual_list`. Like every lazy
+   * list, it needs a definite height from its container: a `flex_1()` chain
+   * with no explicit height anywhere lays out at zero and draws nothing.
+   *
    * Where `v_virtual_list` places rows by the sizes the script states, `list`
    * asks nothing about size. `render(index, cx)` is called for each item that
    * is on screen, from inside layout as a virtual list's renderer is, and the
@@ -20347,6 +20399,10 @@ declare module "gpui-kit" {
   /**
    * GPUI's own uniform list: one row is measured and every row takes its
    * height.
+   *
+   * Exported from `gpui-kit`, same as `list`; the `gpui-base` pair is
+   * `v_virtual_list` / `h_virtual_list`. It needs a definite height from its
+   * container too.
    *
    * The same contract as `v_virtual_list` with a single size, without the
    * size: the first row (or the one `with_item_to_measure_index` names) is
@@ -20698,12 +20754,43 @@ declare module "gpui-base" {
   export const Checkbox: ComponentType;
   /** A controlled switch. No styling. */
   export const Switch: ComponentType;
+  /** HERDR: a settled selection in a TextView. */
+  export interface TextViewSelection {
+    /** The selected text in this view, trimmed as when copying it. */
+    text: string;
+    /**
+     * UTF-16 offsets into the Markdown source the selection came from, so
+     * `markdown.slice(range.start, range.end)` includes any markup inside it.
+     * Absent in HTML or when the selection doesn't map to the current source.
+     */
+    range?: InputRange;
+    /** Where the selection ended, in logical window pixels. Absent for select-all. */
+    position?: import("gpui-kit").Point;
+  }
   /** Rich HTML or Markdown text. CSS in HTML is not supported. */
   export interface TextViewElement extends NativeElement {
     /** Overrides TextView's default URL opening and reports the resolved URL. */
     on_link_click(handler: (url: string, cx: Context) => void): this;
+    /**
+     * HERDR: called when a selection settles (the pointer is released, a
+     * double or triple click, select-all), and with `null` when a reported
+     * selection is cleared. Whitespace alone reports as `null`.
+     */
+    on_selection_change(handler: (selection: TextViewSelection | null, cx: Context) => void): this;
+    /**
+     * HERDR: paints `color` behind the text rendered from `[start, end)`,
+     * UTF-16 offsets into the Markdown source, like `selection.range`. Chain once
+     * per range; later ones paint over earlier ones. Markdown only.
+     */
+    highlight_range(start: number, end: number, color: Color): this;
     selectable(value?: boolean): this;
     scrollable(value?: boolean): this;
+    /**
+     * Whether raw HTML in Markdown renders as HTML (the default). `false`
+     * shows HTML tags and blocks as literal text. Markdown autolinks outside
+     * the HTML stay clickable. Applies to `TextView.markdown`.
+     */
+    raw_html(value?: boolean): this;
   }
   export const TextView: {
     html(id: string, html: string): TextViewElement;
@@ -21291,8 +21378,28 @@ declare module "gpui-base" {
     render: (range: ItemRange, cx: Context) => Element[],
   ): NativeElement;
 
+  /**
+   * Where a scroll area is, read from its handle. Lengths are in the pixels a
+   * script writes, so a row written `.h(30)` moves `offset()` by 30 at any zoom.
+   * Values are the last layout's, kept while the area is hidden; a `scroll_to_*`
+   * request shows here once it has run. Event positions and `on_size_change` sizes
+   * are window px: divide them by `settings().zoom` before mixing them with these.
+   * Read in an event handler or a task after layout. All zero before the first frame.
+   */
+  export interface ScrollPosition {
+    /** How far the content has scrolled from its start: `{ x: 0, y: 0 }` there, never negative. */
+    offset(): import("gpui-kit").Point;
+    /** The scrollable extent, including padding and at least as large as the viewport. */
+    content_size(): import("gpui-kit").Size;
+    /**
+     * The size of the part on screen. The area is at its end when
+     * `offset().y + viewport_size().height >= content_size().height - 1`.
+     */
+    viewport_size(): import("gpui-kit").Size;
+  }
+
   /** A plain scroll area's position. Create in init() and attach with track_scroll. */
-  export interface ScrollHandle {
+  export interface ScrollHandle extends ScrollPosition {
     /** Reveal the zero-based direct child with the smallest scroll needed.
      * Works on plain overflow_*_scroll and overflow_*_scrollbar elements.
      * Requests are consumed once, after layout; already visible children stay put.
@@ -21310,14 +21417,19 @@ declare module "gpui-base" {
    * it. Create it in `init()` and hand it to the list with `track_scroll`.
    *
    * A list without one still scrolls, and a `Scrollbar` named after the list
-   * still drives it; this is only needed to scroll it from code.
+   * still drives it; this is only needed to scroll it from code, or to read
+   * where it is.
    */
-  export interface VirtualListScrollHandle {
+  export interface VirtualListScrollHandle extends ScrollPosition {
     /**
      * Puts the item at `index` on screen before the next frame. `"top"` (the
      * default) brings it to the near edge, `"center"` to the middle.
      */
     scroll_to_item(index: number, strategy?: "top" | "center"): void;
+    /**
+     * Puts the last item on screen before the next frame: the last of the items
+     * that frame draws, so it can be called in `init()` or right after adding items.
+     */
     scroll_to_bottom(): void;
     /** Releases the handle. Using it afterwards throws. */
     release(): boolean;
@@ -21348,6 +21460,8 @@ declare module "gpui-base" {
     replace_with_token(token: InlineToken): void;
     replace_range_with_token(range: InputRange, token: InlineToken): void;
     set_selected_range(range: InputRange): void;
+    /** The selection (UTF-16 offsets); start equals end at a plain cursor. */
+    selected_range(): InputRange;
     replace(text: string): void;
     value(): string;
     /** Plain text, or a content snapshot to restore its tokens as well. */
@@ -21373,6 +21487,12 @@ declare module "gpui-base" {
     set_loading(loading: boolean): void;
     /** Moves the keyboard onto the input. */
     focus(): void;
+    /**
+     * Gives up the keyboard if the input has focus. The state stays usable
+     * and receives its usual `blur` event as focus moves away.
+     */
+    blur(): void;
+    /** Frees the state; it can't be read or drawn afterwards. Not a blur. */
     release(): boolean;
   }
 
@@ -21417,6 +21537,8 @@ declare module "gpui-base" {
     replace_with_token(token: InlineToken): void;
     replace_range_with_token(range: InputRange, token: InlineToken): void;
     set_selected_range(range: InputRange): void;
+    /** The selection (UTF-16 offsets); start equals end at a plain cursor. */
+    selected_range(): InputRange;
     replace(text: string): void;
     value(): string;
     /** Plain text, or a content snapshot to restore its tokens as well. */
@@ -21431,6 +21553,12 @@ declare module "gpui-base" {
     set_soft_wrap(wrap: boolean): void;
     /** Moves the keyboard onto the textarea. */
     focus(): void;
+    /**
+     * Gives up the keyboard if the textarea has focus. The state stays usable
+     * and receives its usual `blur` event as focus moves away.
+     */
+    blur(): void;
+    /** Frees the state; it can't be read or drawn afterwards. Not a blur. */
     release(): boolean;
   }
 
@@ -21446,7 +21574,24 @@ declare module "gpui-base" {
     value(): string;
     /** Programmatic replacement works even in readonly mode. */
     set_value(value: string): void;
+    /** The selection (UTF-16 offsets); start equals end at a plain cursor. */
+    selected_range(): InputRange;
+    set_selected_range(range: InputRange): void;
+    /** Replaces the selection with `text`, as typing would (one undo step). */
+    replace(text: string): void;
     on(event: "change" | "submit" | "focus" | "blur" | "paste_other", handler: (event: InputEvent, cx: Context) => void): boolean;
+    /** Changes the indent once the file's style is known. `hard_tabs` defaults to false. */
+    set_tab_size(tab_size: number, hard_tabs?: boolean): void;
+    /** Moves the keyboard onto the editor. */
+    focus(): void;
+    /**
+     * Gives up the keyboard if the editor has focus. The state stays usable
+     * and receives its usual `blur` event as focus moves away.
+     */
+    blur(): void;
+    /** Wraps long lines instead of scrolling sideways, keeping the text and selection. */
+    set_soft_wrap(wrap: boolean): void;
+    /** Frees the state; it can't be read or drawn afterwards. Not a blur. */
     release(): boolean;
   }
   export const EditorState: {
@@ -21465,9 +21610,20 @@ declare module "gpui-base" {
       readonly?: boolean;
       /** Defaults to false. */
       soft_wrap?: boolean;
+      /** Spaces per indent and spacing of the indent guides, from 1 to 16 whole columns.
+       * Defaults to 2. The text renderer chooses the displayed width of tab characters. */
+      tab_size?: number;
+      /** Tab inserts a `\t` instead of spaces. Defaults to false. */
+      hard_tabs?: boolean;
       /** Semantic colors: keyword, string, comment, function, type, number,
        * constant, variable, operator, punctuation, boolean, string.escape.
-       * Values are concrete hex colors; unspecified UI colors follow the theme. */
+       * Markdown ("markdown" or "md") adds heading, strong, emphasis, code,
+       * quote, list and link. Unset heading, strong and list use keyword's color,
+       * code uses string, quote uses comment, and link URLs use function.
+       * Headings and strong text are bold. Emphasis is italic and inherits
+       * the editor foreground unless given its own color.
+       * Values are concrete hex colors. Built-in syntax colors use a dark palette.
+       * Unspecified editor UI colors follow the theme. */
       syntax?: Record<string, string>;
     }) => EditorState;
   };
@@ -22225,6 +22381,9 @@ declare module "herdr" {
   export function home(): string;
   /** The app's folder (`~/.config/herdr-app`, or `$HERDR_APP_HOME`): settings.json, keys.json, layouts/. */
   export function appHome(): string;
+  /** True while `herdr-app check` loads this mod: `init()` runs for real there
+   *  (exec and writeTextFile included), so guard process side effects. */
+  export function checking(): boolean;
 
   /** Reads UTF-8 text (up to 1 MiB), or null if absent. Runs off the UI thread.
    *  `on`: from that machine (a space's `machine`). */
@@ -22243,6 +22402,13 @@ declare module "herdr" {
    *  when the person cancels. `prompt`: the confirm button's text (default "Open"). */
   export function pickFolder(options?: { prompt?: string }): Promise<string | null>;
 
+  /** Opens the system's file picker (this machine). Resolves with the chosen files' absolute
+   *  paths, in the order the picker gives them, or null when the person cancels.
+   *  Rejects if the picker fails or a selected file path cannot be represented as a string.
+   *  `prompt`: the confirm button's text (default "Open"). `multiple`: allow several files
+   *  (default false). */
+  export function pickFiles(options?: { prompt?: string; multiple?: boolean }): Promise<string[] | null>;
+
   /** Plays "done" or "blocked" (the attention sounds, or the files settings.json names), or an MP3
    *  file (absolute, or relative to ~/.config/herdr-app). */
   export function playSound(sound: string): null;
@@ -22254,13 +22420,17 @@ declare module "herdr" {
    * the call returns; terminal.keep/park finish in the background and toast on failure.
    * A rename without a name is asked for;
    * "" gives the space or tab Herdr's automatic name again. The main ones:
-   * Spaces: space.new {name?, folder?, tab?, argv?, task?, machine?}, space.close {id?}, space.rename {id?, name},
+   * Spaces: space.new {name?, folder?, tab?, argv?, task?, machine?, focus?}, space.close {id?}, space.rename {id?, name},
    *   space.move {id, index}, space.select {index | id}, space.next, space.prev.
-   * Tabs: tab.new {name?, space?, folder?, argv?, task?} (argv: an agent, task: its first message)
-   *   or {name?, space?, mod, props?} (a tab whose only pane is a mod),
-   *   tab.close {id?}, tab.rename {id?, name}, tab.move {id, index}, tab.select {index | id},
+   * Tabs: tab.new {name?, space?, folder?, argv?, task?, focus?} (argv: an agent, task: its first message)
+   *   or {name?, space?, mod, props?, focus?} (a tab whose only pane is a mod),
+   *   tab.close {id?}, tab.rename {id?, name}, tab.move {id?, index | by} (by: -1 left, 1 right, wrapping), tab.select {index | id},
    *   tab.next, tab.prev.
-   * Panes: pane.split {direction: "right" | "down", pane?}, pane.close {pane?}, pane.zoom {pane?},
+   * New spaces and tabs take focus by default. Boolean focus: false keeps the shown
+   * space, selected tab and keyboard focus; background tabs are appended in creation order.
+   * With no space shown, a new space is shown even with focus: false.
+   * Panes: pane.split {direction: "right" | "down", pane?}, pane.close {pane?}, pane.zoom {pane?}, pane.rename {pane?, name},
+   *   pane.resize {direction, pane?, px?},
    *   pane.focus {pane | terminal}, pane.go {direction}, pane.swap {pane?, direction | target}.
    *   Pane menus get target { pane, terminal }.
    * Terminals: terminal.open {argv?, folder?, place?: "tab" | "right" | "down"}, terminal.kill {terminal},
@@ -22268,9 +22438,13 @@ declare module "herdr" {
    *   terminal.park {terminal} (its pane goes, it keeps running; the menu's "Send back"),
    *   terminal.peek {terminal} (peek over the tab, with keep-as-tab and close),
    *   terminal.show {terminal?, pane?} (shown in the pane for now, in place of its own), terminal.copy, terminal.paste,
+   *   terminal.select {terminal?, at?: {row, col} | "cursor", mode?: "cell" | "word" | "line"} (replaces the selection; defaults to cursor and cell).
+   *   terminal.adjust_selection {terminal?, direction: "left" | "right" | "up" | "down" | "page_up" | "page_down" | "home" | "end" | "line_start" | "line_end"} (moves the inclusive moving end; view follows; fails without selection).
+   *   terminal.clear_selection {terminal?}. No default keys or built-in copy mode.
+   *   terminal.select_all {terminal?} (whole screen and scrollback, or only the alternate screen; Cmd+A on macOS).
    *   terminal.right_click {to: "program" | "menu", terminal?} (right-clicks to a program that takes the mouse; Shift: the menu).
    *   terminal.scroll {lines | pages | to: "top" | "bottom", terminal?} (Herdr's view of the history: negative goes up; pages may be fractional).
-   * Agents: agent.next, agent.prev (the agents list's order), agent.focus {terminal} (sub-agents too).
+   * Agents: agent.next, agent.prev, agent.select {index} (1 = first), agent.focus {terminal} (sub-agents too).
    * Layout (the shown layout's nodes by id): layout.toggle|show|hide {id}, layout.resize {id, px | weight},
    *   layout.select {stack, child}, layout.set {layout} (personal trees; shipped layouts: click/look fields only), layout.switch {name?} (no name: the next one).
    *   layout.clone {name, as?} duplicates and switches; mod.clone {name, as?} duplicates a mod.
@@ -22377,6 +22551,8 @@ declare module "herdr" {
     program: Program;
     /** The terminal's title. */
     title: string;
+    /** Its pane's name (`pane.rename`), or null. */
+    pane_name: string | null;
     /** Higher = changed more recently. */
     seq: number;
     /** Pinned with `terminal.pin`, on any Herdr client. */
@@ -22387,15 +22563,29 @@ declare module "herdr" {
   /** Terminals whose program reports a status (agents), in space, tab, pane order. Live. */
   export function agents(): AgentInfo[];
 
+  /** History scroll as Ghostty reports it, read fresh by panes().
+   *  Rows from the top of retained history; `from_bottom` is 0 at the end.
+   *  PaneInfo.scroll is null on the alternate screen or with no view.
+   *  Mods refresh only on transitions between end/history/alternate screen,
+   *  not on scrolling or output within one of those states that only changes the numbers. */
+  export interface PaneScroll {
+    total: number;
+    offset: number;
+    len: number;
+    from_bottom: number;
+  }
+
   export interface PaneInfo {
     pane: string;
     /** null for a mod pane (`pane.split {mod}`): then `mod` names it, and only
-     *  pane, mod, tab, title, focused and zoomed are set. */
+     *  pane, mod, tab, title, name, focused and zoomed are set. */
     terminal: string | null;
     mod?: string;
     tab: string;
     /** The terminal's title (what the program set), or the mod's name. */
     title: string;
+    /** The name someone gave it (`pane.rename`), or null. */
+    name: string | null;
     /** Its live folder, and the git branch there. */
     cwd: string | null;
     branch: string | null;
@@ -22407,23 +22597,36 @@ declare module "herdr" {
     zoomed: boolean;
     /** The app's top-center grip can rearrange this pane. False when zoomed or alone. */
     movable: boolean;
+    /** History scroll for a terminal pane's attached view; null for mod panes / alt-screen. Live. */
+    scroll?: PaneScroll | null;
   }
 
   /** Every pane in every tab. A pane header mod finds its own with
    *  `panes().find((p) => p.pane === props().pane)`. Live. */
   export function panes(): PaneInfo[];
 
-  /** Sets agent.next / agent.prev order to match the list a mod displays.
-   *  Call when rendering the list. In memory only; missing agents are ignored, new agents
-   *  are appended in model order. Without a supplied order, navigation uses model order. */
+  /** Sets the navigation order for agent.next, agent.prev and agent.select.
+   *  Call when rendering the list. The last order stays in memory until another call or app restart.
+   *  Missing agents drop out of the order. Unlisted agents follow in model order.
+   *  Without a supplied order, navigation uses model order. */
   export function setAgentOrder(addresses: string[]): null;
 
   /** Every core terminal as `hc ls --json` describes it (address, argv, name, template, parent,
    *  labels, state, ...), with `status` as a plain word, the agent's report in `report`, and
    *  `program` (see Program). Parent addresses use the same machine names as `address`;
    *  parents on this computer use bare terminal IDs. Parents that cannot be mapped
-   *  stay as the core reported them. Live. */
-  export function terminals(): any[];
+   *  stay as the core reported them. View-local selection uses TerminalCell positions;
+   *  selection is null when absent or without an attached view. Updates when selection changes,
+   *  not on cursor motion or output. Start at the cursor with terminal.select and read selection.end. Live. */
+  export function terminals(): (Record<string, any> & TerminalSelectionState)[];
+
+  /** Zero-based cells. Rows count from the oldest retained history through the active screen.
+   *  Output preserves positions until history is pruned or the grid reflows. */
+  export interface TerminalCell { row: number; col: number; }
+  export interface TerminalSelectionState {
+    /** Inclusive endpoints: start is the anchor, end is the moving end (may precede start). */
+    selection: { start: TerminalCell; end: TerminalCell } | null;
+  }
 
   /** Actual terminal/pane focus. `space` and `tab` are the current window context.
    *  Clicking a visible layout terminal block, or pane.focus {terminal}, focuses that block:
@@ -22435,13 +22638,15 @@ declare module "herdr" {
    *  focused pane under the window.
    *  pane.focus {terminal} prefers the first visible layout terminal block, then a model pane.
    *  `shown`: terminal.show replacement, if any. `agent`: the agent an agent block shows.
-   *  `terminal` is null for mod panes. Live. */
-  export function focused(): { space: string; tab: string; pane: string | null; terminal: string | null; shown: string | null; agent: string | null; cwd: string | null } | null;
+   *  `terminal` is null for mod panes. Selection describes the terminal that receives
+   *  terminal commands (including a shown replacement or peek). Live. */
+  export function focused(): ({ space: string; tab: string; pane: string | null; terminal: string | null; shown: string | null; agent: string | null; cwd: string | null } & TerminalSelectionState) | null;
 
   /** The shown layout (layouts/<name>.json). Its name is shared("layout").
    *  Root `terminal_menu?: string` chooses a terminal right-click menu mod (default: "menu").
    *  Unknown names warn and fall back to "menu". This replaces the menu, not its items.
-   *  Opens a pointer popup with mod.json overlay width/height (default 220×260). */
+   *  Opens a pointer popup with mod.json overlay width/height (default 220×260).
+   *  Root `link_handlers?: string[]` selects terminal link mods in order. */
   export function layout(): unknown;
 
   /** The names of every layout in layouts/ (main first). */
@@ -22451,9 +22656,17 @@ declare module "herdr" {
    *  Mods' own `<mod>.<command>`s aren't listed. */
   export function commands(): { name: string; args: { name: string; required: boolean }[]; about: string }[];
 
-  /** The window, for layouts that draw their own title bar (`"titlebar": "none"`). `buttons`:
-   *  the system draws no window buttons, so draw them (`window.minimize`, `window.maximize`,
-   *  `window.close`); on macOS the traffic lights always stay. Live. */
+  /** Live state of the window. With `"titlebar": "none"`, layouts draw their own title bar.
+   *  When `buttons` is true, draw window controls using `window.minimize`, `window.maximize`
+   *  and `window.close`. On macOS the system traffic lights stay.
+   *
+   *  `visible` reports whether the platform is presenting the window. On macOS it is false
+   *  when minimized, hidden, fully covered, on another Space or on a sleeping display.
+   *  On Windows it is false when minimized or hidden. On X11 it is false when unmapped,
+   *  and may be false when fully covered, depending on the window manager. On Wayland it
+   *  stays true unless the compositor reports the xdg-shell `suspended` state (v6 or newer).
+   *  Check it from a timer to pause work when false and use `render` to restart when true.
+   *  Null when there is no window (during `herdr-app check`): read it as `window()?.visible`. */
   export function window(): {
     platform: "linux" | "macos" | "windows";
     titlebar: "system" | "none";
@@ -22461,7 +22674,19 @@ declare module "herdr" {
     maximized: boolean;
     fullscreen: boolean;
     active: boolean;
-  };
+    visible: boolean;
+  } | null;
+
+  /** Sets the OS window's title, which window switchers, taskbars and time trackers read. The last
+   *  call wins, whichever mod made it; null restores "Herdr". It doesn't outlive the app, so set it
+   *  again when your mod starts. Call it when the title changes, not on every render. */
+  export function setWindowTitle(title: string | null): null;
+
+  /** Sets the badge on the app's icon: the red label on the macOS Dock icon, e.g. how many agents
+   *  need you. The last call wins, whichever mod made it; null or "" clears it. Other platforms
+   *  ignore it for now. It doesn't outlive the app, so set it again when your mod starts. Call it
+   *  when the text changes, not on every render. */
+  export function setBadge(text: string | null): null;
 
   /** For a floating mod: where it sits now. `vertical` on the left/right edges, horizontal on
    *  top/bottom; while dragged, where it would land. `hovered` is true while the pointer is on it
@@ -22535,7 +22760,10 @@ declare module "herdr" {
   export function sendFeedback(body: import("gpui-kit").HostValue, images?: string[]): Promise<string | null>;
 
   /** What the app runs with: the shown layout's look (theme name, fonts, sizes, terminal
-   *  padding and opacity) with the person's zoom and sounds. */
+   *  padding and opacity, terminal_line_height, terminal_cell_width and terminal_scroll_speed) with the
+   *  person's zoom and sounds. terminal_line_height and terminal_cell_width: number, default 1, clamped
+   *  to 0.8..2; terminal_scroll_speed: number, default 1, clamped to 0.1..5. Layout values override
+   *  settings.json. */
   export function settings(): Record<string, unknown>;
 
   /** Every key binding: { section, keys, action }. */
@@ -22569,6 +22797,7 @@ declare module "herdr" {
     /** px, or up to 1: a share of the window. */
     width?: number;
     height?: number;
+    /** Window-relative pixels, such as a TextView selection's `position`. */
     at?: "pointer" | { x: number; y: number };
   }
 
@@ -22589,6 +22818,32 @@ declare module "herdr" {
     icon?: string;
     action?: { name: string; args?: Record<string, unknown> };
   }): string;
+
+  /** A Ctrl/Cmd-click on a terminal link, passed to the mod's link.js. */
+  export interface LinkClick {
+    link:
+      | { kind: "url"; raw: string; url: string }
+      | {
+          kind: "file";
+          raw: string;
+          path: string | null;
+          /** 1-based line from a plain path suffix, if present and valid. */
+          line?: number;
+          /** 1-based column from a plain path suffix, if present and valid and the line is valid. */
+          column?: number;
+        };
+    source: {
+      terminal: string;
+      machine: string | null;
+      cwd: string | null;
+      pane: string | null;
+      tab: string | null;
+      space: string | null;
+    };
+  }
+
+  /** Signature of the named handleLink export from link.js. */
+  export type HandleLink = (click: LinkClick) => "handled" | "pass" | Promise<"handled" | "pass">;
 
   /** The props this copy of the mod was given in the layout (or overlay).
    *  A layout's terminal_menu mod gets {tab: "pane", target: {pane: string, terminal: string}, overlay: string}.
@@ -22619,11 +22874,21 @@ declare module "herdr" {
    * above 4096 non-ignored directories reject the watch, so use a timer fallback.
    * macOS and Windows watch recursively, including ignored directories.
    * Pending paths are bounded: a batch containing the root means refresh everything.
-   * Shared by every mod. Files also refreshes on its 10-second timer.
+   * Shared by every mod, with at most 64 folders awaiting changes at once.
+   * Idle watches may be reclaimed to make room; reload when starting a watch.
+   * Call cancel() on the returned promise when you stop showing the folder.
+   * It resolves with [] and releases this call; other callers keep watching.
+   * Closing a mod copy cancels its pending calls. Files and Changes also poll while focused.
    *   cx.spawn(async (cx) => { for (;;) { await watchFolder(dir); this.reload(); cx.notify(); } });
    * Watch what you show, not a whole home folder (node_modules is a lot of events).
    */
-  export function watchFolder(path: string): Promise<string[]>;
+  export function watchFolder(path: string): FolderWatch;
+
+  /** One pending watch. Keep this handle while the folder is shown. */
+  export interface FolderWatch extends Promise<string[]> {
+    /** Resolves with [] and releases this call's watch. Safe to call again or after settlement. */
+    cancel(): void;
+  }
 }
 
 /**

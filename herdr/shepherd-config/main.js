@@ -13,6 +13,7 @@ import {
   props,
   focused,
   spaces,
+  machines,
   terminals,
   knownAgents,
   theme,
@@ -34,11 +35,15 @@ import {
   formatCtxPill,
   modelValue,
   numberText,
+  parseCliDescriptor,
   parseResult,
   positive,
   ratio,
+  remoteCliMissing,
+  resolveTarget,
   setArgv,
   splitThinking,
+  targetKey,
   ticketsText,
   withThinking,
 } from "./lib.js";
@@ -66,12 +71,16 @@ const SECTIONS = [
 
 export default class ShepherdConfig extends View {
   init(_props, cx) {
+    this.machine = null;
     this.root = null;
-    this.start = null;
+    this.target = null;             // last loaded { machine, folder }
+    this.start = null;              // current { machine, folder } from location()
     this.data = null;
     this.failure = null;
     this.loading = false;
     this.pending = false;
+    this.clis = new Map();          // machine key ("" for local) -> { cli, resolvedNode, plugin }
+    this.localPlugin = null;
     this.watches = new Map();       // dir -> FolderWatch handle
     this.wanted = new Set();
     this.notes = {};                // note key -> { kind: "ok" | "warn" | "err", text, needsForce? }
@@ -81,8 +90,11 @@ export default class ShepherdConfig extends View {
     this.draft = {};                // model key -> { kind }
     this.detected = null;
     this.detectedFor = null;
+    this.detectTargetKey = null;
     this.catalog = null;            // { agents: { name: { source, smart, models } }, piModels }
+    this.catalogMachine = undefined;
     this.agentMeta = new Map();     // agent name -> Program & { installed }
+    this.agentMetaMachine = undefined;
     this.scope = "today";
     this.seq = 0;
     this.panelWidth = 360;
@@ -92,7 +104,6 @@ export default class ShepherdConfig extends View {
     this.outClosedId = null;        // flag set by on_mouse_down_out, consumed cleanly by trigger mousedown/click
     this.suppressTriggerClick = null;
     this.prevTermStatus = new Map();// address -> status (for blocked/done alerts)
-    this.resolvedNode = null;       // fallback node resolved via login shell if install.json's node disappears
     this.writeQueue = Promise.resolve();
     try {
       this.collapsed = JSON.parse(localStorage.getItem("collapsed") ?? "{}");
@@ -124,7 +135,7 @@ export default class ShepherdConfig extends View {
 
     if (checking()) return;
     this.refresh(cx);
-    this.loadKnownAgents(cx);
+    this.loadKnownAgents(cx, null);
     cx.timer.every(REFRESH_MS, (cx) => this.refresh(cx));
     cx.timer.every(AGENT_POLL_MS, (cx) => this.checkSubAgentAlerts(cx));
   }
@@ -178,12 +189,13 @@ export default class ShepherdConfig extends View {
   // ---- loading & discovery
 
   location() {
-    const forced = props()?.folder;
-    const cwd = focused()?.cwd;
-    if (forced) return forced;
-    if (cwd) return cwd;
-    if (this.start) return this.start;
-    return spaces().find((sp) => sp.active)?.folder || home();
+    return resolveTarget({
+      focused: focused(),
+      spaces: spaces(),
+      forcedFolder: props()?.folder || null,
+      previous: this.target,
+      localHome: home(),
+    });
   }
 
   refresh(cx) {
@@ -208,65 +220,206 @@ export default class ShepherdConfig extends View {
     });
   }
 
-  async load(cx) {
-    const raw = await readTextFile(`${appHome()}/mods/shepherd-config/install.json`);
-    if (!raw) {
-      this.failure = "install.json is missing: run `shepherd herdr-install`.";
-      return;
+  resetTargetState(machineChanged) {
+    this.notes = {};
+    this.draft = {};
+    this.detected = null;
+    this.detectedFor = null;
+    this.detectTargetKey = null;
+    this.busy.delete("detect");
+    if (machineChanged) {
+      this.catalog = null;
+      this.catalogMachine = undefined;
+      this.busy.delete("catalog");
+      this.agentMeta = new Map();
+      this.agentMetaMachine = undefined;
     }
-    const cli = JSON.parse(raw).cli;
-    if (!Array.isArray(cli) || cli.length === 0) {
-      this.failure = "install.json has no `cli` argv array: run `shepherd herdr-install` again.";
-      return;
-    }
-    if (this.cli?.[0] !== cli[0]) this.resolvedNode = null;
-    this.cli = cli;
-    const start = this.start;
-    if (!start) {
-      this.failure = "No project folder: open the panel from a space with a folder.";
-      return;
-    }
-    let root = start;
+  }
+
+  async readLocalPlugin() {
     try {
-      const g = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: start });
+      const raw = await readTextFile(`${appHome()}/mods/shepherd-config/install.json`);
+      if (!raw) return;
+      const json = JSON.parse(raw);
+      if (json && typeof json.plugin === "string" && json.plugin) this.localPlugin = json.plugin;
+    } catch { /* ignore */ }
+  }
+
+  async cliFor(machine) {
+    const key = machine ?? "";
+    if (machine === null) {
+      const raw = await readTextFile(`${appHome()}/mods/shepherd-config/install.json`);
+      if (!raw) {
+        this.clis.delete(key);
+        return { error: "install.json is missing: run `shepherd herdr-install`." };
+      }
+      let json;
+      try {
+        json = JSON.parse(raw);
+      } catch {
+        this.clis.delete(key);
+        return { error: "install.json is not valid JSON: run `shepherd herdr-install` again." };
+      }
+      const cli = json?.cli;
+      if (!Array.isArray(cli) || cli.length === 0 || !cli.every((p) => typeof p === "string" && p.length > 0)) {
+        this.clis.delete(key);
+        return { error: "install.json has no `cli` argv array: run `shepherd herdr-install` again." };
+      }
+      const plugin = typeof json.plugin === "string" && json.plugin ? json.plugin : null;
+      const prev = this.clis.get(key);
+      const resolvedNode = prev && prev.cli?.[0] === cli[0] ? prev.resolvedNode : null;
+      const entry = { cli, resolvedNode, plugin };
+      this.clis.set(key, entry);
+      this.localPlugin = entry.plugin;
+      return { entry };
+    }
+    let res;
+    try {
+      res = await exec("/bin/sh", ["-c", 'cat "${SHEPHERD_HOME:-$HOME/.claude/shepherd}/panel-cli.json"'], {
+        on: machine,
+        timeout: 10000,
+      });
+    } catch (e) {
+      this.clis.delete(key);
+      let state = "";
+      try {
+        const m = machines().find((x) => x.name === machine);
+        if (m?.layout) state = ` (${m.layout})`;
+      } catch { /* ignore */ }
+      const detail = String(e?.message ?? e).trim();
+      return { error: `${machine} is unreachable${state}${detail ? `: ${detail}` : "."}` };
+    }
+    if (res.code !== 0 || !res.stdout || !res.stdout.trim()) {
+      this.clis.delete(key);
+      return { error: remoteCliMissing(machine) };
+    }
+    const parsed = parseCliDescriptor(res.stdout);
+    if (parsed.error) {
+      this.clis.delete(key);
+      return { error: `${machine}: ${parsed.error}` };
+    }
+    const prev = this.clis.get(key);
+    const resolvedNode = prev && prev.cli?.[0] === parsed.cli[0] ? prev.resolvedNode : null;
+    const entry = { cli: parsed.cli, resolvedNode, plugin: parsed.plugin ?? null };
+    this.clis.set(key, entry);
+    return { entry };
+  }
+
+  async load(cx) {
+    const start = this.start;
+    const machine = start?.machine ?? null;
+    const folder = start?.folder ?? null;
+    const startKey = targetKey(machine, folder ?? "");
+    const startChanged = () => !this.start || targetKey(this.start.machine ?? null, this.start.folder ?? "") !== startKey;
+
+    if (!folder) {
+      if (machine !== this.machine) {
+        this.machine = machine;
+        this.root = null;
+        this.data = null;
+        this.target = start;
+        this.resetTargetState(true);
+      }
+      this.failure =
+        machine !== null
+          ? `Open a terminal in a folder on ${machine}.`
+          : "No project folder: open the panel from a space with a folder.";
+      return;
+    }
+
+    const cliRes = await this.cliFor(machine);
+    if (startChanged()) return;
+    if (cliRes.error) {
+      if (machine !== this.machine) {
+        this.machine = machine;
+        this.root = null;
+        this.data = null;
+        this.target = start;
+        this.resetTargetState(true);
+      }
+      this.failure = cliRes.error;
+      return;
+    }
+    const entry = cliRes.entry;
+    if (machine !== null && this.localPlugin === null) {
+      await this.readLocalPlugin();
+      if (startChanged()) return;
+    }
+
+    let root = folder;
+    try {
+      const gitOpts = machine !== null ? { cwd: folder, on: machine } : { cwd: folder };
+      const g = await exec("git", ["rev-parse", "--show-toplevel"], gitOpts);
       if (g.code === 0 && g.stdout.trim()) root = g.stdout.trim();
     } catch { /* not a git repo: use the folder itself */ }
+    if (startChanged()) return;
+
     const mine = this.seq;
-    const json = await this.call(["show", "--cwd", root]);
-    // Gate only on pending writes (not background catalog/detect probes) so project switches never freeze.
-    if (mine !== this.seq || this.pendingWrites > 0) return;
+    const target = { machine, entry };
+    const json = await this.call(["show", "--cwd", root], target);
+    // Gate on seq, pending writes, and start target so space/project switches never overwrite with stale data.
+    if (mine !== this.seq || this.pendingWrites > 0 || startChanged()) return;
     if (json.ok === false) {
+      if (machine !== this.machine) {
+        this.machine = machine;
+        this.root = null;
+        this.data = null;
+        this.target = start;
+        this.resetTargetState(true);
+      }
       this.failure = json.error ?? "shepherd-config failed";
       return;
     }
+
     this.failure = null;
-    if (root !== this.root) {
+    const prevKey = this.root !== null ? targetKey(this.machine, this.root) : null;
+    const nextKey = targetKey(machine, root);
+    const machineChanged = machine !== this.machine;
+    if (nextKey !== prevKey) {
+      this.machine = machine;
       this.root = root;
-      this.notes = {};
-      this.draft = {};
-      this.detected = null;
+      this.target = { machine, folder: root };
+      this.resetTargetState(machineChanged);
     }
     this.data = json;
     for (const key of Object.keys(this.notes)) {
       if (this.notes[key].kind === "ok") delete this.notes[key];
     }
+    if (machine !== null && entry.plugin && this.localPlugin && entry.plugin !== this.localPlugin) {
+      this.notes.versionSkew = {
+        kind: "warn",
+        text: `Plugin version mismatch: ${machine} has ${entry.plugin}, local has ${this.localPlugin}. Run \`shepherd herdr-install --remote\` on ${machine}.`,
+      };
+    } else {
+      delete this.notes.versionSkew;
+    }
     this.syncInputs();
-    if (json.local.configured && this.detectedFor !== root) {
-      this.detectedFor = root;
+    if (json.local.configured && this.detectedFor !== nextKey) {
+      this.detectedFor = nextKey;
       this.detect(cx, true);
     }
-    if (this.catalog === null) this.loadCatalog(cx, false);
+    if (this.catalog === null || this.catalogMachine !== machine) {
+      this.loadCatalog(cx, false);
+    }
+    if (this.agentMetaMachine !== machine) {
+      this.loadKnownAgents(cx, machine);
+    }
   }
 
   loadCatalog(cx, forceRefresh) {
-    if (this.busy.has("catalog")) return;
-    if (!this.cli) return;
+    const machine = this.machine;
+    const root = this.root;
+    const entry = this.clis.get(machine ?? "");
+    if (!entry) return;
+    if (this.busy.has("catalog") && this.catalogMachine === machine) return;
+    this.catalogMachine = machine;
     this.busy.add("catalog");
     if (this.catalog === null) this.catalog = { agents: {}, piModels: [] };
     cx.notify();
     cx.spawn(async (cx) => {
-      const args = ["agent-models", ...(this.root ? ["--cwd", this.root] : []), ...(forceRefresh ? ["--refresh"] : [])];
-      const json = await this.call(args);
+      const args = ["agent-models", ...(root ? ["--cwd", root] : []), ...(forceRefresh ? ["--refresh"] : [])];
+      const json = await this.call(args, { machine, entry });
+      if (machine !== this.machine) return;
       this.busy.delete("catalog");
       if (json.ok !== false && json.agents) {
         this.catalog = json;
@@ -278,10 +431,12 @@ export default class ShepherdConfig extends View {
     });
   }
 
-  loadKnownAgents(cx) {
+  loadKnownAgents(cx, machine = this.machine) {
+    this.agentMetaMachine = machine;
     cx.spawn(async (cx) => {
       try {
-        const list = await knownAgents({ on: null });
+        const list = await knownAgents({ on: machine });
+        if (machine !== this.machine) return;
         if (!Array.isArray(list)) return;
         const map = new Map();
         for (const item of list) {
@@ -339,18 +494,19 @@ export default class ShepherdConfig extends View {
     if (changed) cx.notify();
   }
 
-  async resolveNode() {
-    if (this.resolvedNode) return this.resolvedNode;
+  async resolveNode(machine, entry) {
+    if (entry?.resolvedNode) return entry.resolvedNode;
+    const opts = machine !== null ? { on: machine, timeout: 5000 } : { timeout: 5000 };
     for (const [shell, shellArgs] of [
       ["/bin/zsh", ["-lc", "command -v node"]],
       ["/bin/bash", ["-lc", "command -v node"]],
       ["/bin/sh", ["-lc", "command -v node"]],
     ]) {
       try {
-        const res = await exec(shell, shellArgs, { timeout: 5000 });
+        const res = await exec(shell, shellArgs, opts);
         const found = res.code === 0 ? res.stdout.trim().split(/\r?\n/).pop()?.trim() : "";
         if (found && found.startsWith("/")) {
-          this.resolvedNode = found;
+          if (entry) entry.resolvedNode = found;
           return found;
         }
       } catch { /* try next shell */ }
@@ -358,21 +514,30 @@ export default class ShepherdConfig extends View {
     return null;
   }
 
-  async call(args) {
-    const cmd = this.resolvedNode || this.cli[0];
-    const argv = [...this.cli.slice(1), ...args];
+  async call(args, target) {
+    const machine = target?.machine ?? null;
+    const entry = target?.entry;
+    if (!entry || !Array.isArray(entry.cli) || entry.cli.length === 0) {
+      return {
+        ok: false,
+        error: machine !== null ? remoteCliMissing(machine) : "install.json is missing: run `shepherd herdr-install`.",
+      };
+    }
+    const cmd = entry.resolvedNode || entry.cli[0];
+    const argv = [...entry.cli.slice(1), ...args];
+    const execOpts = machine !== null ? { on: machine, timeout: 60000 } : { timeout: 60000 };
     try {
-      return parseResult(await exec(cmd, argv, { timeout: 60000 }));
+      return parseResult(await exec(cmd, argv, execOpts));
     } catch (e) {
       const msg = String(e?.message ?? e);
       // If the saved node path disappeared (e.g. nvm version removed) or plain "node" isn't in launchd PATH,
-      // resolve node once through a login shell and retry.
+      // resolve node once through a login shell on the same machine and retry.
       const base = String(cmd).split("/").pop();
-      if (base === "node" && !this.resolvedNode) {
-        const fallback = await this.resolveNode();
+      if (base === "node" && !entry.resolvedNode) {
+        const fallback = await this.resolveNode(machine, entry);
         if (fallback && fallback !== cmd) {
           try {
-            return parseResult(await exec(fallback, argv, { timeout: 60000 }));
+            return parseResult(await exec(fallback, argv, execOpts));
           } catch (e2) {
             return { ok: false, error: String(e2?.message ?? e2) };
           }
@@ -383,7 +548,16 @@ export default class ShepherdConfig extends View {
   }
 
   // Watch ~/.claude/shepherd.yaml and .shepherd subdirs directly (Linux skips git-ignored roots).
+  // Remote targets rely on the 8 s REFRESH_MS timer and cancel any local watches.
   watch(cx) {
+    if (this.machine !== null) {
+      this.wanted.clear();
+      for (const handle of this.watches.values()) {
+        try { handle?.cancel?.(); } catch { /* ignore */ }
+      }
+      this.watches.clear();
+      return;
+    }
     const f = this.data?.files;
     if (!f) return;
     const userDir = f.user.path.slice(0, f.user.path.lastIndexOf("/"));
@@ -425,8 +599,13 @@ export default class ShepherdConfig extends View {
   // ---- serialized writes (prevents stale --expect sha256 races on rapid clicks)
 
   mutate(noteKey, argsOrFactory, cx, done) {
-    if (!this.root || !this.cli) return;
+    const machine = this.machine;
     const clickedRoot = this.root;
+    const entry = this.clis.get(machine ?? "");
+    if (!clickedRoot || !entry) return;
+    const clickedKey = targetKey(machine, clickedRoot);
+    const clickedTarget = { machine, entry };
+    const clickedSha = this.sha();
     this.pendingWrites += 1;
     this.busyCounts.set(noteKey, (this.busyCounts.get(noteKey) ?? 0) + 1);
     this.busy.add(noteKey);
@@ -443,10 +622,13 @@ export default class ShepherdConfig extends View {
       }
     };
     const runOne = async (cx) => {
+      const sameTarget = () => this.root !== null && targetKey(this.machine, this.root) === clickedKey;
       try {
-        const args = typeof argsOrFactory === "function" ? argsOrFactory(clickedRoot) : argsOrFactory;
-        const json = await this.call(args);
+        const sha = sameTarget() ? this.sha() : clickedSha;
+        const args = typeof argsOrFactory === "function" ? argsOrFactory(clickedRoot, sha) : argsOrFactory;
+        const json = await this.call(args, clickedTarget);
         this.seq++;
+        if (!sameTarget()) return;
         if (json.ok === false) {
           this.notes[noteKey] = {
             kind: "err",
@@ -460,7 +642,7 @@ export default class ShepherdConfig extends View {
           }
           if (/changed since it was read/.test(json.error ?? "")) this.refresh(cx);
         } else {
-          if (Array.isArray(json.plans) && clickedRoot === this.root) {
+          if (Array.isArray(json.plans)) {
             this.data = json;
             this.syncInputs();
           }
@@ -468,7 +650,9 @@ export default class ShepherdConfig extends View {
           if (done) done(json, cx);
         }
       } catch (e) {
-        this.notes[noteKey] = { kind: "err", text: String(e?.message ?? e) };
+        if (sameTarget()) {
+          this.notes[noteKey] = { kind: "err", text: String(e?.message ?? e) };
+        }
       } finally {
         finishBusy();
         cx.notify();
@@ -525,25 +709,25 @@ export default class ShepherdConfig extends View {
       cx.notify();
       return;
     }
-    this.mutate(`m:${key}`, (root) => setArgv(root, `models.${key}`, r.value, this.sha()), cx, () => {
+    this.mutate(`m:${key}`, (root, sha) => setArgv(root, `models.${key}`, r.value, sha), cx, () => {
       delete this.draft[key];
     });
   }
 
   saveReviewers(nextList, cx) {
     const payload = nextList.length > 0 ? JSON.stringify(nextList) : "";
-    this.mutate("reviewers", (root) => setArgv(root, "review.reviewers", payload, this.sha()), cx);
+    this.mutate("reviewers", (root, sha) => setArgv(root, "review.reviewers", payload, sha), cx);
   }
 
   saveIdleAction(action, cx) {
     if (action === this.data?.budgets?.idleAction) return;
-    this.mutate("budgets", (root) => setArgv(root, "budgets.idleAction", action, this.sha()), cx);
+    this.mutate("budgets", (root, sha) => setArgv(root, "budgets.idleAction", action, sha), cx);
   }
 
   toggleAgentBilling(agent, cx) {
     const current = this.data?.agentsBilling?.[agent] ?? "api";
     const next = current === "subscription" ? "api" : "subscription";
-    this.mutate(`billing:${agent}`, (root) => setArgv(root, `agents.${agent}.billing`, next, this.sha()), cx);
+    this.mutate(`billing:${agent}`, (root, sha) => setArgv(root, `agents.${agent}.billing`, next, sha), cx);
   }
 
   saveBudget(name, cx) {
@@ -556,7 +740,7 @@ export default class ShepherdConfig extends View {
       return;
     }
     if (n === saved) return;
-    this.mutate("budgets", (root) => setArgv(root, `budgets.${name}`, String(n), this.sha()), cx);
+    this.mutate("budgets", (root, sha) => setArgv(root, `budgets.${name}`, String(n), sha), cx);
   }
 
   saveBase(cx) {
@@ -567,7 +751,7 @@ export default class ShepherdConfig extends View {
       this.follow("base", d.local.baseUrl);
       return;
     }
-    this.mutate("local", (root) => setArgv(root, "local.baseUrl", url, this.sha()), cx, (_j, cx) => this.detect(cx, true));
+    this.mutate("local", (root, sha) => setArgv(root, "local.baseUrl", url, sha), cx, (_j, cx) => this.detect(cx, true));
   }
 
   preset(url, cx) {
@@ -582,11 +766,18 @@ export default class ShepherdConfig extends View {
       if (!quiet) this.note("local", "err", "Enter the server URL or pick a preset first.", cx);
       return;
     }
-    if (this.busy.has("detect")) return;
+    const machine = this.machine;
+    const root = this.root;
+    const entry = this.clis.get(machine ?? "");
+    if (!root || !entry) return;
+    const key = targetKey(machine, root);
+    if (this.busy.has("detect") && this.detectTargetKey === key) return;
+    this.detectTargetKey = key;
     this.busy.add("detect");
     cx.notify();
     cx.spawn(async (cx) => {
-      const json = await this.call(["local-detect", "--base-url", url, "--cwd", this.root]);
+      const json = await this.call(["local-detect", "--base-url", url, "--cwd", root], { machine, entry });
+      if (this.root === null || targetKey(this.machine, this.root) !== key) return;
       this.busy.delete("detect");
       this.detected = json;
       if (json.ok !== false && json.reachable && json.baseUrl !== url && !this.inputs.base.focused) {
@@ -605,7 +796,7 @@ export default class ShepherdConfig extends View {
     const url = this.detected?.baseUrl || this.text("base").trim();
     this.mutate(
       "local",
-      (root) => [
+      (root, sha) => [
         "local-add",
         "--cwd",
         root,
@@ -614,7 +805,7 @@ export default class ShepherdConfig extends View {
         "--context-window",
         String(Math.round(ctx)),
         ...(url ? ["--base-url", url] : []),
-        ...(this.sha() ? ["--expect", this.sha()] : []),
+        ...(sha ? ["--expect", sha] : []),
       ],
       cx,
       (_j, cx) => this.detect(cx, true),
@@ -624,7 +815,7 @@ export default class ShepherdConfig extends View {
   removeLocal(id, cx) {
     this.mutate(
       "local",
-      (root) => ["local-remove", "--cwd", root, "--id", id, ...(this.sha() ? ["--expect", this.sha()] : [])],
+      (root, sha) => ["local-remove", "--cwd", root, "--id", id, ...(sha ? ["--expect", sha] : [])],
       cx,
       (_j, cx) => this.detect(cx, true),
     );
@@ -1758,7 +1949,14 @@ export default class ShepherdConfig extends View {
         }
       });
 
-    if (this.start && this.location() !== this.start && !this.loading) this.refresh(cx);
+    const nextLoc = this.location();
+    if (
+      this.start &&
+      (nextLoc.machine !== this.start.machine || nextLoc.folder !== this.start.folder) &&
+      !this.loading
+    ) {
+      this.refresh(cx);
+    }
     if (this.failure && !this.data) return root.child(this.banner(this.failure, t.blocked, t));
     if (!this.data) return root.child(div().p(12).text_color(t.muted).child("Loading…"));
 
@@ -1809,6 +2007,9 @@ export default class ShepherdConfig extends View {
       costs: () => this.costsBody(t),
     };
 
+    const repoName = this.root?.split("/").pop() ?? "";
+    const headerTitle = this.machine ? `${this.machine} · ${repoName}` : repoName;
+
     return root
       .child(
         h_flex()
@@ -1819,7 +2020,7 @@ export default class ShepherdConfig extends View {
           .border_b(1)
           .border_color(t.border)
           .child(div().font_semibold().text_size(13).child("shepherd"))
-          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.root?.split("/").pop() ?? ""))
+          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(headerTitle))
           .child(this.button("refresh", this.loading ? "…" : "↻", t, { selected: false, disabled: false, onClick: (_e, cx) => this.refresh(cx) })),
       )
       .child(planBar)
@@ -1832,6 +2033,7 @@ export default class ShepherdConfig extends View {
           .min_h(0)
           .overflow_y_scrollbar()
           .when(!!this.failure, (el) => el.child(this.banner(this.failure, t.blocked, t)))
+          .when(!!this.notes.versionSkew, (el) => el.child(this.banner(this.notes.versionSkew.text, t.working, t)))
           .children(d.errors.map((e) => this.banner(e, t.blocked, t)))
           .children(d.warnings.slice(0, 3).map((w) => div().px(10).pt(6).text_size(11).text_color(t.working).child(w)))
           .children(SECTIONS.map(([id, title]) => this.section(id, title, summaries[id], bodies[id](), t))),
