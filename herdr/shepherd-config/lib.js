@@ -123,3 +123,66 @@ export function positive(text) {
   const n = Number(t);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
+
+// The machine an address belongs to: the text before the first "/" ("omarchy/t7" -> "omarchy"), null for a local address.
+export function machineOfAddress(addr) {
+  const text = String(addr ?? "");
+  const slash = text.indexOf("/");
+  if (slash < 1) return null;
+  return text.slice(0, slash);
+}
+
+// Resolves where the panel should work: the focused space's machine and the folder to use on it. A remote target
+// never falls back to a local path (no forced folder, no home): the machine it resolves to owns the folder.
+export function resolveTarget({ focused, spaces, forcedFolder, previous, localHome }) {
+  const list = Array.isArray(spaces) ? spaces : [];
+  const space = focused?.space ? list.find((s) => s.id === focused.space) : null;
+  const machine = (space && space.machine) ?? machineOfAddress(focused?.terminal) ?? null;
+  if (machine === null) {
+    const folder = forcedFolder ?? focused?.cwd ?? (space && space.folder) ?? (previous?.machine === null ? previous?.folder : null) ?? localHome ?? null;
+    return { machine: null, folder };
+  }
+  const folder = focused?.cwd ?? (space && space.folder) ?? (previous?.machine === machine ? previous?.folder : null) ?? null;
+  return { machine, folder };
+}
+
+// Per-machine, per-repo state key: the same path on two machines is two targets.
+export function targetKey(machine, root) {
+  return `${machine ?? ""}:${root}`;
+}
+
+// The message shown when the panel CLI is not installed on a remote machine.
+export function remoteCliMissing(machine) {
+  return `shepherd's panel CLI is not installed on ${machine}: run \`shepherd herdr-install --remote\` there (inside Claude Code: \`! shepherd herdr-install --remote\`).`;
+}
+
+// Parses a remote panel-cli.json: a JSON object whose cli is a non-empty array of absolute-path strings.
+// Returns { cli, plugin? } or { error }.
+export function parseCliDescriptor(raw) {
+  let json = null;
+  try { json = JSON.parse(raw); } catch { return { error: "panel-cli.json is not valid JSON." }; }
+  if (!json || typeof json !== "object" || Array.isArray(json)) return { error: "panel-cli.json must be an object." };
+  const cli = json.cli;
+  if (!Array.isArray(cli) || cli.length === 0) return { error: "panel-cli.json needs a non-empty cli array." };
+  for (const part of cli) {
+    if (typeof part !== "string" || !part.startsWith("/")) return { error: "panel-cli.json cli entries must be strings starting with /." };
+  }
+  const out = { cli };
+  if (typeof json.plugin === "string" && json.plugin) out.plugin = json.plugin;
+  return out;
+}
+
+// A terminal belongs to a machine+root when it is on the same machine and its cwd is the root or under it.
+export function termInTarget(term, machine, root) {
+  if (!term || machineOfAddress(term.address) !== machine) return false;
+  const cwd = term.cwd;
+  if (!root) return true;
+  if (!cwd) return false;
+  return cwd === root || cwd.startsWith(root + "/");
+}
+
+// The space at machine+folder (null machine is this computer).
+export function findSpace(spaces, machine, folder) {
+  if (!Array.isArray(spaces)) return null;
+  return spaces.find((s) => (s?.machine ?? null) === machine && s?.folder === folder) ?? null;
+}

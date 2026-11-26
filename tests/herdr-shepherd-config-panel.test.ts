@@ -84,3 +84,75 @@ describe("panel model picker with a Cursor model", () => {
     expect(h.modelValue("agent", { agent: "cursor-agent", agentModel: "auto-smart [optimize_for=cost]" }).error).toMatch(/no spaces/);
   });
 });
+
+type Target = { machine: string | null; folder: string | null };
+type Descriptor = { cli?: string[]; plugin?: string; error?: string };
+type ExtendedHelpers = Helpers & {
+  resolveTarget(args: { focused?: { cwd?: string; space?: string; terminal?: string }; spaces?: Array<{ id: string; machine?: string | null; folder?: string }>; forcedFolder?: string | null; previous?: { machine: string | null; folder: string | null } | null; localHome?: string | null }): Target;
+  targetKey(machine: string | null, root: string): string;
+  parseCliDescriptor(raw: string): Descriptor;
+  remoteCliMissing(machine: string): string;
+  machineOfAddress(addr: string): string | null;
+  termInTarget(term: { address?: string; cwd?: string }, machine: string | null, root?: string | null): boolean;
+  findSpace(spaces: Array<{ id: string; machine?: string | null; folder?: string }>, machine: string | null, folder: string | null): { id: string } | null;
+};
+
+describe("machine-aware panel targets", () => {
+  it("resolves a remote machine from the focused space, or the terminal address prefix, and never falls back to local paths", () => {
+    const spaces = [{ id: "omarchy/s1", machine: "omarchy", folder: "/remote/repo" }, { id: "l1", machine: null, folder: "/local/repo" }];
+    const remote = (h as ExtendedHelpers).resolveTarget({ focused: { space: "omarchy/s1" }, spaces, forcedFolder: "/forced", previous: { machine: null, folder: "/prev" }, localHome: "/home/me" });
+    expect(remote).toEqual({ machine: "omarchy", folder: "/remote/repo" });
+    const fromAddress = (h as ExtendedHelpers).resolveTarget({ focused: { space: "unknown", terminal: "omarchy/t7" }, spaces, forcedFolder: "/forced", previous: null, localHome: "/home/me" });
+    expect(fromAddress.machine).toBe("omarchy");
+    expect(fromAddress.folder).toBeNull();
+    const remoteCwd = (h as ExtendedHelpers).resolveTarget({ focused: { space: "omarchy/s1", cwd: "/remote/repo/sub" }, spaces, forcedFolder: "/forced", previous: { machine: "omarchy", folder: "/prev" }, localHome: "/home/me" });
+    expect(remoteCwd).toEqual({ machine: "omarchy", folder: "/remote/repo/sub" });
+  });
+
+  it("reuses the previous folder only on the same machine, and local targets fall back to home", () => {
+    const spaces = [{ id: "s1", machine: null, folder: "/local/repo" }, { id: "omarchy/s2", machine: "omarchy", folder: "/remote/repo" }];
+    const same = (h as ExtendedHelpers).resolveTarget({ focused: { space: "s1" }, spaces, forcedFolder: null, previous: { machine: null, folder: "/prev/local" }, localHome: "/home/me" });
+    expect(same.folder).toBe("/local/repo");
+    const noSpaces = (h as ExtendedHelpers).resolveTarget({ focused: { space: "gone" }, spaces: [], forcedFolder: null, previous: { machine: null, folder: "/prev/local" }, localHome: "/home/me" });
+    expect(noSpaces).toEqual({ machine: null, folder: "/prev/local" });
+    const wrongMachine = (h as ExtendedHelpers).resolveTarget({ focused: { space: "omarchy/s2" }, spaces, forcedFolder: null, previous: { machine: null, folder: "/prev/local" }, localHome: "/home/me" });
+    expect(wrongMachine).toEqual({ machine: "omarchy", folder: "/remote/repo" });
+    const remoteNoPrevious = (h as ExtendedHelpers).resolveTarget({ focused: { space: "omarchy/s2", cwd: undefined }, spaces, forcedFolder: "/forced", previous: { machine: "other", folder: "/prev/remote" }, localHome: "/home/me" });
+    expect(remoteNoPrevious.folder).toBe("/remote/repo");
+    const remoteNoFolder = (h as ExtendedHelpers).resolveTarget({ focused: { space: "omarchy/s2" }, spaces: [{ id: "omarchy/s2", machine: "omarchy" }], forcedFolder: "/forced", previous: null, localHome: "/home/me" });
+    expect(remoteNoFolder).toEqual({ machine: "omarchy", folder: null });
+  });
+
+  it("keys state per machine and root", () => {
+    expect((h as ExtendedHelpers).targetKey(null, "/repo")).toBe(":/repo");
+    expect((h as ExtendedHelpers).targetKey("omarchy", "/repo")).not.toBe((h as ExtendedHelpers).targetKey(null, "/repo"));
+    expect((h as ExtendedHelpers).targetKey("omarchy", "/repo")).toBe("omarchy:/repo");
+  });
+
+  it("parses addresses, terminals and spaces per machine", () => {
+    expect((h as ExtendedHelpers).machineOfAddress("t7")).toBeNull();
+    expect((h as ExtendedHelpers).machineOfAddress("omarchy/t7")).toBe("omarchy");
+    expect((h as ExtendedHelpers).machineOfAddress("")).toBeNull();
+    const term = { address: "omarchy/t7", cwd: "/remote/repo" };
+    expect((h as ExtendedHelpers).termInTarget(term, "omarchy", "/remote/repo")).toBe(true);
+    expect((h as ExtendedHelpers).termInTarget(term, "omarchy", "/remote/repo/sub")).toBe(false);
+    expect((h as ExtendedHelpers).termInTarget(term, "omarchy", null)).toBe(true);
+    expect((h as ExtendedHelpers).termInTarget(term, null, "/remote/repo")).toBe(false);
+    expect((h as ExtendedHelpers).termInTarget({ address: "t7", cwd: "/remote/repo" }, null, "/remote/repo")).toBe(true);
+    expect((h as ExtendedHelpers).termInTarget({ address: "t7", cwd: "/remote/repo" }, "omarchy", "/remote/repo")).toBe(false);
+    expect((h as ExtendedHelpers).findSpace([{ id: "a", machine: "omarchy", folder: "/repo" }, { id: "b", machine: null, folder: "/repo" }], "omarchy", "/repo")?.id).toBe("a");
+    expect((h as ExtendedHelpers).findSpace([{ id: "a", machine: "omarchy", folder: "/repo" }, { id: "b", machine: null, folder: "/repo" }], null, "/repo")?.id).toBe("b");
+  });
+
+  it("validates a remote descriptor and names the machine in the missing message", () => {
+    expect((h as ExtendedHelpers).parseCliDescriptor(JSON.stringify({ version: 1, plugin: "0.1.0", cli: ["/usr/bin/node", "/home/me/.claude/shepherd/panel/shepherd-config.mjs"] }))).toEqual({ cli: ["/usr/bin/node", "/home/me/.claude/shepherd/panel/shepherd-config.mjs"], plugin: "0.1.0" });
+    expect((h as ExtendedHelpers).parseCliDescriptor("{not json").error).toBeTruthy();
+    expect((h as ExtendedHelpers).parseCliDescriptor(JSON.stringify({ cli: [] })).error).toBeTruthy();
+    expect((h as ExtendedHelpers).parseCliDescriptor(JSON.stringify({ cli: ["node"] })).error).toBeTruthy();
+    expect((h as ExtendedHelpers).parseCliDescriptor(JSON.stringify({ cli: ["/usr/bin/node", 7] })).error).toBeTruthy();
+    expect((h as ExtendedHelpers).parseCliDescriptor(JSON.stringify({ cli: "/usr/bin/node" })).error).toBeTruthy();
+    expect((h as ExtendedHelpers).parseCliDescriptor(JSON.stringify([1, 2])).error).toBeTruthy();
+    expect((h as ExtendedHelpers).remoteCliMissing("omarchy")).toContain("omarchy");
+    expect((h as ExtendedHelpers).remoteCliMissing("omarchy")).toContain("shepherd herdr-install --remote");
+  });
+});
