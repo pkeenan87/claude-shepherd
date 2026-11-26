@@ -29,29 +29,34 @@ import {
 import {
   THINKING_LEVELS,
   agentPick,
+  clickedWriteTarget,
   ctxText,
   filterShepherdTerminals,
   findSpace,
   fmtUsd,
   formatCtxPill,
+  loadResultStale,
   modelValue,
   numberText,
-  parseCliDescriptor,
   parseResult,
   positive,
   ratio,
+  remoteCliOutcome,
   remoteCliMissing,
   resolveTarget,
   setArgv,
   splitThinking,
+  stripInTarget,
   targetKey,
   termInTarget,
   ticketsText,
   withThinking,
+  writeStillLands,
 } from "./lib.js";
 
 const REFRESH_MS = 8000;
 const AGENT_POLL_MS = 2000;
+const REMOTE_CLI_TTL_MS = 60000;
 const MODEL_KEYS = ["low", "medium", "high", "review"];
 const KINDS = [["agent", "Agent"], ["local", "Local (Pi)"], ["pi", "Pi"]];
 const IDLE_ACTIONS = [
@@ -275,34 +280,46 @@ export default class ShepherdConfig extends View {
       this.localPlugin = entry.plugin;
       return { entry };
     }
-    let res;
-    try {
-      res = await exec("/bin/sh", ["-c", 'cat "${SHEPHERD_HOME:-$HOME/.claude/shepherd}/panel-cli.json"'], {
-        on: machine,
-        timeout: 10000,
-      });
-    } catch (e) {
-      this.clis.delete(key);
-      let state = "";
+    // A remote descriptor is re-read at most once a minute: every refresh would otherwise start up to four login shells.
+    const cached = this.clis.get(key);
+    if (cached?.readAt && Date.now() - cached.readAt < REMOTE_CLI_TTL_MS) return { entry: cached };
+    // Read the descriptor through a login shell where possible: SHEPHERD_HOME may live only in the user's
+    // login/interactive profile, which a plain `/bin/sh -c` never sources.
+    const descriptorCmd = 'cat "${SHEPHERD_HOME:-$HOME/.claude/shepherd}/panel-cli.json"';
+    let res = null;
+    let lastError = "";
+    for (const [shell, shellArgs] of [
+      ["/bin/zsh", ["-lc", descriptorCmd]],
+      ["/bin/bash", ["-lc", descriptorCmd]],
+      ["/bin/sh", ["-lc", descriptorCmd]],
+      ["/bin/sh", ["-c", descriptorCmd]],
+    ]) {
+      try {
+        res = await exec(shell, shellArgs, { on: machine, timeout: 10000 });
+        break;
+      } catch (e) {
+        lastError = String(e?.message ?? e).trim();
+      }
+    }
+    if (res === null) {
+      let machineLayout = "";
       try {
         const m = machines().find((x) => x.name === machine);
-        if (m?.layout) state = ` (${m.layout})`;
+        if (m?.layout) machineLayout = m.layout;
       } catch { /* ignore */ }
-      const detail = String(e?.message ?? e).trim();
-      return { error: `${machine} is unreachable${state}${detail ? `: ${detail}` : "."}` };
-    }
-    if (res.code !== 0 || !res.stdout || !res.stdout.trim()) {
+      const outcome = remoteCliOutcome(machine, null, { throwDetail: lastError, machineLayout });
       this.clis.delete(key);
-      return { error: remoteCliMissing(machine) };
+      return { error: outcome.error };
     }
-    const parsed = parseCliDescriptor(res.stdout);
+    const parsed = remoteCliOutcome(machine, res);
     if (parsed.error) {
       this.clis.delete(key);
-      return { error: `${machine}: ${parsed.error}` };
+      return { error: parsed.error };
     }
+    const descriptor = parsed.descriptor;
     const prev = this.clis.get(key);
-    const resolvedNode = prev && prev.cli?.[0] === parsed.cli[0] ? prev.resolvedNode : null;
-    const entry = { cli: parsed.cli, resolvedNode, plugin: parsed.plugin ?? null };
+    const resolvedNode = prev && prev.cli?.[0] === descriptor.cli[0] ? prev.resolvedNode : null;
+    const entry = { cli: descriptor.cli, resolvedNode, plugin: descriptor.plugin ?? null, readAt: Date.now() };
     this.clis.set(key, entry);
     return { entry };
   }
@@ -360,7 +377,7 @@ export default class ShepherdConfig extends View {
     const target = { machine, entry };
     const json = await this.call(["show", "--cwd", root], target);
     // Gate on seq, pending writes, and start target so space/project switches never overwrite with stale data.
-    if (mine !== this.seq || this.pendingWrites > 0 || startChanged()) return;
+    if (loadResultStale({ capturedKey: startKey, current: this.start, mine, seq: this.seq, pendingWrites: this.pendingWrites })) return;
     if (json.ok === false) {
       if (machine !== this.machine) {
         this.machine = machine;
@@ -384,6 +401,7 @@ export default class ShepherdConfig extends View {
       this.resetTargetState(machineChanged);
     }
     this.data = json;
+    this.rememberSha(machine, json);
     for (const key of Object.keys(this.notes)) {
       if (this.notes[key].kind === "ok") delete this.notes[key];
     }
@@ -421,8 +439,13 @@ export default class ShepherdConfig extends View {
     cx.spawn(async (cx) => {
       const args = ["agent-models", ...(root ? ["--cwd", root] : []), ...(forceRefresh ? ["--refresh"] : [])];
       const json = await this.call(args, { machine, entry });
-      if (machine !== this.machine) return;
       this.busy.delete("catalog");
+      // A repo switch on the same machine invalidates the result too: the old root's catalog must not overwrite the
+      // new one, so load the new repo's catalog instead (load() only reloads it when the machine changes).
+      if (machine !== this.machine || root !== this.root) {
+        if (machine === this.machine && this.root) this.loadCatalog(cx, forceRefresh);
+        return;
+      }
       if (json.ok !== false && json.agents) {
         this.catalog = json;
         delete this.notes.catalog;
@@ -532,6 +555,8 @@ export default class ShepherdConfig extends View {
       return parseResult(await exec(cmd, argv, execOpts));
     } catch (e) {
       const msg = String(e?.message ?? e);
+      // A remote exec that cannot start (machine gone, CLI moved): read the descriptor again on the next refresh.
+      if (machine !== null && this.clis.get(machine) === entry) this.clis.delete(machine);
       // If the saved node path disappeared (e.g. nvm version removed) or plain "node" isn't in launchd PATH,
       // resolve node once through a login shell on the same machine and retry.
       const base = String(cmd).split("/").pop();
@@ -601,12 +626,11 @@ export default class ShepherdConfig extends View {
   // ---- serialized writes (prevents stale --expect sha256 races on rapid clicks)
 
   mutate(noteKey, argsOrFactory, cx, done) {
-    const machine = this.machine;
-    const clickedRoot = this.root;
-    const entry = this.clis.get(machine ?? "");
-    if (!clickedRoot || !entry) return;
-    const clickedKey = targetKey(machine, clickedRoot);
-    const clickedTarget = { machine, entry };
+    const clicked = clickedWriteTarget(this.machine, this.root, this.clis.get(this.machine ?? ""));
+    if (!clicked.root || !clicked.entry) return;
+    const clickedRoot = clicked.root;
+    const clickedKey = clicked.key;
+    const clickedTarget = { machine: clicked.machine, entry: clicked.entry };
     const clickedSha = this.sha();
     this.pendingWrites += 1;
     this.busyCounts.set(noteKey, (this.busyCounts.get(noteKey) ?? 0) + 1);
@@ -624,13 +648,20 @@ export default class ShepherdConfig extends View {
       }
     };
     const runOne = async (cx) => {
-      const sameTarget = () => this.root !== null && targetKey(this.machine, this.root) === clickedKey;
+      const sameTarget = () => writeStillLands(this.machine, this.root, clickedKey);
       try {
-        const sha = sameTarget() ? this.sha() : clickedSha;
+        // The --expect guard always goes with the write. After a space switch it is the newest sha known for the
+        // clicked machine's user file (an earlier queued write refreshes it), else the one seen at click time.
+        const sha = sameTarget() ? this.sha() : (this.knownSha(clicked.machine) ?? clickedSha);
         const args = typeof argsOrFactory === "function" ? argsOrFactory(clickedRoot, sha) : argsOrFactory;
         const json = await this.call(args, clickedTarget);
         this.seq++;
-        if (!sameTarget()) return;
+        if (json.ok !== false) this.rememberSha(clicked.machine, json);
+        if (!sameTarget()) {
+          // The panel moved on: a failure on the clicked target still reaches the user, as a toast.
+          if (json.ok === false) this.writeFailedElsewhere(clicked, json.error ?? "shepherd-config refused the change");
+          return;
+        }
         if (json.ok === false) {
           this.notes[noteKey] = {
             kind: "err",
@@ -654,6 +685,8 @@ export default class ShepherdConfig extends View {
       } catch (e) {
         if (sameTarget()) {
           this.notes[noteKey] = { kind: "err", text: String(e?.message ?? e) };
+        } else {
+          this.writeFailedElsewhere(clicked, String(e?.message ?? e));
         }
       } finally {
         finishBusy();
@@ -681,6 +714,27 @@ export default class ShepherdConfig extends View {
 
   sha() {
     return this.data?.files?.user?.sha256;
+  }
+
+  // The newest user-file sha seen per machine (from show and from each write's answer), so a write queued before
+  // a space switch keeps its stale-write guard.
+  rememberSha(machine, json) {
+    const sha = json?.files?.user?.sha256;
+    if (typeof sha !== "string" || !sha) return;
+    if (!this.shaByMachine) this.shaByMachine = new Map();
+    this.shaByMachine.set(machine ?? "", sha);
+  }
+
+  knownSha(machine) {
+    return this.shaByMachine?.get(machine ?? "") ?? null;
+  }
+
+  writeFailedElsewhere(clicked, text) {
+    const repo = String(clicked.root ?? "").split("/").pop() || clicked.root;
+    const where = clicked.machine ? `${clicked.machine}: ${repo}` : repo;
+    try {
+      notify({ title: "Shepherd change not saved", body: `${where}: ${String(text).slice(0, 200)}`, level: "warning" });
+    } catch { /* ignore notification errors */ }
   }
 
   commit(name, cx) {
@@ -885,7 +939,7 @@ export default class ShepherdConfig extends View {
     const machine = this.machine;
     const match = findSpace(spaces(), machine, folder);
     if (match) run("space.select", { id: match.id });
-    else run("space.new", { name, folder, machine: machine ?? "" });
+    else run("space.new", { name, folder, ...(machine ? { machine } : {}) });
   }
 
   toggle(id, cx) {
@@ -1160,7 +1214,7 @@ export default class ShepherdConfig extends View {
   liveSubAgentsBar(t) {
     let active = [];
     try {
-      active = filterShepherdTerminals(terminals()).filter((term) => termInTarget(term, this.machine, this.root));
+      active = filterShepherdTerminals(terminals()).filter((term) => stripInTarget(term, this.machine, this.root));
     } catch {
       return null;
     }

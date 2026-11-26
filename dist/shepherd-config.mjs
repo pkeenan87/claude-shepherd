@@ -3322,9 +3322,9 @@ var require_stringifyDocument = __commonJS({
       const lines = [];
       let hasDirectives = options.directives === true;
       if (options.directives !== false && doc.directives) {
-        const dir = doc.directives.toString(doc);
-        if (dir) {
-          lines.push(dir);
+        const dir2 = doc.directives.toString(doc);
+        if (dir2) {
+          lines.push(dir2);
           hasDirectives = true;
         } else if (doc.directives.docStart)
           hasDirectives = true;
@@ -8545,9 +8545,9 @@ var TaskStore = class {
     return path2.join(this.taskDir(taskId), ".lock");
   }
   listTaskIds() {
-    const dir = path2.join(this.root, "tasks");
-    if (!existsSync2(dir)) return [];
-    return readdirSync(dir).filter((name) => existsSync2(path2.join(dir, name, "events.jsonl")));
+    const dir2 = path2.join(this.root, "tasks");
+    if (!existsSync2(dir2)) return [];
+    return readdirSync(dir2).filter((name) => existsSync2(path2.join(dir2, name, "events.jsonl")));
   }
   /** The pointer file: the active task and the branch that was checked out when it was last resolved (absent in older files). */
   readActiveFile() {
@@ -8699,8 +8699,8 @@ var TaskStore = class {
   }
   /** state.json is the source of truth; the event log is replayed only if it is missing or corrupt. */
   load(taskId) {
-    const dir = this.taskDir(taskId);
-    const snapshotPath = path2.join(dir, "state.json");
+    const dir2 = this.taskDir(taskId);
+    const snapshotPath = path2.join(dir2, "state.json");
     if (existsSync2(snapshotPath)) {
       try {
         const parsed = JSON.parse(readFileSync2(snapshotPath, "utf8"));
@@ -8708,7 +8708,7 @@ var TaskStore = class {
       } catch {
       }
     }
-    const folded = foldEvents(readEvents(path2.join(dir, "events.jsonl")).events);
+    const folded = foldEvents(readEvents(path2.join(dir2, "events.jsonl")).events);
     if (!folded) return void 0;
     atomicWrite(snapshotPath, JSON.stringify(folded, null, 2));
     return folded;
@@ -8728,8 +8728,8 @@ var TaskStore = class {
   }
   async update(taskId, reason, mutate) {
     return withLock(this.lockPath(taskId), async () => {
-      const dir = this.taskDir(taskId);
-      const eventsPath = path2.join(dir, "events.jsonl");
+      const dir2 = this.taskDir(taskId);
+      const eventsPath = path2.join(dir2, "events.jsonl");
       const current = this.load(taskId);
       if (!current) throw new WorkflowError("NO_TASK", `Task ${taskId} does not exist`);
       const next = redactUnknown(mutate(structuredClone(current)));
@@ -8747,18 +8747,18 @@ var TaskStore = class {
         patch: diff.patch,
         ...diff.removed.length ? { removed: diff.removed } : {}
       };
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(dir2, { recursive: true });
       this.appendEvent(eventsPath, event);
-      atomicWrite(path2.join(dir, "state.json"), JSON.stringify(next, null, 2));
+      atomicWrite(path2.join(dir2, "state.json"), JSON.stringify(next, null, 2));
       return next;
     });
   }
   async create(state) {
     const clean = redactUnknown(state);
     return withLock(this.lockPath(clean.taskId), async () => {
-      const dir = this.taskDir(clean.taskId);
-      mkdirSync(dir, { recursive: true });
-      const eventsPath = path2.join(dir, "events.jsonl");
+      const dir2 = this.taskDir(clean.taskId);
+      mkdirSync(dir2, { recursive: true });
+      const eventsPath = path2.join(dir2, "events.jsonl");
       if (existsSync2(eventsPath)) {
         throw new WorkflowError("TASK_EXISTS", `Task ${clean.taskId} already exists`);
       }
@@ -8774,7 +8774,7 @@ var TaskStore = class {
       writeFileSync(eventsPath, `${JSON.stringify(event)}
 `, { flag: "wx" });
       this.seqCache.set(eventsPath, { size: statSync(eventsPath).size, seq: 1 });
-      atomicWrite(path2.join(dir, "state.json"), JSON.stringify(clean, null, 2));
+      atomicWrite(path2.join(dir2, "state.json"), JSON.stringify(clean, null, 2));
       this.setActive(clean.taskId);
       return clean;
     });
@@ -8786,11 +8786,11 @@ var TaskStore = class {
   }
   /** Writes `files` (name to content) under a task subfolder and removes any other file left there by an earlier draft. */
   replaceTextDir(taskId, relative, files) {
-    const dir = path2.join(this.taskDir(taskId), relative);
-    mkdirSync(dir, { recursive: true });
-    for (const [name, data] of Object.entries(files)) atomicWrite(path2.join(dir, name), data);
-    for (const name of readdirSync(dir)) if (!(name in files)) rmSync(path2.join(dir, name), { recursive: true, force: true });
-    return Object.keys(files).map((name) => path2.join(dir, name));
+    const dir2 = path2.join(this.taskDir(taskId), relative);
+    mkdirSync(dir2, { recursive: true });
+    for (const [name, data] of Object.entries(files)) atomicWrite(path2.join(dir2, name), data);
+    for (const name of readdirSync(dir2)) if (!(name in files)) rmSync(path2.join(dir2, name), { recursive: true, force: true });
+    return Object.keys(files).map((name) => path2.join(dir2, name));
   }
   writeOnceText(taskId, relative, data) {
     const file = path2.join(this.taskDir(taskId), relative);
@@ -8851,9 +8851,9 @@ var TaskStore = class {
   /** Appends a `route` event to the task log without touching state.json. */
   async appendRoute(taskId, route, at) {
     await withLock(this.lockPath(taskId), async () => {
-      const dir = this.taskDir(taskId);
-      if (!existsSync2(dir)) return;
-      const eventsPath = path2.join(dir, "events.jsonl");
+      const dir2 = this.taskDir(taskId);
+      if (!existsSync2(dir2)) return;
+      const eventsPath = path2.join(dir2, "events.jsonl");
       const clean = redactUnknown(route);
       this.appendEvent(eventsPath, { seq: this.nextSeq(eventsPath), at, type: "route", route: clean });
     });
@@ -8868,11 +8868,11 @@ var TaskStore = class {
 
 // src/shepherd-home.ts
 var repoStoreCache = /* @__PURE__ */ new Map();
-function cachedStore(dir) {
-  let store = repoStoreCache.get(dir);
+function cachedStore(dir2) {
+  let store = repoStoreCache.get(dir2);
   if (!store) {
-    store = new TaskStore(dir);
-    repoStoreCache.set(dir, store);
+    store = new TaskStore(dir2);
+    repoStoreCache.set(dir2, store);
   }
   return store;
 }
@@ -8891,9 +8891,9 @@ function registeredRepos(shepherd) {
 function dailyRecordsOf(dirs, now, timeZone) {
   const out = [];
   const dayKey = makeDayKey(timeZone);
-  for (const dir of new Set(dirs.map((item) => path3.resolve(item)))) {
+  for (const dir2 of new Set(dirs.map((item) => path3.resolve(item)))) {
     try {
-      if (existsSync3(dir)) out.push(...recordsForDay(cachedStore(dir).readLedger(), now, dayKey));
+      if (existsSync3(dir2)) out.push(...recordsForDay(cachedStore(dir2).readLedger(), now, dayKey));
     } catch {
     }
   }
@@ -9070,8 +9070,8 @@ async function discoverAgentModels(options = {}) {
   const now = options.now ?? Date.now;
   const at = new Date(now());
   const pricing = options.pricing ?? DEFAULT_PRICING;
-  const dir = options.home ?? shepherdHome();
-  const cachePath = path4.join(dir, AGENT_MODELS_CACHE_FILE);
+  const dir2 = options.home ?? shepherdHome();
+  const cachePath = path4.join(dir2, AGENT_MODELS_CACHE_FILE);
   const cache = readCache(cachePath);
   const entries = { ...cache.entries ?? {} };
   let cacheDirty = false;
@@ -9598,10 +9598,10 @@ function findLatestReviewFile(store, task) {
     const taskRev = path5.join(store.taskDir(task.taskId), "reports", "review.md");
     if (existsSync4(taskRev)) return taskRev;
   }
-  const dir = path5.join(store.root, "reports");
+  const dir2 = path5.join(store.root, "reports");
   try {
-    const md = readdirSync3(dir).filter((name) => name.startsWith("review-") && name.endsWith(".md")).sort().at(-1);
-    return md ? path5.join(dir, md) : null;
+    const md = readdirSync3(dir2).filter((name) => name.startsWith("review-") && name.endsWith(".md")).sort().at(-1);
+    return md ? path5.join(dir2, md) : null;
   } catch {
     return null;
   }
@@ -9898,8 +9898,8 @@ function listsAutoSmart(output) {
 }
 async function cursorModels(options = {}) {
   const now = options.now ?? Date.now;
-  const dir = options.home ?? shepherdHome();
-  const cache = path5.join(dir, CURSOR_CACHE_FILE);
+  const dir2 = options.home ?? shepherdHome();
+  const cache = path5.join(dir2, CURSOR_CACHE_FILE);
   let smart;
   let source = "cache";
   try {
@@ -10069,15 +10069,21 @@ ${USAGE}
 }
 
 // src/cli/shepherd-config-main.ts
-try {
-  const dir = path6.dirname(fileURLToPath(import.meta.url));
-  const saved = JSON.parse(readFileSync6(path6.join(dir, "install.json"), "utf8")).path;
-  if (typeof saved === "string" && saved && !saved.includes("\n")) {
-    const cur = (process.env.PATH ?? "").split(path6.delimiter).filter(Boolean);
-    const merged = [.../* @__PURE__ */ new Set([...cur, ...saved.split(path6.delimiter).filter(Boolean)])];
-    if (merged.length > 0) process.env.PATH = merged.join(path6.delimiter);
+var savedPath = (file) => {
+  try {
+    const saved = JSON.parse(readFileSync6(file, "utf8")).path;
+    if (typeof saved === "string" && saved && !saved.includes("\n")) return saved;
+  } catch {
   }
-} catch {
+  return void 0;
+};
+var dir = path6.dirname(fileURLToPath(import.meta.url));
+for (const file of [path6.join(dir, "install.json"), path6.join(dir, "..", "panel-cli.json")]) {
+  const saved = savedPath(file);
+  if (!saved) continue;
+  const cur = (process.env.PATH ?? "").split(path6.delimiter).filter(Boolean);
+  const merged = [.../* @__PURE__ */ new Set([...cur, ...saved.split(path6.delimiter).filter(Boolean)])];
+  if (merged.length > 0) process.env.PATH = merged.join(path6.delimiter);
 }
 process.stdout.on("error", (error) => process.exit(error.code === "EPIPE" ? 0 : 1));
 process.exitCode = await main(process.argv.slice(2));

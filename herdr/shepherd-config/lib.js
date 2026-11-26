@@ -139,7 +139,8 @@ export function resolveTarget({ focused, spaces, forcedFolder, previous, localHo
   const space = focused?.space ? list.find((s) => s.id === focused.space) : null;
   const machine = (space && space.machine) ?? machineOfAddress(focused?.terminal) ?? null;
   if (machine === null) {
-    const folder = forcedFolder ?? focused?.cwd ?? (space && space.folder) ?? (previous?.machine === null ? previous?.folder : null) ?? localHome ?? null;
+    // An empty folder (herdr's value for 'home') is not a folder: it skips the local fallbacks too.
+    const folder = forcedFolder || focused?.cwd || (space && space.folder) || (previous?.machine === null ? previous?.folder : null) || localHome || null;
     return { machine: null, folder };
   }
   const folder = focused?.cwd ?? (space && space.folder) ?? (previous?.machine === machine ? previous?.folder : null) ?? null;
@@ -159,8 +160,20 @@ export function remoteCliMissing(machine) {
 // Parses a remote panel-cli.json: a JSON object whose cli is a non-empty array of absolute-path strings.
 // Returns { cli, plugin? } or { error }.
 export function parseCliDescriptor(raw) {
+  const text = String(raw ?? "");
   let json = null;
-  try { json = JSON.parse(raw); } catch { return { error: "panel-cli.json is not valid JSON." }; }
+  try {
+    json = JSON.parse(text);
+  } catch {
+    // A login shell may print profile noise (motd, notices) before the descriptor, which herdr-install writes
+    // pretty-printed over several lines: parse the shortest tail that starts with a line opening an object.
+    const lines = text.split(/\r?\n/);
+    for (let i = lines.length - 1; i > 0 && json === null; i--) {
+      if (!lines[i].trimStart().startsWith("{")) continue;
+      try { json = JSON.parse(lines.slice(i).join("\n")); } catch { json = null; }
+    }
+  }
+  if (json === null) return { error: "panel-cli.json is not valid JSON." };
   if (!json || typeof json !== "object" || Array.isArray(json)) return { error: "panel-cli.json must be an object." };
   const cli = json.cli;
   if (!Array.isArray(cli) || cli.length === 0) return { error: "panel-cli.json needs a non-empty cli array." };
@@ -185,4 +198,50 @@ export function termInTarget(term, machine, root) {
 export function findSpace(spaces, machine, folder) {
   if (!Array.isArray(spaces)) return null;
   return spaces.find((s) => (s?.machine ?? null) === machine && s?.folder === folder) ?? null;
+}
+
+// The strip's predicate: same machine, and the cwd (when the terminal has one and a root is set) is the root or
+// under it. A sub-agent whose cwd herdr has not reported yet stays in the strip, as it did before the strip
+// became machine-aware.
+export function stripInTarget(term, machine, root) {
+  if (!term || machineOfAddress(term.address) !== machine) return false;
+  if (!root) return true;
+  const cwd = term.cwd;
+  if (!cwd) return true;
+  return cwd === root || cwd.startsWith(root + "/");
+}
+
+// cliFor's remote lookup: given the outcome of reading panel-cli.json on the machine (res = the shell result, or
+// null when every shell threw), the error message to report, or the parsed descriptor.
+export function remoteCliOutcome(machine, res, { throwDetail = "", machineLayout = "" } = {}) {
+  if (res === null || res === undefined) {
+    const detail = String(throwDetail ?? "").trim();
+    const state = machineLayout ? ` (${machineLayout})` : "";
+    return { error: `${machine} is unreachable${state}${detail ? `: ${detail}` : "."}` };
+  }
+  if (res.code !== 0 || !res.stdout || !res.stdout.trim()) return { error: remoteCliMissing(machine) };
+  const parsed = parseCliDescriptor(res.stdout);
+  if (parsed.error) return { error: `${machine}: ${parsed.error}` };
+  return { descriptor: { cli: parsed.cli, plugin: parsed.plugin ?? null } };
+}
+
+// A write is captured at click time (not re-read when the CLI is exec'd): the machine/root/entry a click ran
+// against, kept so a space switch mid-write can neither send the change to the new target nor report success
+// for a target that is gone.
+export function clickedWriteTarget(machine, root, entry) {
+  return { machine, root, entry, key: targetKey(machine, root ?? "") };
+}
+
+// Whether a write that started at `key` still belongs to the current machine+root.
+export function writeStillLands(machine, root, clickedKey) {
+  return typeof root === "string" && root !== "" && targetKey(machine, root) === clickedKey;
+}
+
+// Whether a load captured at `capturedKey` (machine+folder) is stale when checked now: the queue or seq moved
+// under it, the target disappeared, or it moved to another machine/folder. A stale load must not overwrite the UI.
+export function loadResultStale({ capturedKey, current, mine, seq, pendingWrites }) {
+  if (mine !== seq) return true;
+  if (pendingWrites > 0) return true;
+  if (!current) return true;
+  return targetKey(current.machine ?? null, current.folder ?? "") !== capturedKey;
 }
