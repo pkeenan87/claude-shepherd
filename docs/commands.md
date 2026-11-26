@@ -30,7 +30,7 @@ shepherd fix <--tab|--list> [--json]
 shepherd ship [--push | --pr [--draft]] [--base <branch>] [--json]
 shepherd cleanup [--dry-run] [--worktrees] [--branches] [--plans] [--sessions] [--remote] [--force] [--json]
 shepherd hook <stop|prompt|pretool|precompact|postcompact>   the plugin's hooks; reads hook JSON on stdin
-shepherd herdr-install [--layout <name>] [--no-dock]         installs shepherd-config + shepherd-viewer mods
+shepherd herdr-install [--layout <name>] [--no-dock] [--remote]         installs shepherd-config + shepherd-viewer mods (or the panel CLI for a remote machine)
 shepherd migrate-config [--force] [--json]
 ```
 
@@ -109,4 +109,5 @@ Installed by the plugin (`hooks/hooks.json`):
 ## Other setup commands
 
 - `shepherd migrate-config`: copies `~/.pi/agent/chef.yaml` (or `.yml`) to `~/.claude/shepherd.yaml` when that does not exist, drops the settings shepherd does not read and says which, and checks the result with the config loader before writing. `--force` replaces an existing file after copying it to `shepherd.yaml.bak` (then `.bak.2`, and so on; an older backup is never overwritten). An older pi-chef file that routes with `tiers` has the first model of `ticketLow`, `ticketMedium`, `ticketHigh` and `premium` carried over to `models.low`, `medium`, `high` and `review` (where `models` names none), and `providers.local` with the `local` tier's models to `local`; `localMode` becomes a note, since shepherd has no local mode. When nothing else of the file applies, the result is the commented template with those settings at the end. The pi-chef file is left where it is.
+- `shepherd herdr-install --remote`: installs the panel CLI for a remote herdr machine (run it once on that machine; needs Claude Code with the shepherd plugin and Node 22 there). It copies the bundled CLI to a stable folder under the remote's shepherd home and writes `panel-cli.json` there: `{ version: 1, plugin, cli: [<node>, <bundle>], path? }` where `cli` is absolute paths and `plugin` is the plugin's version, so a panel on a remote space can run the CLI there and warn on version skew. It touches no app home, mods or layouts; run the normal `shepherd herdr-install` for the local machine. The panel shows that machine's `~/.claude/shepherd.yaml`, `.shepherd/` ledger and plans, never the local ones.
 - `node bin/shepherd-config.mjs`: the JSON CLI behind the herdr panel; see the [README](../README.md#herdr-panel).

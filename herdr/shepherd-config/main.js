@@ -31,6 +31,7 @@ import {
   agentPick,
   ctxText,
   filterShepherdTerminals,
+  findSpace,
   fmtUsd,
   formatCtxPill,
   modelValue,
@@ -44,6 +45,7 @@ import {
   setArgv,
   splitThinking,
   targetKey,
+  termInTarget,
   ticketsText,
   withThinking,
 } from "./lib.js";
@@ -835,7 +837,7 @@ export default class ShepherdConfig extends View {
       kind: "window",
       mod: "shepherd-viewer",
       key: "shepherd-viewer",
-      props: { file },
+      props: { file, on: this.target?.machine ?? this.machine ?? null },
       width: 780,
       height: 640,
     });
@@ -844,8 +846,9 @@ export default class ShepherdConfig extends View {
   sendToSession(commandText, cx) {
     const foc = focused()?.terminal;
     const all = (() => { try { return terminals(); } catch { return []; } })();
+    const machine = this.machine;
     const isShepherdChild = (term) => Object.keys(term?.labels ?? {}).some((k) => k.startsWith("shepherd."));
-    const inRepo = (term) => !this.root || (typeof term?.cwd === "string" && (term.cwd === this.root || term.cwd.startsWith(`${this.root}/`)));
+    const inRepo = (term) => termInTarget(term, machine, this.root);
     const isClaude = (term) => /claude/i.test(String(term?.program?.name ?? term?.agent ?? ""));
     const focusedTerm = all.find((term) => term.address === foc);
     const targetTerm =
@@ -855,7 +858,7 @@ export default class ShepherdConfig extends View {
     if (!targetTerm) {
       notify({
         title: "Shepherd",
-        body: `No idle Claude Code session found in ${this.root ? this.root.split("/").pop() : "this repo"} for ${commandText}`,
+        body: `No idle Claude Code session found${machine ? ` on ${machine}` : ""} in ${this.root ? this.root.split("/").pop() : "this repo"} for ${commandText}`,
         level: "warning",
       });
       return;
@@ -879,9 +882,10 @@ export default class ShepherdConfig extends View {
 
   openOrJumpSpace(name, folder) {
     if (!folder) return;
-    const match = spaces().find((sp) => sp.folder === folder);
+    const machine = this.machine;
+    const match = findSpace(spaces(), machine, folder);
     if (match) run("space.select", { id: match.id });
-    else run("space.new", { name, folder });
+    else run("space.new", { name, folder, machine: machine ?? "" });
   }
 
   toggle(id, cx) {
@@ -1156,9 +1160,7 @@ export default class ShepherdConfig extends View {
   liveSubAgentsBar(t) {
     let active = [];
     try {
-      active = filterShepherdTerminals(terminals()).filter(
-        (term) => !this.root || !term.cwd || term.cwd === this.root || term.cwd.startsWith(`${this.root}/`),
-      );
+      active = filterShepherdTerminals(terminals()).filter((term) => termInTarget(term, this.machine, this.root));
     } catch {
       return null;
     }
@@ -1776,7 +1778,7 @@ export default class ShepherdConfig extends View {
     const note = this.notes[`p:${p.id}`];
     const busy = this.busy.has(`p:${p.id}`);
     const wt = p.worktree;
-    const hasSpace = wt ? spaces().some((sp) => sp.folder === wt) : false;
+    const hasSpace = wt ? findSpace(spaces(), this.machine, wt) !== null : false;
     return v_flex()
       .id(`plan-${p.id}`)
       .gap(2)
