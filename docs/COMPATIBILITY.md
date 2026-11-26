@@ -37,6 +37,8 @@ Unit tests cover the code around these with fakes; none ran against a live servi
 
 Also not yet run live: the build-in-progress marker held between real `shepherd build --once` runs, and the panel's Cursor buttons.
 
+- The herdr shepherd-config panel on a remote herdr machine (the sub-agent strip, quick actions, Open/Jump Space, the doc viewer and the config writes against a remote space, and `shepherd herdr-install --remote` on a real remote).
+
 ## Claude Code plugin
 
 | Need | What | Where |

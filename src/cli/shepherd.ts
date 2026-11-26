@@ -48,7 +48,7 @@ const USAGE = `Usage:
   shepherd task <list|use <name>|close [<name>]>
   shepherd ship [--push | --pr [--draft]] [--base <branch>] [--json]   (branch preflight, PR body, and confirmation-gated push/PR)
   shepherd cleanup [--dry-run] [--worktrees] [--branches] [--plans] [--sessions] [--remote] [--force] [--json]
-  shepherd herdr-install [--layout <name>] [--no-dock]   (installs the herdr panel into the herdr app; re-run after a plugin update)
+  shepherd herdr-install [--layout <name>] [--no-dock] [--remote]   (installs the herdr panel into the herdr app; --remote installs the panel CLI into the shepherd home for a remote machine)
   shepherd statusline-install [--force]   (shows the plan's spend and today's in Claude Code's status line)
   shepherd migrate-config [--force] [--json]   (copies ~/.pi/agent/chef.yaml to ~/.claude/shepherd.yaml, never over an existing one)
 `;

@@ -5,17 +5,24 @@ import { fileURLToPath } from "node:url";
 import { main } from "./shepherd-config.js";
 
 // Herdr on macOS launches GUI mods with launchd's minimal PATH; merge the PATH captured at `herdr-install` time
-// (from install.json next to this bundle) so agent model discovery (`agy`, `claude`, `cursor-agent`, `pi`) works.
-try {
-  const dir = path.dirname(fileURLToPath(import.meta.url));
-  const saved = (JSON.parse(readFileSync(path.join(dir, "install.json"), "utf8")) as { path?: unknown }).path;
-  if (typeof saved === "string" && saved && !saved.includes("\n")) {
-    const cur = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
-    const merged = [...new Set([...cur, ...saved.split(path.delimiter).filter(Boolean)])];
-    if (merged.length > 0) process.env.PATH = merged.join(path.delimiter);
+// so agent model discovery (`agy`, `claude`, `cursor-agent`, `pi`) works. The local install keeps install.json
+// next to this bundle; the `--remote` install keeps the descriptor one level up (<shepherd home>/panel-cli.json).
+const savedPath = (file: string): string | undefined => {
+  try {
+    const saved = (JSON.parse(readFileSync(file, "utf8")) as { path?: unknown }).path;
+    if (typeof saved === "string" && saved && !saved.includes("\n")) return saved;
+  } catch {
+    /* missing or unreadable: try the next descriptor */
   }
-} catch {
-  /* running outside an installed mod dir or without install.json: keep current PATH */
+  return undefined;
+};
+const dir = path.dirname(fileURLToPath(import.meta.url));
+for (const file of [path.join(dir, "install.json"), path.join(dir, "..", "panel-cli.json")]) {
+  const saved = savedPath(file);
+  if (!saved) continue;
+  const cur = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const merged = [...new Set([...cur, ...saved.split(path.delimiter).filter(Boolean)])];
+  if (merged.length > 0) process.env.PATH = merged.join(path.delimiter);
 }
 
 // A closed pipe (| head) is not an error.

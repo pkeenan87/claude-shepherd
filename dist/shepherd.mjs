@@ -7363,7 +7363,7 @@ var require_dist = __commonJS({
 
 // src/cli/shepherd.ts
 import { execFile as execFile5 } from "node:child_process";
-import { chmodSync as chmodSync3, closeSync as closeSync2, copyFileSync as copyFileSync4, existsSync as existsSync21, fstatSync, mkdirSync as mkdirSync12, openSync as openSync2, writeFileSync as writeFileSync5, readdirSync as readdirSync9, readFileSync as readFileSync20, readSync as readSync2, realpathSync as realpathSync2, renameSync as renameSync4, statSync as statSync9 } from "node:fs";
+import { chmodSync as chmodSync3, closeSync as closeSync2, copyFileSync as copyFileSync4, existsSync as existsSync21, fstatSync, mkdirSync as mkdirSync12, openSync as openSync2, writeFileSync as writeFileSync4, readdirSync as readdirSync9, readFileSync as readFileSync21, readSync as readSync2, realpathSync as realpathSync2, renameSync as renameSync4, statSync as statSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import path33 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
@@ -16449,7 +16449,7 @@ async function fixCommand(rest, io, options, open2) {
 }
 
 // src/cli/herdr-install.ts
-import { cpSync, existsSync as existsSync18, mkdirSync as mkdirSync10, rmSync as rmSync5, copyFileSync as copyFileSync2, writeFileSync as writeFileSync4 } from "node:fs";
+import { cpSync, existsSync as existsSync18, mkdirSync as mkdirSync10, rmSync as rmSync5, copyFileSync as copyFileSync2, readFileSync as readFileSync18 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
 import path30 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -16557,9 +16557,17 @@ function dockLayoutFile(appHome, options = {}) {
 }
 
 // src/cli/herdr-install.ts
-var HERDR_INSTALL_USAGE = "Usage: shepherd herdr-install [--layout <name>] [--no-dock]";
+var HERDR_INSTALL_USAGE = "Usage: shepherd herdr-install [--layout <name>] [--no-dock] [--remote]";
 var EDITOR_ONLY = ["gpui-kit.d.ts", "jsconfig.json"];
 var CLI_FILE = "shepherd-config.mjs";
+function pluginVersion(root) {
+  try {
+    const parsed = JSON.parse(readFileSync18(path30.join(root, ".claude-plugin", "plugin.json"), "utf8"));
+    return typeof parsed?.version === "string" && parsed.version ? parsed.version : void 0;
+  } catch {
+    return void 0;
+  }
+}
 function findRoot() {
   let dir = path30.dirname(fileURLToPath2(import.meta.url));
   for (let i = 0; i < 4; i++) {
@@ -16568,14 +16576,48 @@ function findRoot() {
   }
   return path30.resolve(path30.dirname(fileURLToPath2(import.meta.url)), "..");
 }
+function nodeBin(options) {
+  return options.nodePath || process.execPath || "node";
+}
+function savedPath() {
+  return process.env.PATH && !process.env.PATH.includes("\n") ? process.env.PATH : void 0;
+}
 function herdrInstall(args, out, err, options = {}) {
+  const root = options.root ?? findRoot();
+  if (args.includes("--remote")) {
+    const bundle2 = path30.join(root, "dist", CLI_FILE);
+    if (!existsSync18(bundle2)) {
+      err(`herdr-install: ${bundle2} is missing; is this the plugin's folder?
+`);
+      return 1;
+    }
+    const home = options.shepherdHome ?? shepherdHome();
+    const panelDir = path30.join(home, "panel");
+    mkdirSync10(panelDir, { recursive: true });
+    const target2 = path30.join(panelDir, CLI_FILE);
+    copyFileSync2(bundle2, target2);
+    const plugin2 = pluginVersion(root);
+    const saved2 = savedPath();
+    atomicWrite(
+      path30.join(home, "panel-cli.json"),
+      JSON.stringify(
+        { version: 1, ...plugin2 ? { plugin: plugin2 } : {}, cli: [nodeBin(options), target2], ...saved2 ? { path: saved2 } : {} },
+        null,
+        2
+      ) + "\n"
+    );
+    out(`shepherd-config panel CLI installed in ${target2}
+`);
+    out(`A herdr panel on your other computer now finds it: ${path30.join(home, "panel-cli.json")}
+`);
+    return 0;
+  }
   const layoutAt = args.indexOf("--layout");
   const layout = layoutAt >= 0 ? args[layoutAt + 1] : void 0;
   if (layoutAt >= 0 && (!layout || layout.startsWith("--") || !/^[\w.-]+$/.test(layout))) {
     err("herdr-install: --layout needs a layout name (the file in layouts/ without .json)\n");
     return 2;
   }
-  const root = options.root ?? findRoot();
   const appHome = options.appHome ?? process.env.HERDR_APP_HOME ?? path30.join(homedir8(), ".config", "herdr-app");
   const source = path30.join(root, "herdr", "shepherd-config");
   const bundle = path30.join(root, "dist", CLI_FILE);
@@ -16591,12 +16633,9 @@ function herdrInstall(args, out, err, options = {}) {
   for (const name of ["main.js", "lib.js", "link.js", "edit.js", "mod.json", CLI_FILE, ...EDITOR_ONLY]) rmSync5(path30.join(target, name), { force: true });
   cpSync(source, target, { recursive: true, filter: (file) => !EDITOR_ONLY.includes(path30.basename(file)) });
   copyFileSync2(bundle, path30.join(target, CLI_FILE));
-  const nodeBin = options.nodePath || process.execPath || "node";
-  const savedPath = process.env.PATH && !process.env.PATH.includes("\n") ? process.env.PATH : void 0;
-  writeFileSync4(
-    path30.join(target, "install.json"),
-    JSON.stringify({ cli: [nodeBin, path30.join(target, CLI_FILE)], ...savedPath ? { path: savedPath } : {} }, null, 2) + "\n"
-  );
+  const plugin = pluginVersion(root);
+  const saved = savedPath();
+  writeInstallJson(target, plugin, saved, nodeBin(options));
   out(`shepherd-config mod installed in ${target}
 `);
   const viewerSource = path30.join(root, "herdr", "shepherd-viewer");
@@ -16614,10 +16653,16 @@ function herdrInstall(args, out, err, options = {}) {
   }
   return 0;
 }
+function writeInstallJson(target, plugin, saved, nodeBin2) {
+  atomicWrite(
+    path30.join(target, "install.json"),
+    JSON.stringify({ cli: [nodeBin2, path30.join(target, CLI_FILE)], ...plugin ? { plugin } : {}, ...saved ? { path: saved } : {} }, null, 2) + "\n"
+  );
+}
 
 // src/cli/migrate-config.ts
 var import_yaml2 = __toESM(require_dist(), 1);
-import { existsSync as existsSync19, readFileSync as readFileSync18 } from "node:fs";
+import { existsSync as existsSync19, readFileSync as readFileSync19 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import path31 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
@@ -16665,7 +16710,7 @@ function templateText() {
   let dir = path31.dirname(fileURLToPath3(import.meta.url));
   for (let depth = 0; depth < 4; depth += 1) {
     const file = path31.join(dir, "templates", "shepherd.yaml");
-    if (existsSync19(file)) return readFileSync18(file, "utf8");
+    if (existsSync19(file)) return readFileSync19(file, "utf8");
     dir = path31.dirname(dir);
   }
   return void 0;
@@ -16678,7 +16723,7 @@ function migrateConfig(options = {}) {
   const existing = firstExisting(path31.join(home, ".claude", "shepherd"));
   const dest = existing ?? path31.join(home, ".claude", "shepherd.yaml");
   if (existing && !options.force) return fail("EXISTS", `${shown(existing)} already exists, so nothing was changed. Run \`shepherd migrate-config --force\` to replace it (the old file is kept as ${shown(backupName(existing))}).`);
-  const doc = (0, import_yaml2.parseDocument)(readFileSync18(source, "utf8"));
+  const doc = (0, import_yaml2.parseDocument)(readFileSync19(source, "utf8"));
   if (doc.errors.length > 0) return fail("BAD_YAML", `${shown(source)}: YAML could not be read (${doc.errors[0].message.split("\n")[0]}). Nothing was written.`);
   const raw = doc.toJS();
   const dropped = raw && typeof raw === "object" && !Array.isArray(raw) ? unknownKeys(raw) : [];
@@ -16716,7 +16761,7 @@ ${(0, import_yaml2.stringify)(left)}` : template;
   const lines2 = [];
   if (existing) {
     const backup = backupName(existing);
-    atomicWrite(backup, readFileSync18(existing, "utf8"));
+    atomicWrite(backup, readFileSync19(existing, "utf8"));
     lines2.push(`Backed up ${shown(existing)} to ${shown(backup)}.`);
   }
   atomicWrite(dest, text);
@@ -16798,7 +16843,7 @@ async function shipCommand(rest, io, open2, execPr) {
 }
 
 // src/cli/statusline.ts
-import { chmodSync as chmodSync2, copyFileSync as copyFileSync3, existsSync as existsSync20, mkdirSync as mkdirSync11, readFileSync as readFileSync19 } from "node:fs";
+import { chmodSync as chmodSync2, copyFileSync as copyFileSync3, existsSync as existsSync20, mkdirSync as mkdirSync11, readFileSync as readFileSync20 } from "node:fs";
 import path32 from "node:path";
 var STATUSLINE_USAGE = `Usage: shepherd statusline-install [--force]
 Shows "shepherd \xB7 <plan> \xB7 plan $spent/$budget \xB7 today $spent/$budget" in Claude Code's status line by setting
@@ -16822,7 +16867,7 @@ function refreshStatusLine(shepherd, entry) {
     const file = path32.join(shepherd, LAUNCHER);
     if (!existsSync20(file)) return;
     const text = launcherText(entry);
-    if (readFileSync19(file, "utf8") !== text) writeAtomic(file, text, 493);
+    if (readFileSync20(file, "utf8") !== text) writeAtomic(file, text, 493);
   } catch {
   }
 }
@@ -16833,7 +16878,7 @@ function installStatusLine({ home, shepherd, entry, force = false }) {
   let settings = {};
   if (existsSync20(settingsFile)) {
     try {
-      const parsed = JSON.parse(readFileSync19(settingsFile, "utf8"));
+      const parsed = JSON.parse(readFileSync20(settingsFile, "utf8"));
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fail("SETTINGS", `${settingsFile} is not a JSON object; left it alone.`);
       settings = parsed;
     } catch (error) {
@@ -16873,7 +16918,7 @@ var USAGE = `Usage:
   shepherd task <list|use <name>|close [<name>]>
   shepherd ship [--push | --pr [--draft]] [--base <branch>] [--json]   (branch preflight, PR body, and confirmation-gated push/PR)
   shepherd cleanup [--dry-run] [--worktrees] [--branches] [--plans] [--sessions] [--remote] [--force] [--json]
-  shepherd herdr-install [--layout <name>] [--no-dock]   (installs the herdr panel into the herdr app; re-run after a plugin update)
+  shepherd herdr-install [--layout <name>] [--no-dock] [--remote]   (installs the herdr panel into the herdr app; --remote installs the panel CLI into the shepherd home for a remote machine)
   shepherd statusline-install [--force]   (shows the plan's spend and today's in Claude Code's status line)
   shepherd migrate-config [--force] [--json]   (copies ~/.pi/agent/chef.yaml to ~/.claude/shepherd.yaml, never over an existing one)
 `;
@@ -16882,7 +16927,7 @@ var defaultIo = { out: (text) => process.stdout.write(text), err: (text) => proc
 function packageVersion() {
   for (const rel of ["../../package.json", "../package.json"]) {
     try {
-      const pkg = JSON.parse(readFileSync20(new URL(rel, import.meta.url), "utf8"));
+      const pkg = JSON.parse(readFileSync21(new URL(rel, import.meta.url), "utf8"));
       if (pkg.name === "claude-shepherd" && pkg.version) return pkg.version;
     } catch {
     }
@@ -17374,7 +17419,7 @@ function writeSettingsSafely(settingsFile, content) {
     }
   }
   const tmp = `${target}.tmp.${process.pid}.${Date.now()}`;
-  writeFileSync5(tmp, content, { mode });
+  writeFileSync4(tmp, content, { mode });
   chmodSync3(tmp, mode);
   renameSync4(tmp, target);
 }
@@ -17403,7 +17448,7 @@ function compactConfigCommand(rest, io, options) {
   let doc = {};
   if (existsSync21(settingsFile)) {
     try {
-      const parsed = JSON.parse(readFileSync20(settingsFile, "utf8"));
+      const parsed = JSON.parse(readFileSync21(settingsFile, "utf8"));
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return emit(fail("CONFIG", `${settingsFile} is not a JSON object.`), json, io);
       doc = parsed;
     } catch (error) {

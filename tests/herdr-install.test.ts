@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { main } from "../src/cli/shepherd.js";
+import { herdrInstall } from "../src/cli/herdr-install.js";
 
 const repo = path.resolve(__dirname, "..");
 
@@ -69,6 +70,67 @@ describe("shepherd herdr-install", () => {
     const { code, err } = await install(appHome, "--layout", "../x");
     expect(code).toBe(2);
     expect(err).toMatch(/--layout needs a layout name/);
+  });
+});
+
+describe("shepherd herdr-install --remote", () => {
+  let shepherd: string;
+  beforeEach(() => {
+    shepherd = mkdtempSync(path.join(tmpdir(), "shepherd-remote-"));
+  });
+
+  function run(args: string[], opts: { root?: string; shepherdHome?: string } = {}): { code: number; out: string; err: string } {
+    let out = "";
+    let err = "";
+    const code = herdrInstall(args, (t) => (out += t), (t) => (err += t), { root: repo, shepherdHome: shepherd, ...opts });
+    return { code, out, err };
+  }
+
+  it("copies the CLI into the shepherd home and writes panel-cli.json, with no app home", () => {
+    const { code, out } = run(["--remote"]);
+    expect(code).toBe(0);
+    expect(out).toContain("panel-cli.json");
+    expect(existsSync(path.join(shepherd, "panel", "shepherd-config.mjs"))).toBe(true);
+    const descriptor = JSON.parse(readFileSync(path.join(shepherd, "panel-cli.json"), "utf8")) as {
+      version: number;
+      plugin?: string;
+      cli: string[];
+      path?: string;
+    };
+    const pluginJson = JSON.parse(readFileSync(path.join(repo, ".claude-plugin", "plugin.json"), "utf8")) as { version: string };
+    expect(descriptor.version).toBe(1);
+    expect(descriptor.plugin).toBe(pluginJson.version);
+    expect(descriptor.cli).toHaveLength(2);
+    for (const entry of descriptor.cli) expect(path.isAbsolute(entry)).toBe(true);
+    expect(descriptor.cli[1]).toBe(path.join(shepherd, "panel", "shepherd-config.mjs"));
+    if (process.env.PATH) expect(descriptor.path).toBe(process.env.PATH);
+    // The copied bundle runs on its own and prints JSON.
+    const cwd = mkdtempSync(path.join(tmpdir(), "shepherd-remote-cwd-"));
+    const json = execFileSync(process.execPath, [descriptor.cli[1]!, "show", "--cwd", cwd], { cwd, encoding: "utf8", timeout: 20000 });
+    expect(() => JSON.parse(json)).not.toThrow();
+    // Idempotent: a second run over the same home is fine.
+    expect(run(["--remote"]).code).toBe(0);
+    // No app home is touched.
+    expect(existsSync(path.join(shepherd, "mods"))).toBe(false);
+    expect(existsSync(path.join(shepherd, "layouts"))).toBe(false);
+  });
+
+  it("fails with exit 1 when the dist bundle is missing", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "shepherd-remote-root-"));
+    const { code, err } = run(["--remote"], { root });
+    expect(code).toBe(1);
+    expect(err).toMatch(/dist[\\/]shepherd-config\.mjs is missing/);
+  });
+});
+
+describe("normal herdr-install", () => {
+  it("records the plugin version in install.json", async () => {
+    const appHome = mkdtempSync(path.join(tmpdir(), "herdr-app-"));
+    const { code } = await install(appHome, "--no-dock");
+    expect(code).toBe(0);
+    const installed = JSON.parse(readFileSync(path.join(appHome, "mods", "shepherd-config", "install.json"), "utf8")) as { plugin?: string };
+    const pluginJson = JSON.parse(readFileSync(path.join(repo, ".claude-plugin", "plugin.json"), "utf8")) as { version: string };
+    expect(installed.plugin).toBe(pluginJson.version);
   });
 });
 

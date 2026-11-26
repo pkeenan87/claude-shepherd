@@ -119,6 +119,14 @@ From a plain terminal, run the same with node and the plugin's folder: `node <th
 
 The install copies the mod and the bundled panel CLI into `<herdr app home>/mods/shepherd-config/` and writes `install.json` naming that copy, so the panel does not depend on where the plugin lives (its folder changes on every update). The panel's CLI (`shepherd-config show|set|local-add|local-remove|local-detect|cursor-models|plan-activate|plan-close`) prints one JSON document per command; `set` refuses a stale file (`--expect <sha256>`) and anything that looks like a secret.
 
+**Remote machines.** A focused herdr space on another machine (run `hc machine ls` to see them) makes the panel follow that machine: it runs git and the panel CLI there, shows that machine's repo, plans, costs and sub-agents, sends quick actions to an idle Claude Code session on that machine, and opens the plan and review files in shepherd-viewer on that machine. Set it up once per remote machine, where Claude Code with the shepherd plugin and Node 22 are installed:
+
+```bash
+! shepherd herdr-install --remote
+```
+
+The local `shepherd herdr-install` is still run as usual on this computer. The remote install copies the panel CLI to a stable folder under the remote's shepherd home (`$SHEPHERD_HOME`, default `~/.claude/shepherd`) and writes `panel-cli.json` naming it, so the panel finds it without knowing where the plugin lives there. Config, spend and ledgers are per machine: the panel shows the remote's `~/.claude/shepherd.yaml`, its `.shepherd/` ledger and its plans, never this computer's; a remote space with no `panel-cli.json` shows the install message instead. Run `shepherd herdr-install --remote` again on a remote after a plugin update to refresh it. Remote spaces are refreshed by the panel's timer, not by folder watching.
+
 **Cursor.** In the model picker, choose the `cursor-agent` agent to see `auto` (`agent:cursor-agent/auto`) and, when `cursor-agent --list-models` lists `auto-smart`, its three router settings: `auto-smart[optimize_for=cost]`, `[optimize_for=balanced]` and `[optimize_for=intelligence]`. The list is read with a short timeout and cached for an hour. Cursor is not metered (it counts $0 and shows as "not metered"), and the `auto-smart` router needs a Teams or Enterprise plan. In YAML, quote a value with brackets: `medium: "agent:cursor-agent/auto-smart[optimize_for=balanced]"`.
 
 ## Documentation

@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -101,8 +101,10 @@ describe("Claude Code meter", () => {
   });
 
   it("finds the log through a symlinked repo path, and finds nothing for another repo", () => {
+    // Realpath both sides: the meter resolves a symlinked cwd (like git does), so a resolved
+    // temp dir keeps the two forms aligned (on macOS /var is a symlink to /private/var).
     const home = dir();
-    const real = dir();
+    const real = realpathSync(dir());
     const link = path.join(dir(), "link");
     symlinkSync(real, link);
     const project = path.join(home, ".claude", "projects", claudeProjectSlug(real));
